@@ -2,7 +2,7 @@
   "name": "cats-never-fail",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build --base=/nyang/",
+    "build": "tsc --noEmit && vite build --base=./",
     "preview": "vite preview",
     "check": "node src/collide.check.ts"
   },

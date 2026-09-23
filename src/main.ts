@@ -5,16 +5,16 @@ import { makeCat } from './cat.ts';
 import { resolveCircle } from './collide.ts';
 
 // GDD 3장 카메라 · 5장 스탯
-const PITCH = THREE.MathUtils.degToRad(50);
-const CAM_DISTS = [16, 24, 40]; // 근접 · 중간 · 전체. C 키로 순환 (M0 테스트용)
+const PITCH = THREE.MathUtils.degToRad(40);
+const CAM_DISTS = [18, 26, 62]; // 근접 · 목업 체감 · 방 전체 조망 // 근접 · 중간 · 전체. C 키로 순환 (M0 테스트용)
 const SPEED = 5; // m/s
 const RADIUS = 0.45;
 const DASH_DIST = 3;
 const DASH_TIME = 0.2;
 const DASH_CD = 0.5;
-const SKY = '#dff1ff';
 
-const renderer = new THREE.WebGLRenderer({ antialias: true });
+// 배경은 3D가 아니라 CSS 그라데이션(index.html) — 캔버스를 투명하게 둔다
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
 renderer.shadowMap.enabled = true;
@@ -23,9 +23,6 @@ renderer.toneMapping = THREE.NeutralToneMapping;
 document.body.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(SKY);
-const fog = new THREE.Fog(SKY, 34, 72);
-scene.fog = fog;
 
 const camera = new THREE.PerspectiveCamera(30, innerWidth / innerHeight, 1, 160);
 const camDir = new THREE.Vector3(0, Math.sin(PITCH), Math.cos(PITCH));
@@ -39,7 +36,7 @@ sun.shadow.normalBias = 0.03;
 const sunOffset = new THREE.Vector3(9, 18, 7);
 scene.add(sun, sun.target);
 
-// 카메라 거리에 맞춰 그림자 프러스텀과 안개 범위를 같이 늘린다
+// 카메라 거리에 맞춰 그림자 프러스텀을 같이 늘린다
 let camDist = 0;
 function setCamDist(d: number) {
   camDist = d;
@@ -47,10 +44,8 @@ function setCamDist(d: number) {
   sun.shadow.camera.left = sun.shadow.camera.bottom = -s;
   sun.shadow.camera.right = sun.shadow.camera.top = s;
   sun.shadow.camera.updateProjectionMatrix();
-  fog.near = d * 1.4;
-  fog.far = d * 3;
 }
-setCamDist(CAM_DISTS[2]);
+setCamDist(CAM_DISTS[1]);
 
 const field = buildField();
 scene.add(field.group);
