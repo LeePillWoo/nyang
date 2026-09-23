@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>고양이는 실패하지 않아 — M0</title>
+    <style>
+      html, body { margin: 0; height: 100%; overflow: hidden; background: #dff1ff; }
+      canvas { display: block; }
+      #help {
+        position: fixed; left: 12px; bottom: 12px;
+        font: 13px/1.6 system-ui, sans-serif; color: #5b4a3f;
+        background: #fffaf0cc; border-radius: 12px; padding: 8px 12px;
+        pointer-events: none; user-select: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="help">WASD 이동 · Space 구르기 · C 카메라 거리</div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
