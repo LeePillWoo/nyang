@@ -1,5 +1,5 @@
 import roomUrl from './assets/room-alley.png';
-import { makeCatSprite } from './cat.ts';
+import { ANIM, catSheet, COLS, drawCatFrame } from './cat.ts';
 import { CELL, resolveCircle } from './collide.ts';
 import { BG_H, BG_W, GRID_H, GRID_W, grid, toScreen } from './iso.ts';
 
@@ -9,7 +9,7 @@ const RADIUS = 0.45;
 const DASH_DIST = 3;
 const DASH_TIME = 0.2;
 const DASH_CD = 0.5;
-const CAT_PX = 150; // 배경 그림 픽셀 기준 고양이 높이
+const CAT_PX = 190; // 배경 그림 픽셀 기준 스프라이트 한 칸 크기
 
 const canvas = document.createElement('canvas');
 const ctx = canvas.getContext('2d')!;
@@ -18,7 +18,6 @@ document.body.appendChild(canvas);
 const room = new Image();
 room.src = roomUrl;
 
-const cat = makeCatSprite();
 
 let scale = 1;
 let ox = 0;
@@ -59,7 +58,7 @@ let dashX = 0;
 let dashZ = 0;
 let dashT = 0;
 let dashCd = 0;
-let bob = 0;
+let animT = 0;
 let last = performance.now();
 let fps = 0;
 
@@ -99,7 +98,7 @@ function frame(now: number) {
   const p = resolveCircle(grid, px + vx * dt, pz + vz * dt, RADIUS);
   px = p.x;
   pz = p.z;
-  bob += dt * (len > 0 ? 14 : 4);
+  animT += dt;
 
   draw(len > 0);
   requestAnimationFrame(frame);
@@ -114,20 +113,18 @@ function draw(moving: boolean) {
   const { sx, sy } = toScreen(px, pz);
 
   // 발밑 그림자
-  ctx.fillStyle = 'rgba(120, 85, 55, 0.28)';
+  ctx.fillStyle = 'rgba(120, 85, 55, 0.25)';
   ctx.beginPath();
-  ctx.ellipse(sx, sy, 34, 15, 0, 0, Math.PI * 2);
+  ctx.ellipse(sx, sy, CAT_PX * 0.28, CAT_PX * 0.1, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  const squash = dashT > 0 ? 0 : Math.sin(bob) * (moving ? 0.06 : 0.025);
-  const h = CAT_PX * (1 + squash);
-  const w = CAT_PX * (1 - squash * 0.6);
-  ctx.save();
-  ctx.translate(sx, sy - h / 2);
-  if (dashT > 0) ctx.rotate(-flip * (1 - dashT / DASH_TIME) * Math.PI * 2);
-  ctx.scale(flip, 1);
-  ctx.drawImage(cat, -w / 2, -h / 2, w, h);
-  ctx.restore();
+  const anim = dashT > 0 ? ANIM.roll : moving ? ANIM.run : ANIM.idle;
+  // 구르기는 대시 길이에 맞춰 한 바퀴만 돈다
+  const frame =
+    dashT > 0
+      ? Math.min(COLS - 1, Math.floor((1 - dashT / DASH_TIME) * COLS))
+      : Math.floor(animT * anim.fps) % COLS;
+  drawCatFrame(ctx, anim, frame, sx, sy, CAT_PX, flip);
 
   if (debug) drawGrid();
 
@@ -165,4 +162,7 @@ function drawGrid() {
   }
 }
 
-room.decode().then(() => requestAnimationFrame(frame));
+Promise.all([room.decode(), catSheet.decode()]).then(() => {
+  document.getElementById('help')!.textContent = 'WASD 이동 · Space 구르기 · G 격자';
+  requestAnimationFrame(frame);
+});
