@@ -126,6 +126,60 @@ async function walk(page, getPos, target, keysFor, done, ms = 8000) {
   return page.evaluate(done);
 }
 
+/**
+ * 필드에서 지형 마스크를 따라 목표까지 걸어간다. 걸을 수 있는 칸(걷기·숲) 위로 BFS 길을 찾아
+ * 경유점을 하나씩 밟는다 — 암벽·바위이 가로막아도 돌아간다. 마스크를 고쳐도 그대로 쓸 수 있다.
+ */
+async function walkField(page, target, done, ms = 20000) {
+  const route = await page.evaluate((tx, ty) => {
+    const S = 6; // 칸 크기 (px)
+    const W = Math.ceil(1672 / S);
+    const H = Math.ceil(941 / S);
+    const ok = (cx, cy) => {
+      const t = __game.terrain(cx * S + S / 2, cy * S + S / 2);
+      return t === 0 || t === 1;
+    };
+    const s = __game.field;
+    const start = Math.floor(s.y / S) * W + Math.floor(s.x / S);
+    const goal = Math.floor(ty / S) * W + Math.floor(tx / S);
+    const from = new Int32Array(W * H).fill(-1);
+    from[start] = start;
+    const q = [start];
+    for (let h = 0; h < q.length && from[goal] < 0; h++) {
+      const c = q[h];
+      const cx = c % W;
+      const cy = (c / W) | 0;
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+        const nx = cx + dx;
+        const ny = cy + dy;
+        const n = ny * W + nx;
+        if (nx < 0 || ny < 0 || nx >= W || ny >= H || from[n] >= 0 || !ok(nx, ny)) continue;
+        if (dx && dy && (!ok(cx + dx, cy) || !ok(cx, cy + dy))) continue; // 모서리 대각선 금지
+        from[n] = c;
+        q.push(n);
+      }
+    }
+    if (from[goal] < 0) return null;
+    const pts = [];
+    for (let c = goal; c !== start; c = from[c]) pts.push([(c % W) * S + S / 2, ((c / W) | 0) * S + S / 2]);
+    // 칸 가운데는 목표와 몇 px 어긋나니 마지막 경유점은 목표 좌표 그대로
+    return [...pts.reverse().filter((_, i) => i % 3 === 2), [tx, ty]];
+  }, target[0], target[1]);
+  if (!route) return false;
+  const t0 = Date.now();
+  for (const p of route) {
+    if (await page.evaluate(done)) break;
+    const left = ms - (Date.now() - t0);
+    if (left <= 0) break;
+    await page.evaluate(([x, y]) => Object.assign(window, { __px: x, __py: y }), p);
+    await walk(page, fieldPos, p, fieldKeys, () => {
+      const s = __game.field;
+      return Math.abs(s.x - window.__px) < 5 && Math.abs(s.y - window.__py) < 4;
+    }, Math.min(left, 2500));
+  }
+  return page.evaluate(done);
+}
+
 try {
   // 1) 시트 슬라이스: 모든 행이 6칸이어야 한다 (모자라면 프레임이 합쳐졌거나 사라진 것)
   const { page, errors } = await open('dungeon');
@@ -233,12 +287,17 @@ try {
     // 매 프레임 불변식 감시: 물 위를 걷거나 땅 위에서 배를 타면 기록한다
     await page.evaluate(() => {
       window.__viol = [];
+      window.__bridged = false;
       window.__modes = [];
       const f = () => {
         if (__game.scene === 'field') {
           const s = __game.field;
           const afloat = s.mode === 'boat' || s.mode === 'board' || s.mode === 'unboard';
-          if (afloat !== (__game.terrain(s.x, s.y) === 2)) __viol.push(`${s.mode} @ ${s.x | 0},${s.y | 0}`);
+          const t = __game.terrain(s.x, s.y);
+          if (t === 3) __viol.push(`막힌 곳 위 ${s.mode} @ ${s.x | 0},${s.y | 0}`);
+          // 배가 땅 위에 있어도 되는 건 다리(노랑) 위뿐
+          else if (afloat !== (t === 2) && !(s.mode === 'boat' && t === 4)) __viol.push(`${s.mode} @ ${s.x | 0},${s.y | 0} (지형 ${t})`);
+          if (s.mode === 'boat' && t === 4) __bridged = true;
           if (__modes[__modes.length - 1] !== s.mode) __modes.push(s.mode);
         }
         requestAnimationFrame(f);
@@ -286,10 +345,10 @@ try {
     check(!!woods, `가까운 깊은 숲 (${woods ? `${woods.x}, ${woods.y}` : '없음'})`);
     if (woods) {
       await page.evaluate((x, y) => Object.assign(window, { __wx: x, __wy: y }), woods.x, woods.y);
-      const near = await walk(page, fieldPos, [woods.x, woods.y], fieldKeys, () => {
+      const near = await walkField(page, [woods.x, woods.y], () => {
         const s = __game.field;
-        return s.mode === 'axe' && Math.hypot(s.x - window.__wx, s.y - window.__wy) < 8;
-      }, 20000);
+        return s.mode === 'axe' && Math.hypot(s.x - window.__wx, s.y - window.__wy) < 14;
+      }, 30000);
       check(near && (await page.evaluate(() => __game.field.mode)) === 'axe', '숲에 들어가면 도끼를 든다');
       // 그 자리에서 좌우로 오가며 걷는다 — 촬영과 동시에
       let stop = false;
@@ -309,8 +368,85 @@ try {
       check(chops >= 2, `숲을 걸으면 도끼질을 한다 (${chops}회)`);
     }
 
+    // 갈 수 있는가: 시작점에서 모든 워프까지 (물은 배로 건너니 검정만 벽이다). 마스크를 고치다 입구를 막으면 여기서 잡힌다
+    const cut = await page.evaluate((start, warps) => {
+      const S = 4;
+      const W = Math.ceil(1672 / S);
+      const H = Math.ceil(941 / S);
+      const open = (c) => __game.terrain((c % W) * S + S / 2, ((c / W) | 0) * S + S / 2) !== 3;
+      const s0 = Math.floor(start[1] / S) * W + Math.floor(start[0] / S);
+      const seen = new Uint8Array(W * H);
+      seen[s0] = 1;
+      const q = [s0];
+      for (let h = 0; h < q.length; h++) {
+        const c = q[h];
+        const x = c % W;
+        for (const n of [c - 1, c + 1, c - W, c + W])
+          if (n >= 0 && n < W * H && !seen[n] && Math.abs((n % W) - x) <= 1 && open(n)) {
+            seen[n] = 1;
+            q.push(n);
+          }
+      }
+      return warps.filter((w) => !seen[Math.floor(w.at[1] / S) * W + Math.floor(w.at[0] / S)]).map((w) => w.id);
+    }, FIELD.start, FIELD.warps);
+    check(cut.length === 0, `시작점에서 모든 워프까지 갈 수 있다 (워프 ${FIELD.warps.length}개${cut.length ? ', 막힌 워프: ' + cut.join(', ') : ''})`);
+
+    // 막힘: 가장 가까운 암벽·바위 덩어리 한가운데를 향해 3초 동안 밀고 들어가 본다
+    const wall = await page.evaluate(() => {
+      const s = __game.field;
+      const solid = (x, y) => [[0, 0], [10, 0], [-10, 0], [0, 8], [0, -8]].every(([dx, dy]) => __game.terrain(x + dx, y + dy) === 3);
+      let best = null;
+      for (let y = 30; y < 910; y += 5)
+        for (let x = 30; x < 1640; x += 5) {
+          if (!solid(x, y)) continue;
+          const d = Math.hypot(x - s.x, y - s.y);
+          if (!best || d < best.d) best = { x, y, d };
+        }
+      return best;
+    });
+    if (wall) {
+      await walk(page, fieldPos, [wall.x, wall.y], fieldKeys, () => false, 3000);
+      const at = await page.evaluate(() => ({ ...{ x: __game.field.x, y: __game.field.y }, t: __game.terrain(__game.field.x, __game.field.y) }));
+      const gap = Math.hypot(at.x - wall.x, at.y - wall.y);
+      check(at.t !== 3 && gap < wall.d, `암벽·바위로 밀고 들어가면 가장자리에서 멈춘다 (목표 ${wall.x},${wall.y} 까지 ${wall.d | 0} → ${gap | 0}px 에서 멈춤)`);
+    } else check(false, '지형 마스크에 막힌 곳이 없다');
+
+    // 다리: 배로 강을 따라가다 다리를 만나도 내리지 않고 지나간다 (필드 그림 픽셀 좌표, 양방향).
+    // 마스크를 고치다 다리(노랑)를 끊으면 여기서 잡힌다
+    const CROSSINGS = [
+      ['서쪽 나무다리: 호수 → 강', [905, 318], ['KeyS']],
+      ['서쪽 나무다리: 강 → 호수', [915, 380], ['KeyW']],
+      ['돌다리: 위 강 → 아래 강', [1110, 470], ['KeyS', 'KeyD']],
+      ['돌다리: 아래 강 → 위 강', [1190, 525], ['KeyW', 'KeyA']],
+    ];
+    for (const [name, [x, y], keys] of CROSSINGS) {
+      await page.evaluate(([x, y]) => {
+        Object.assign(__game.field, { x, y, camX: x, camY: y, mode: 'boat', modeT: 1, chopping: 0 });
+        window.__bridged = false;
+        window.__modes = ['boat'];
+      }, [x, y]);
+      for (const k of keys) await page.keyboard.down(k);
+      // 다리를 지나 다시 물 위에 뜨면 바로 멈춘다 (계속 가면 건너편 강둑에 닿아 내린다)
+      const across = await page
+        .waitForFunction(() => __bridged && __game.terrain(__game.field.x, __game.field.y) === 2, { polling: 'raf', timeout: 4000 })
+        .then(() => true, () => false);
+      for (const k of keys) await page.keyboard.up(k);
+      const after = await page.evaluate(() => ({ mode: __game.field.mode, modes: __modes }));
+      check(across && after.mode === 'boat' && !after.modes.includes('unboard'), `${name} — 배로 그대로 지나간다 (${after.modes.join(' → ')})`);
+    }
+    // 돌다리 연속 촬영
+    await page.evaluate(() => {
+      Object.assign(__game.field, { x: 1100, y: 463, camX: 1100, camY: 463, mode: 'boat', modeT: 1 });
+      window.__bridged = false;
+    });
+    await page.keyboard.down('KeyS');
+    await page.keyboard.down('KeyD');
+    await fieldBurst(page, () => __bridged, new URL('field-bridge.png', OUT));
+    await page.keyboard.up('KeyS');
+    await page.keyboard.up('KeyD');
+
     const viol = await page.evaluate(() => __viol);
-    check(viol.length === 0, `물 위를 걷거나 땅 위에서 배를 탄 프레임 ${viol.length}개${viol.length ? ': ' + viol[0] : ''}`);
+    check(viol.length === 0, `물 위를 걷거나, 땅 위에서 배를 타거나, 막힌 곳 위에 선 프레임 ${viol.length}개${viol.length ? ': ' + viol[0] : ''}`);
     console.log('       지나간 모드:', (await page.evaluate(() => __modes)).join(' → '));
     check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
     await page.close();

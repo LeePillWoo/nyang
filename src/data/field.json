@@ -28,7 +28,8 @@
       "speed": 1.15,
       "stroke": 0.55,
       "offset": 1.17,
-      "bow": 0.65
+      "bow": 0.65,
+      "bridge": 90
     }
   },
   "warps": [

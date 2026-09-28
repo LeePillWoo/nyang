@@ -18,7 +18,9 @@ export const WALK = 0;
 export const FOREST = 1;
 export const WATER = 2;
 export const BLOCK = 3;
-export type Terrain = typeof WALK | typeof FOREST | typeof WATER | typeof BLOCK;
+/** 다리: 걸어서도 지나가고, 배도 내리지 않고 지나간다 */
+export const BRIDGE = 4;
+export type Terrain = typeof WALK | typeof FOREST | typeof WATER | typeof BLOCK | typeof BRIDGE;
 export type TerrainAt = (x: number, y: number) => Terrain;
 const everywhereWalk: TerrainAt = () => WALK;
 
@@ -126,6 +128,30 @@ function seek(s: FieldState, ux: number, uy: number, want: (t: Terrain) => boole
   return null;
 }
 
+/**
+ * 배로 넘어갈 다리인가: 가는 쪽으로 bridge px 안에서 다리(노랑)를 지나 다시 물이 나온다.
+ * 다리가 아닌 땅(풀밭·모래·바위)이 끼면 넘어가지 않고 내린다 — 좁은 풀밭은 다리가 아니다.
+ * 마스크 경계는 색이 섞여 한두 칸 튀니 다리 아닌 땅 4px 까지는 봐준다.
+ */
+function waterPast(s: FieldState, ux: number, uy: number, at: TerrainAt) {
+  let bridge = false;
+  let other = 0;
+  for (let d = 2; d <= FIELD.modes.boat.bridge; d += 2) {
+    const t = at(clampX(s.x + ux * d), clampY(s.y + uy * d * data.vertical));
+    if (t === BLOCK) return false;
+    if (t === WATER) {
+      if (bridge) return true;
+      continue;
+    }
+    if (t === BRIDGE) bridge = true;
+    else if ((other += 2) > 4) return false;
+  }
+  return false;
+}
+
+/** 배가 다리 위를 지나는 중인가 (그때만 배가 땅 위에 있어도 된다) */
+export const bridging = (s: FieldState, at: TerrainAt) => s.mode === 'boat' && at(s.x, s.y) === BRIDGE;
+
 /** 한 프레임 진행. 워프에 충분히 머물렀으면 그 워프를 돌려준다. mx, my 는 화면 기준 -1..1 */
 export function updateField(
   s: FieldState,
@@ -191,6 +217,13 @@ export function updateField(
         setMode(s, 'board');
         return null;
       }
+    } else if (afloat && (ground(next) || ground(bow)) && (next === WATER || next === BRIDGE) && waterPast(s, ux, uy, at)) {
+      // 다리: 다리 너머로 물이 이어지면 내리지 않고 배로 넘어간다 (타고 내리기를 반복하지 않게).
+      // 배는 물 아니면 다리 위에만 선다 — 다음 걸음이 다리가 아닌 땅이면 여기로 오지 않고 내린다
+      s.x = nx;
+      s.y = ny;
+    } else if (afloat && at(s.x, s.y) !== WATER && next !== WATER) {
+      // 다리 위에서 물로 이어지지 않는 쪽(다리를 따라)으로는 가지 않는다 — 배는 땅에 잠깐만 올라선다
     } else if (afloat && (ground(next) || ground(bow))) {
       // 뭍: 배는 그 자리에 두고 뛰어내린다. 시트는 고양이가 배 왼쪽에 내려서니, 오른쪽 뭍이면 뒤집는다.
       // 마지막 컷에서 고양이가 배 옆 offset 만큼에 서니 그 자리가 뭍이면 거기, 아니면 가까운 뭍
@@ -241,12 +274,13 @@ export function updateField(
         s.events.push({ type: 'chop', x: s.x + s.flip * b * 0.26, y: s.y - b * 0.18, flip: s.flip });
       }
     } else if (s.moving) {
+      // 멈춰도 타이머는 그대로 둔다 — 방향을 바꾸는 한 프레임 멈춤마다 0 이 되면 지그재그로 걸을 때 도끼를 안 휘두른다
       s.chopT += dt;
       if (s.chopT >= M.axe.chopEvery) {
         s.chopT = 0;
         s.chopping = M.axe.chopTime;
       }
-    } else s.chopT = 0;
+    }
   }
 
   // 노 젓기: 저을 때마다 물소리

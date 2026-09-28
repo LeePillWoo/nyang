@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import {
   backFrom,
   BLOCK,
+  bridging,
+  BRIDGE,
   FIELD,
   FOREST,
   inWarp,
@@ -101,7 +103,9 @@ const tickT = (s: FieldState, mx: number, my: number, secs: number, at = map) =>
     // 불변식: 물 위를 걷지 않고, 땅 위에서 배를 타지 않는다
     const t = at(s.x, s.y);
     if (s.mode === 'walk' || s.mode === 'axe') assert.notEqual(t, WATER, `물 위를 걷고 있다 (${s.x.toFixed(0)}, ${s.y.toFixed(0)})`);
-    if (s.mode === 'boat' || s.mode === 'board' || s.mode === 'unboard') assert.equal(t, WATER, `땅 위에 배가 있다 (${s.x.toFixed(0)}, ${s.y.toFixed(0)})`);
+    // 다리 위를 지나는 배만 예외
+    if ((s.mode === 'boat' || s.mode === 'board' || s.mode === 'unboard') && !bridging(s, at))
+      assert.equal(t, WATER, `땅 위에 배가 있다 (${s.x.toFixed(0)}, ${s.y.toFixed(0)})`);
   }
   return { seen, chops };
 };
@@ -172,6 +176,20 @@ const tickT = (s: FieldState, mx: number, my: number, secs: number, at = map) =>
   assert.ok(changes <= 1, `경계에서 모션이 ${changes}번 바뀌었다`);
 }
 
+// 숲에서 지그재그로 걸어도(방향을 바꿀 때마다 잠깐 멈춤) 도끼질은 이어진다
+{
+  const s = makeFieldState([150, 150], map);
+  let chops = 0;
+  for (let seg = 0; seg < 8; seg++) {
+    updateField(s, 0, 0, 0.016, map); // 방향을 바꾸는 한 프레임 멈춤
+    for (let i = 0; i < 30; i++) {
+      updateField(s, seg % 2 ? -1 : 1, 0, 0.016, map); // 0.48초씩 좌우 — 도끼질 주기(0.85초)보다 짧다
+      chops += s.events.filter((e) => e.type === 'chop').length;
+    }
+  }
+  assert.ok(chops >= 2, `지그재그 4초 동안 도끼질 ${chops}회`);
+}
+
 // 막힌 곳(검정)으로는 못 들어간다
 {
   const s = makeFieldState([330, 510], map);
@@ -215,3 +233,47 @@ const tickT = (s: FieldState, mx: number, my: number, secs: number, at = map) =>
 }
 
 console.log('terrain.check: ok');
+
+// 다리: 강을 배로 가다 좁은 땅(다리)을 만나면 내리지 않고 넘어간다
+{
+  // 강 x < 500 · 다리 500..540 · 강 540..900 · 그 뒤 넓은 뭍
+  const river: TerrainAt = (x) => (x >= 500 && x < 540 ? BRIDGE : x > 900 ? WALK : WATER);
+  const s = makeFieldState([450, 400], river);
+  s.mode = 'boat';
+  const { seen } = tickT(s, 1, 0, 1.2, river);
+  assert.ok(s.x > 560, `다리를 넘어가야 한다: ${s.x.toFixed(0)}`);
+  assert.deepEqual(seen, ['boat'], `내리지 않고 배로 넘어간다: ${seen.join(' → ')}`);
+
+  // 넓은 뭍(다리 폭보다 넓다)에서는 내린다
+  assert.ok(FIELD.modes.boat.bridge < 1672 - 900, '테스트 전제: 뒤쪽 뭍은 다리 폭보다 넓다');
+  const t2 = tickT(s, 1, 0, 4, river);
+  assert.ok(t2.seen.includes('unboard'), `넓은 뭍에 닿으면 내린다: ${t2.seen.join(' → ')}`);
+
+  // 같은 폭이라도 다리가 아닌 풀밭이면 넘어가지 않고 내린다
+  const grass: TerrainAt = (x) => (x >= 500 && x < 540 ? WALK : WATER);
+  const gs = makeFieldState([450, 400], grass);
+  gs.mode = 'boat';
+  const gl = tickT(gs, 1, 0, 1.2, grass);
+  assert.ok(gl.seen.includes('unboard'), `좁은 풀밭에서는 내린다: ${gl.seen.join(' → ')}`);
+
+  // 바위가 낀 다리는 넘어가지 않는다
+  const rocky: TerrainAt = (x) => (x >= 500 && x < 520 ? BLOCK : x >= 520 && x < 540 ? BRIDGE : WATER);
+  const r = makeFieldState([450, 400], rocky);
+  r.mode = 'boat';
+  tickT(r, 1, 0, 1.2, rocky);
+  assert.ok(r.x < 500, `바위를 넘어가면 안 된다: ${r.x.toFixed(0)}`);
+
+  // 다리 위에서 다리를 따라 옆으로는 안 가고, 되돌아가면 물로 돌아간다
+  const b = makeFieldState([450, 400], river);
+  b.mode = 'boat';
+  for (let i = 0; i < 400 && river(b.x, b.y) === WATER; i++) updateField(b, 1, 0, 0.016, river);
+  assert.ok(bridging(b, river), '다리 위에 올라섰다');
+  const y0 = b.y;
+  tickT(b, 0, 1, 0.5, river);
+  assert.equal(b.y, y0, '다리를 따라 배가 땅 위로 가지 않는다');
+  assert.equal(b.mode, 'boat');
+  tickT(b, -1, 0, 0.5, river);
+  assert.equal(river(b.x, b.y), WATER, '되돌아가면 물 위');
+}
+
+console.log('bridge.check: ok');

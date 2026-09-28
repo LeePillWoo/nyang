@@ -18,7 +18,9 @@
   필드는 지형에 따라 걷기 · 숲은 도끼로 헤치기 · 물은 배로 바뀐다.
 - 던전 배경: 방마다 렌더된 그림 1장. 바닥 네 꼭짓점을 찍어 원근 변환으로 좌표를 맞춘다 (src/iso.ts).
 - 필드 배경: 그림 1장, 좌표는 그림 픽셀 그대로. 확대해서 고양이를 따라간다 (src/field.ts).
-- 필드 지형: `src/assets/field-terrain.png` 마스크 (흰 걷기 · 초록 숲=도끼 · 파랑 물=배 · 검정 못 감).
+- 필드 지형: `src/assets/field-terrain.png` 마스크 (흰 걷기 · 초록 숲=도끼 · 파랑 물=배 · 검정 못 감 · 노랑 다리).
+  **막는 건 암석·절벽뿐, 집·분수대는 걷기** (사용자 결정). 배는 물 아니면 다리(노랑) 위에만 서고, 다리는 내리지 않고 넘어간다.
+  사용자가 마스크를 직접 고쳐 올린다 — 받으면 `--preview` 로 겹쳐 보고 `npm run verify`.
   초안은 `node tools/terrain.mjs` 가 색으로 만든다. **직접 고친 마스크 위에 다시 돌리면 덮어쓴다.**
 - 그림은 전부 WebP (Chrome 인코더는 알파를 무손실로 저장해서 시트 칸 자르기가 PNG 와 같다). 지형 마스크만 PNG.
 - 캐릭터·적·이펙트: 스프라이트 시트 (src/sheet.ts 가 알파를 훑어 칸을 찾는다).
@@ -46,10 +48,11 @@
 | 명령 | 하는 일 |
 | --- | --- |
 | `npm run dev` | 개발 서버 |
-| `npm run check` | 로직 자체 체크 (충돌, 적 AI, 펀치 판정, 공격 모션, 간격, 필드 워프, 지형별 움직임) |
-| `npm run verify` | 빌드 후 Chrome 으로 실제로 돌려 그리기 검사 + 필드↔던전 왕복 + 필드 지형(배·도끼) + 연속 촬영(`tools/out/`) |
+| `npm run check` | 로직 자체 체크 (충돌, 적 AI, 펀치 판정, 공격 모션, 간격, 필드 워프, 지형별 움직임, 다리) |
+| `npm run verify` | 빌드 후 Chrome 으로 실제로 돌려 그리기 검사 + 필드↔던전 왕복 + 필드 지형(배·도끼·암벽·다리·워프까지 갈 수 있나) + 연속 촬영(`tools/out/`) |
 | `npm run build` | 타입 체크 + 빌드 (`--base=./` 상대 경로) |
-| `node tools/terrain.mjs` | 필드 그림 색으로 지형 마스크 초안 생성 (미리보기 `tools/out/terrain-preview.png`) |
+| `node tools/terrain.mjs` | 필드 그림 색으로 지형 마스크 초안 생성 (**덮어쓴다**. 미리보기 `tools/out/terrain-preview.png`) |
+| `node tools/terrain.mjs --preview` | 지금 마스크로 미리보기만 다시 만든다 (마스크는 그대로) |
 
 URL 옵션: `?dungeon` 던전에서 바로 시작, `?grid` 바닥 격자·막힌 칸 (던전에서 G 키), `?terrain` 필드 지형 보기 (필드에서 T 키), `?trace` 검증용 기록.
 

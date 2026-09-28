@@ -1,7 +1,7 @@
 import fieldUrl from './assets/field.webp';
 import terrainUrl from './assets/field-terrain.png';
 import { AXE_FPS, AXE_ROW, BOAT_FPS, BOAT_ROW, CAT_FPS, CAT_ROW } from './cat.ts';
-import { BLOCK, FIELD, FOREST, WALK, WATER, type FieldEvent, type FieldState, type Terrain, type Warp } from './field.ts';
+import { BLOCK, BRIDGE, FIELD, FOREST, WALK, WATER, type FieldEvent, type FieldState, type Terrain, type Warp } from './field.ts';
 import { drawFrame, type Sheet } from './sheet.ts';
 
 export type FieldSheets = { cat: Sheet; axe: Sheet; boat: Sheet };
@@ -37,7 +37,15 @@ export const terrainReady = new Promise<void>((ok) => {
       const gg = d[i * 4 + 1];
       const b = d[i * 4 + 2];
       terrain[i] =
-        r < 70 && gg < 70 && b < 70 ? BLOCK : b > r + 60 && b > gg ? WATER : gg > r + 50 && gg > b + 30 ? FOREST : WALK;
+        r < 70 && gg < 70 && b < 70
+          ? BLOCK
+          : b > r + 60 && b > gg
+            ? WATER
+            : gg > r + 50 && gg > b + 30
+              ? FOREST
+              : r > 200 && gg > 120 && b < 90
+                ? BRIDGE
+                : WALK;
     }
     ok();
   };
@@ -52,7 +60,7 @@ export const terrainAt = (x: number, y: number): Terrain => {
   return terrain[ty * TW + tx] as Terrain;
 };
 
-/** T 키 지형 보기: 숲 분홍 · 물 하늘색 · 막힘 빨강 */
+/** T 키 지형 보기: 숲 분홍 · 물 하늘색 · 막힘 빨강 · 다리 노랑 */
 function tint(): HTMLCanvasElement | null {
   if (terrainTint || !terrain) return terrainTint;
   const c = document.createElement('canvas');
@@ -60,7 +68,12 @@ function tint(): HTMLCanvasElement | null {
   c.height = TH;
   const g = c.getContext('2d')!;
   const img = g.createImageData(TW, TH);
-  const col: Record<number, number[]> = { [FOREST]: [255, 0, 170, 110], [WATER]: [0, 210, 255, 100], [BLOCK]: [255, 40, 40, 140] };
+  const col: Record<number, number[]> = {
+    [FOREST]: [255, 0, 170, 110],
+    [WATER]: [0, 210, 255, 100],
+    [BLOCK]: [255, 40, 40, 140],
+    [BRIDGE]: [255, 230, 0, 160],
+  };
   for (let i = 0; i < terrain.length; i++) if (col[terrain[i]]) img.data.set(col[terrain[i]], i * 4);
   g.putImageData(img, 0, 0);
   return (terrainTint = c);
@@ -227,7 +240,7 @@ export function drawField(
   // 배 뒤로 퍼지는 물결
   const afloat = s.mode === 'boat' || s.mode === 'board' || s.mode === 'unboard';
   wakeT += dt;
-  if (s.mode === 'boat' && wakeT > (s.moving ? 0.16 : 1.4)) {
+  if (s.mode === 'boat' && terrainAt(s.x, s.y) === WATER && wakeT > (s.moving ? 0.16 : 1.4)) {
     wakeT = 0;
     ring(s.x - (s.moving ? s.flip * 7 * U : 0), s.y + U, (s.moving ? 11 : 16) * U, s.moving ? 0.9 : 1.6);
   }
