@@ -3,7 +3,9 @@ import defs from './data/enemies.json' with { type: 'json' };
 import type { Sheet } from './sheet.ts';
 
 export const RAT_ROW = { idle: 0, move: 1, attack: 2, hurt: 3, down: 4 };
-export const RAT_FPS = { idle: 6, move: 12, attack: 14, hurt: 10, down: 8 };
+export const RAT_FPS = { idle: 6, move: 12, hurt: 10, down: 8 };
+/** 공격 행 6칸 = 앞 3칸 준비 동작 + 뒤 3칸 타격. 타격 3칸을 보여주는 시간 */
+const STRIKE_TIME = 0.24;
 
 export type Kind = keyof typeof defs;
 export type Def = (typeof defs)[Kind];
@@ -88,7 +90,8 @@ export function updateEnemy(e: Enemy, dt: number, w: World) {
   const dx = w.px - e.x;
   const dz = w.pz - e.z;
   const dist = Math.hypot(dx, dz) || 1;
-  if (e.state !== 'windup') e.flip = dx >= 0 ? 1 : -1;
+  // 화면 좌우로 바라본다 — 아이소메트릭에선 화면 x 가 월드 (x - z) 방향이다
+  if (e.state !== 'windup') e.flip = dx - dz >= 0 ? 1 : -1;
 
   switch (e.state) {
     case 'hurt':
@@ -148,8 +151,14 @@ export function enemyFrame(e: Enemy, cols: number): { row: number; col: number }
     case 'hurt':
       return pick(RAT_ROW.hurt, RAT_FPS.hurt, true);
     case 'windup':
+      // 예고: 준비 동작 3칸을 예고 시간에 걸쳐 딱 한 번
+      return { row: RAT_ROW.attack, col: Math.min(2, Math.floor((e.t / e.def.windup) * 3)) };
     case 'recover':
-      return pick(RAT_ROW.attack, RAT_FPS.attack, e.state === 'windup');
+      // 타격 3칸을 짧게 한 번 보여주고, 쿨다운 동안은 대기 자세로 쉰다.
+      // (전에는 쿨다운 내내 공격 모션을 반복해서 때린 뒤에도 계속 앞으로 튀어나왔다)
+      if (e.t < STRIKE_TIME)
+        return { row: RAT_ROW.attack, col: 3 + Math.min(2, Math.floor((e.t / STRIKE_TIME) * 3)) };
+      return pick(RAT_ROW.idle, RAT_FPS.idle);
     case 'chase':
       return pick(RAT_ROW.move, RAT_FPS.move);
     default:

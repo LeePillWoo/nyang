@@ -1,7 +1,7 @@
 // node src/enemy.check.ts  (npm run check)
 import assert from 'node:assert/strict';
 import type { Grid } from './collide.ts';
-import { aimAt, damageEnemy, makeEnemy, punchTargets, updateEnemy, type World } from './enemy.ts';
+import { aimAt, damageEnemy, enemyFrame, makeEnemy, punchTargets, updateEnemy, type World } from './enemy.ts';
 
 const grid: Grid = { w: 9, h: 9, solid: new Array(81).fill(false) };
 const sheet = null as never; // 로직만 본다 — 그리기는 안 한다
@@ -111,3 +111,28 @@ console.log('enemy.check: ok');
 }
 
 console.log('punch.check: ok');
+
+// 공격 모션: 예고 중엔 준비 3칸만, 타격 3칸은 딱 한 번, 쿨다운 동안엔 대기 자세
+{
+  const e = makeEnemy('fat', sheet, 6, 4);
+  e.state = 'windup';
+  const cols = (t: number) => ((e.t = t), enemyFrame(e, 6));
+  assert.deepEqual(cols(0), { row: 2, col: 0 });
+  assert.deepEqual(cols(e.def.windup * 0.5), { row: 2, col: 1 });
+  assert.deepEqual(cols(e.def.windup * 0.99), { row: 2, col: 2 });
+  e.state = 'recover';
+  assert.deepEqual(cols(0), { row: 2, col: 3 }, '타격 시작');
+  assert.deepEqual(cols(0.23), { row: 2, col: 5 }, '타격 끝');
+  assert.equal(cols(0.5).row, 0, '쿨다운엔 공격 모션을 반복하지 않는다');
+  assert.equal(cols(1.5).row, 0);
+}
+
+// 바라보는 방향은 화면 좌우 기준 — 월드 x 가 같아도 z 차이로 화면 좌우가 갈린다
+{
+  const { w } = world(4, 8); // 플레이어가 월드 z 로만 떨어져 있다 → 화면에선 왼쪽 아래
+  const e = makeEnemy('sword', sheet, 4, 2);
+  updateEnemy(e, 0.016, w);
+  assert.equal(e.flip, -1, '화면 왼쪽에 있는 플레이어를 봐야 한다');
+}
+
+console.log('attack-anim.check: ok');

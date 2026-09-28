@@ -88,11 +88,30 @@ export async function loadSheet(url: string, cols: number, rows: number): Promis
       for (let x = 0; x < w; x++) if (a[off + x]) colOn[x] = true;
     }
 
-    // 1차: 프레임마다 실루엣 경계와 발 위치를 잰다.
-    // 가로 기준은 균등 칸 중심으로 잡는다 — bbox 중심을 쓰면 앞으로 뻗는 포즈에서
-    // bbox 가 넓어지는 만큼 캐릭터가 밀려 보인다.
-    const cellW = w / cols;
-    const raw = findBands(colOn, cols).map(([x0, x1], i) => {
+    // 칼끝·주먹이 옆 칸에 닿으면 사이에 빈 열이 없어 두 프레임이 한 덩어리로 잡힌다
+    // (칼 쥐·뚱보 쥐 공격 행이 5칸으로 잡혀 마지막 프레임이 사라지고 있었다).
+    // 모자란 만큼 가장 넓은 구간을, 가운데 절반에서 알파가 가장 적은 열로 가른다.
+    const bands = findBands(colOn, cols);
+    if (bands.length < cols) {
+      const cover = new Int32Array(w);
+      for (let y = y0; y <= y1; y++) {
+        const off = y * w;
+        for (let x = 0; x < w; x++) cover[x] += a[off + x];
+      }
+      while (bands.length < cols) {
+        let wi = 0;
+        for (let i = 1; i < bands.length; i++)
+          if (bands[i][1] - bands[i][0] > bands[wi][1] - bands[wi][0]) wi = i;
+        const [b0, b1] = bands[wi];
+        const q = Math.floor((b1 - b0) / 4);
+        let cut = b0 + q;
+        for (let x = b0 + q; x <= b1 - q; x++) if (cover[x] < cover[cut]) cut = x;
+        bands.splice(wi, 1, [b0, cut - 1], [cut, b1]);
+      }
+    }
+
+    // 1차: 프레임마다 실루엣 경계와 발 위치를 잰다
+    const raw = bands.map(([x0, x1]) => {
       let top = y1;
       let bot = y0;
       for (let y = y0; y <= y1; y++) {
@@ -127,7 +146,7 @@ export async function loadSheet(url: string, cols: number, rows: number): Promis
         }
       }
 
-      return { x0, x1, top, bot, footX, cx: (i + 0.5) * cellW, h: bot - top + 1 };
+      return { x0, x1, top, bot, footX, h: bot - top + 1 };
     });
 
     // 2차: 가로는 프레임별 발 위치에 그대로 맞춘다 — 공격처럼 몸이 앞으로 뻗는 모션에서
@@ -171,7 +190,8 @@ export function drawFrame(
   flip: number,
   rowScale = sheet.rowScale[row] ?? 1,
 ) {
-  const f = sheet.frames[row]?.[col];
+  const r = sheet.frames[row];
+  const f = r?.[Math.min(col, r.length - 1)]; // 칸이 모자라도 사라지지 않게
   if (!f) return;
   const s = (size / sheet.base) * rowScale;
   ctx.save();
