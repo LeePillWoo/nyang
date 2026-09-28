@@ -1,147 +1,168 @@
-import * as THREE from 'three';
-import Stats from 'three/examples/jsm/libs/stats.module.js';
-import { buildField } from './field.ts';
-import { makeCat } from './cat.ts';
-import { resolveCircle } from './collide.ts';
+import roomUrl from './assets/room-alley.png';
+import { makeCatSprite } from './cat.ts';
+import { CELL, resolveCircle } from './collide.ts';
+import { BG_H, BG_W, GRID_H, GRID_W, grid, toScreen } from './iso.ts';
 
-// GDD 3장 카메라 · 5장 스탯
-const PITCH = THREE.MathUtils.degToRad(40);
-const CAM_DISTS = [18, 26, 62]; // 근접 · 목업 체감 · 방 전체 조망 // 근접 · 중간 · 전체. C 키로 순환 (M0 테스트용)
+// GDD 5장 스탯
 const SPEED = 5; // m/s
 const RADIUS = 0.45;
 const DASH_DIST = 3;
 const DASH_TIME = 0.2;
 const DASH_CD = 0.5;
+const CAT_PX = 150; // 배경 그림 픽셀 기준 고양이 높이
 
-// 배경은 3D가 아니라 CSS 그라데이션(index.html) — 캔버스를 투명하게 둔다
-const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-renderer.setSize(innerWidth, innerHeight);
-renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-renderer.toneMapping = THREE.NeutralToneMapping;
-document.body.appendChild(renderer.domElement);
+const canvas = document.createElement('canvas');
+const ctx = canvas.getContext('2d')!;
+document.body.appendChild(canvas);
 
-const scene = new THREE.Scene();
+const room = new Image();
+room.src = roomUrl;
 
-const camera = new THREE.PerspectiveCamera(30, innerWidth / innerHeight, 1, 160);
-const camDir = new THREE.Vector3(0, Math.sin(PITCH), Math.cos(PITCH));
+const cat = makeCatSprite();
 
-scene.add(new THREE.HemisphereLight('#e8f4ff', '#ffd9ab', 1.2));
-const sun = new THREE.DirectionalLight('#fff3d2', 2.6);
-sun.castShadow = true;
-sun.shadow.mapSize.set(2048, 2048);
-sun.shadow.camera.far = 60;
-sun.shadow.normalBias = 0.03;
-const sunOffset = new THREE.Vector3(9, 18, 7);
-scene.add(sun, sun.target);
-
-// 카메라 거리에 맞춰 그림자 프러스텀을 같이 늘린다
-let camDist = 0;
-function setCamDist(d: number) {
-  camDist = d;
-  const s = d * 0.62;
-  sun.shadow.camera.left = sun.shadow.camera.bottom = -s;
-  sun.shadow.camera.right = sun.shadow.camera.top = s;
-  sun.shadow.camera.updateProjectionMatrix();
+let scale = 1;
+let ox = 0;
+let oy = 0;
+function layout() {
+  const dpr = Math.min(devicePixelRatio, 2);
+  canvas.width = Math.round(innerWidth * dpr);
+  canvas.height = Math.round(innerHeight * dpr);
+  canvas.style.width = `${innerWidth}px`;
+  canvas.style.height = `${innerHeight}px`;
+  // 배경 그림을 화면에 맞춰 넣고, 그 안에서는 그림 픽셀 좌표를 그대로 쓴다
+  scale = Math.min(canvas.width / BG_W, canvas.height / BG_H);
+  ox = (canvas.width - BG_W * scale) / 2;
+  oy = (canvas.height - BG_H * scale) / 2;
 }
-setCamDist(CAM_DISTS[1]);
-
-const field = buildField();
-scene.add(field.group);
-
-const cat = makeCat(PITCH);
-cat.group.position.set(field.spawn.x, 0, field.spawn.y);
-scene.add(cat.group);
-
-camera.position.copy(cat.group.position).addScaledVector(camDir, camDist);
-
-const stats = new Stats();
-document.body.appendChild(stats.dom);
+layout();
+addEventListener('resize', layout);
 
 const keys = new Set<string>();
+let debug = location.search.includes('grid'); // ?grid 로도 켤 수 있다
 addEventListener('keydown', (e) => {
   keys.add(e.code);
   if (e.code === 'Space') e.preventDefault();
-  if (e.code === 'KeyC') setCamDist(CAM_DISTS[(CAM_DISTS.indexOf(camDist) + 1) % CAM_DISTS.length]);
+  if (e.code === 'KeyG') debug = !debug;
 });
 addEventListener('keyup', (e) => keys.delete(e.code));
 addEventListener('blur', () => keys.clear());
-addEventListener('resize', () => {
-  camera.aspect = innerWidth / innerHeight;
-  camera.updateProjectionMatrix();
-  renderer.setSize(innerWidth, innerHeight);
-});
 
 const held = (...codes: string[]) => codes.some((c) => keys.has(c));
 
-const move = new THREE.Vector2();
-const face = new THREE.Vector2(0, 1);
-const dash = new THREE.Vector2();
+// 월드 좌표(m). 맵 중앙에서 시작
+let px = (GRID_W * CELL) / 2;
+let pz = (GRID_H * CELL) / 2;
+let faceX = 0;
+let faceZ = 1;
+let flip = 1;
+let dashX = 0;
+let dashZ = 0;
 let dashT = 0;
 let dashCd = 0;
-let flip = 1;
-let clockT = 0;
+let bob = 0;
+let last = performance.now();
+let fps = 0;
 
-const camTarget = new THREE.Vector3();
-const lookAt = new THREE.Vector3();
-const clock = new THREE.Clock();
-
-renderer.setAnimationLoop(() => {
-  const dt = Math.min(clock.getDelta(), 1 / 20);
-  clockT += dt;
+function frame(now: number) {
+  const dt = Math.min((now - last) / 1000, 1 / 20);
+  last = now;
+  fps += (1 / Math.max(dt, 1e-4) - fps) * 0.1;
   dashCd = Math.max(0, dashCd - dt);
 
-  move.set(
-    (held('KeyD', 'ArrowRight') ? 1 : 0) - (held('KeyA', 'ArrowLeft') ? 1 : 0),
-    (held('KeyS', 'ArrowDown') ? 1 : 0) - (held('KeyW', 'ArrowUp') ? 1 : 0),
-  );
-  if (move.lengthSq() > 0) {
-    move.normalize();
-    face.copy(move);
-    if (move.x !== 0) flip = Math.sign(move.x);
+  // 화면 기준 입력을 아이소메트릭 축으로 45도 돌린다
+  let mx = (held('KeyD', 'ArrowRight') ? 1 : 0) - (held('KeyA', 'ArrowLeft') ? 1 : 0);
+  let my = (held('KeyS', 'ArrowDown') ? 1 : 0) - (held('KeyW', 'ArrowUp') ? 1 : 0);
+  const len = Math.hypot(mx, my);
+  if (len > 0) {
+    mx /= len;
+    my /= len;
+    faceX = (mx + my) * Math.SQRT1_2;
+    faceZ = (my - mx) * Math.SQRT1_2;
+    if (mx !== 0) flip = Math.sign(mx);
   }
 
   if (keys.has('Space') && dashT <= 0 && dashCd <= 0) {
-    dash.copy(face);
+    dashX = faceX;
+    dashZ = faceZ;
     dashT = DASH_TIME;
     dashCd = DASH_TIME + DASH_CD;
   }
 
-  let vx = move.x * SPEED;
-  let vz = move.y * SPEED;
+  let vx = len > 0 ? (mx + my) * Math.SQRT1_2 * SPEED : 0;
+  let vz = len > 0 ? (my - mx) * Math.SQRT1_2 * SPEED : 0;
   if (dashT > 0) {
     dashT -= dt;
-    vx = dash.x * (DASH_DIST / DASH_TIME);
-    vz = dash.y * (DASH_DIST / DASH_TIME);
+    vx = dashX * (DASH_DIST / DASH_TIME);
+    vz = dashZ * (DASH_DIST / DASH_TIME);
   }
 
-  const p = resolveCircle(
-    field.grid,
-    cat.group.position.x + vx * dt,
-    cat.group.position.z + vz * dt,
-    RADIUS,
-  );
-  cat.group.position.set(p.x, 0, p.z);
+  const p = resolveCircle(grid, px + vx * dt, pz + vz * dt, RADIUS);
+  px = p.x;
+  pz = p.z;
+  bob += dt * (len > 0 ? 14 : 4);
 
-  // 구르기는 화면 안에서 한 바퀴, 평소엔 말랑한 바운스
-  if (dashT > 0) {
-    cat.sprite.rotation.z = -flip * (1 - dashT / DASH_TIME) * Math.PI * 2;
-    cat.sprite.scale.set(flip, 1, 1);
-  } else {
-    cat.sprite.rotation.z = 0;
-    const bob = Math.sin(clockT * (move.lengthSq() > 0 ? 14 : 4)) * (move.lengthSq() > 0 ? 0.06 : 0.025);
-    cat.sprite.scale.set(flip * (1 - bob * 0.6), 1 + bob, 1);
+  draw(len > 0);
+  requestAnimationFrame(frame);
+}
+
+function draw(moving: boolean) {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.setTransform(scale, 0, 0, scale, ox, oy);
+  ctx.drawImage(room, 0, 0, BG_W, BG_H);
+
+  const { sx, sy } = toScreen(px, pz);
+
+  // 발밑 그림자
+  ctx.fillStyle = 'rgba(120, 85, 55, 0.28)';
+  ctx.beginPath();
+  ctx.ellipse(sx, sy, 34, 15, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  const squash = dashT > 0 ? 0 : Math.sin(bob) * (moving ? 0.06 : 0.025);
+  const h = CAT_PX * (1 + squash);
+  const w = CAT_PX * (1 - squash * 0.6);
+  ctx.save();
+  ctx.translate(sx, sy - h / 2);
+  if (dashT > 0) ctx.rotate(-flip * (1 - dashT / DASH_TIME) * Math.PI * 2);
+  ctx.scale(flip, 1);
+  ctx.drawImage(cat, -w / 2, -h / 2, w, h);
+  ctx.restore();
+
+  if (debug) drawGrid();
+
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = '#4a3b33';
+  ctx.font = '16px system-ui, sans-serif';
+  ctx.fillText(`${fps.toFixed(0)} fps`, 12, 24);
+}
+
+const corner = (tx: number, tz: number) => toScreen(tx * CELL, tz * CELL);
+
+function drawGrid() {
+  ctx.lineWidth = 1;
+  ctx.font = '11px monospace';
+  for (let tz = 0; tz < GRID_H; tz++) {
+    for (let tx = 0; tx < GRID_W; tx++) {
+      const a = corner(tx, tz);
+      const b = corner(tx + 1, tz);
+      const c = corner(tx + 1, tz + 1);
+      const d = corner(tx, tz + 1);
+      ctx.beginPath();
+      ctx.moveTo(a.sx, a.sy);
+      ctx.lineTo(b.sx, b.sy);
+      ctx.lineTo(c.sx, c.sy);
+      ctx.lineTo(d.sx, d.sy);
+      ctx.closePath();
+      const blocked = grid.solid[tz * GRID_W + tx];
+      ctx.fillStyle = blocked ? 'rgba(220,60,60,0.35)' : 'rgba(60,140,255,0.12)';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(20,60,120,0.6)';
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(20,60,120,0.75)';
+      ctx.fillText(`${tx},${tz}`, (a.sx + c.sx) / 2 - 12, (a.sy + c.sy) / 2 + 4);
+    }
   }
+}
 
-  camTarget.copy(cat.group.position).addScaledVector(camDir, camDist);
-  camera.position.lerp(camTarget, 1 - Math.exp(-7 * dt));
-  lookAt.copy(cat.group.position).setY(0.7);
-  camera.lookAt(lookAt);
-
-  sun.position.copy(cat.group.position).add(sunOffset);
-  sun.target.position.copy(cat.group.position);
-
-  renderer.render(scene, camera);
-  stats.update();
-});
+room.decode().then(() => requestAnimationFrame(frame));

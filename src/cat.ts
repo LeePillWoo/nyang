@@ -1,4 +1,3 @@
-import * as THREE from 'three';
 
 // M0 플레이스홀더. 진짜 스프라이트 시트는 3ds Max 렌더 → 아틀라스 (GDD 11장).
 const SIZE = 256;
@@ -104,52 +103,12 @@ function drawCat(c: CanvasRenderingContext2D) {
   }
 }
 
-function canvasTexture(draw: (c: CanvasRenderingContext2D) => void, size: number) {
+/** 오프스크린 캔버스에 고양이를 한 번 그려 둔다. 실제 시트는 3ds Max 렌더로 교체 (GDD 11장). */
+export function makeCatSprite(size = SIZE): HTMLCanvasElement {
   const canvas = document.createElement('canvas');
   canvas.width = canvas.height = size;
-  draw(canvas.getContext('2d')!);
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.anisotropy = 4;
-  return tex;
-}
-
-export type Cat = { group: THREE.Group; sprite: THREE.Mesh };
-
-/** 발밑이 원점인 빌보드. pitch 는 카메라 부앙각 — 스프라이트를 카메라 정면으로 눕힌다. */
-export function makeCat(pitch: number, height = 1.5): Cat {
-  const geo = new THREE.PlaneGeometry(height, height).translate(0, height / 2, 0);
-  const sprite = new THREE.Mesh(
-    geo,
-    // ponytail: 노멀맵 없이 평면 노멀. 필드에서 붕 떠 보이면 그때 노멀 패스를 굽는다 (GDD 13장 리스크).
-    new THREE.MeshStandardMaterial({
-      map: canvasTexture(drawCat, SIZE),
-      transparent: true,
-      alphaTest: 0.05,
-      roughness: 1,
-      metalness: 0,
-    }),
-  );
-  sprite.rotation.x = -pitch;
-
-  // 발밑 블롭 섀도 — 스프라이트가 바닥에 붙어 보이게 하는 값싼 방법
-  const blob = new THREE.Mesh(
-    new THREE.CircleGeometry(0.42, 20).rotateX(-Math.PI / 2),
-    new THREE.MeshBasicMaterial({
-      map: canvasTexture((c) => {
-        const g = c.createRadialGradient(64, 64, 4, 64, 64, 62);
-        g.addColorStop(0, 'rgba(90,60,40,0.55)');
-        g.addColorStop(1, 'rgba(90,60,40,0)');
-        c.fillStyle = g;
-        c.fillRect(0, 0, 128, 128);
-      }, 128),
-      transparent: true,
-      depthWrite: false,
-    }),
-  );
-  blob.position.y = 0.02;
-
-  const group = new THREE.Group();
-  group.add(sprite, blob);
-  return { group, sprite };
+  const c = canvas.getContext('2d')!;
+  c.scale(size / SIZE, size / SIZE);
+  drawCat(c);
+  return canvas;
 }
