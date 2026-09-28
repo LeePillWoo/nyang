@@ -140,3 +140,48 @@ export function enemyFrame(e: Enemy, cols: number): { row: number; col: number }
       return pick(RAT_ROW.idle, RAT_FPS.idle);
   }
 }
+
+/** 전방 부채꼴 안에 있는 적 (냥펀치 판정) */
+export function punchTargets(
+  list: Enemy[],
+  px: number,
+  pz: number,
+  fx: number,
+  fz: number,
+  range: number,
+  arc: number,
+): Enemy[] {
+  const cosHalf = Math.cos(arc / 2);
+  return list.filter((e) => {
+    if (e.state === 'pop') return false;
+    const dx = e.x - px;
+    const dz = e.z - pz;
+    const d = Math.hypot(dx, dz);
+    if (d > range) return false;
+    return (dx * fx + dz * fz) / (d || 1) >= cosHalf;
+  });
+}
+
+/**
+ * 사거리 안에서 가장 가까운 적 쪽 단위벡터.
+ * 조준이 없으면 바라보는 방향은 마지막 이동 방향이라, 멈춰서 때리면 엉뚱한 데를 친다.
+ */
+export function aimAt(
+  list: Enemy[],
+  px: number,
+  pz: number,
+  range: number,
+): { x: number; z: number } | null {
+  let best: Enemy | null = null;
+  let bd = Infinity;
+  for (const e of list) {
+    if (e.state === 'pop') continue;
+    const d = Math.hypot(e.x - px, e.z - pz);
+    if (d <= range && d < bd) {
+      bd = d;
+      best = e;
+    }
+  }
+  if (!best || bd === 0) return null;
+  return { x: (best.x - px) / bd, z: (best.z - pz) / bd };
+}

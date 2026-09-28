@@ -1,7 +1,7 @@
 // node src/enemy.check.ts  (npm run check)
 import assert from 'node:assert/strict';
 import type { Grid } from './collide.ts';
-import { damageEnemy, makeEnemy, updateEnemy, type World } from './enemy.ts';
+import { aimAt, damageEnemy, makeEnemy, punchTargets, updateEnemy, type World } from './enemy.ts';
 
 const grid: Grid = { w: 9, h: 9, solid: new Array(81).fill(false) };
 const sheet = null as never; // 로직만 본다 — 그리기는 안 한다
@@ -86,3 +86,28 @@ const tick = (e: Parameters<typeof updateEnemy>[0], w: World, seconds: number) =
 }
 
 console.log('enemy.check: ok');
+
+// 냥펀치 판정: 앞쪽만 맞고 뒤쪽·사거리 밖은 안 맞는다
+{
+  const list = [
+    makeEnemy('sword', sheet, 5.2, 4), // 바로 앞
+    makeEnemy('bow', sheet, 2.8, 4), // 등 뒤
+    makeEnemy('fat', sheet, 9, 4), // 멀리
+  ];
+  const hit = punchTargets(list, 4, 4, 1, 0, 1.5, Math.PI * 0.7);
+  assert.equal(hit.length, 1, '앞쪽 한 마리만 맞는다');
+  assert.equal(hit[0].kind, 'sword');
+}
+
+// 자동 조준: 멈춰서 때려도 가장 가까운 적을 향한다
+{
+  const list = [makeEnemy('sword', sheet, 4, 6), makeEnemy('fat', sheet, 4, 9)];
+  const aim = aimAt(list, 4, 4, 3);
+  assert.ok(aim, '사거리 안 적을 찾아야 한다');
+  assert.ok(Math.abs(aim!.z - 1) < 1e-6 && Math.abs(aim!.x) < 1e-6, '가까운 쪽 방향');
+  // 그 방향으로 때리면 실제로 맞는다
+  assert.equal(punchTargets(list, 4, 4, aim!.x, aim!.z, 2.5, Math.PI * 0.7).length, 1);
+  assert.equal(aimAt(list, 4, 4, 1), null, '사거리 밖이면 없음');
+}
+
+console.log('punch.check: ok');

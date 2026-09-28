@@ -5,7 +5,8 @@
  */
 const ALPHA = 40;
 
-export type Frame = { sx: number; sy: number; sw: number; sh: number };
+/** ox/oy = 칸 기준 오프셋 (가로 중심, 바닥). 포즈가 변해도 캐릭터가 흔들리지 않는다. */
+export type Frame = { sx: number; sy: number; sw: number; sh: number; ox: number; oy: number };
 export type Sheet = { img: HTMLImageElement; frames: Frame[][]; base: number };
 
 /** 내용이 이어지는 구간을 찾아 want 개만 남긴다 (시트 여백의 점 노이즈는 버린다) */
@@ -81,7 +82,16 @@ export async function loadSheet(url: string, cols: number, rows: number): Promis
             break;
           }
       }
-      return { sx: x0, sy: top, sw: x1 - x0 + 1, sh: bot - top + 1 };
+      // 기준은 프레임 bbox 가 아니라 칸이다. 칸 안에서 캐릭터가 움직이는 건 그대로 두고,
+      // 칸의 가로 중심과 바닥만 고정한다 (bbox 기준이면 포즈가 바뀔 때마다 위치가 튄다).
+      return {
+        sx: x0,
+        sy: top,
+        sw: x1 - x0 + 1,
+        sh: bot - top + 1,
+        ox: x0 - (x0 + x1) / 2,
+        oy: top - y1,
+      };
     });
   });
 
@@ -103,11 +113,9 @@ export function drawFrame(
   const f = sheet.frames[row]?.[col];
   if (!f) return;
   const s = size / sheet.base;
-  const w = f.sw * s;
-  const h = f.sh * s;
   ctx.save();
   ctx.translate(cx, baseY);
   ctx.scale(flip, 1);
-  ctx.drawImage(sheet.img, f.sx, f.sy, f.sw, f.sh, -w / 2, -h, w, h);
+  ctx.drawImage(sheet.img, f.sx, f.sy, f.sw, f.sh, f.ox * s, f.oy * s, f.sw * s, f.sh * s);
   ctx.restore();
 }

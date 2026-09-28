@@ -2,17 +2,21 @@ import bowUrl from './assets/rat-bow.png';
 import fatUrl from './assets/rat-fat.png';
 import roomUrl from './assets/room-alley.png';
 import swordUrl from './assets/rat-sword.png';
+import { sfxHit, sfxHurt, sfxPop, unlockAudio } from './audio.ts';
 import { CAT_FPS, CAT_ROW, loadCat } from './cat.ts';
 import { CELL, resolveCircle } from './collide.ts';
 import {
+  aimAt,
   damageEnemy,
   enemyFrame,
   makeEnemy,
+  punchTargets,
   updateEnemy,
   type Enemy,
   type Kind,
   type World,
 } from './enemy.ts';
+import { drawFx, FX_LIFE, FX_ROW, fxReady, type Fx } from './fx.ts';
 import { BG_H, BG_W, GRID_H, GRID_W, grid, toScreen } from './iso.ts';
 import { drawFrame, loadSheet, type Sheet } from './sheet.ts';
 
@@ -25,7 +29,7 @@ const DASH_CD = 0.5;
 const MAX_HP = 100;
 const START_LIVES = 3;
 const PUNCH_DMG = 10;
-const PUNCH_RANGE = 1.5;
+const PUNCH_RANGE = 1.7;
 const PUNCH_ARC = Math.PI * 0.7;
 const PUNCH_TIME = 0.28;
 const PUNCH_HIT = 0.1; // 시작 후 판정까지
@@ -64,6 +68,7 @@ const keys = new Set<string>();
 let debug = location.search.includes('grid');
 let punchQueued = false;
 addEventListener('keydown', (e) => {
+  unlockAudio();
   keys.add(e.code);
   if (e.code === 'Space') e.preventDefault();
   if (e.code === 'KeyG') debug = !debug;
@@ -73,6 +78,7 @@ addEventListener('keydown', (e) => {
 addEventListener('keyup', (e) => keys.delete(e.code));
 addEventListener('blur', () => keys.clear());
 canvas.addEventListener('mousedown', () => {
+  unlockAudio();
   punchQueued = true;
 });
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -117,6 +123,14 @@ const P = {
 let enemies: Enemy[] = [];
 let arrows: Arrow[] = [];
 let pops: Pop[] = [];
+let fxs: Fx[] = [];
+let shake = 0;
+const addFx = (x: number, z: number, row: number, size: number) =>
+  fxs.push({ x, z, row, t: 0, size, rot: Math.random() * Math.PI * 2 });
+/** 화면 흔들기. 모든 타격이 아니라 마무리 일격·아픈 피격에만 (멀미 방지) */
+const shakeBy = (v: number) => {
+  shake = Math.max(shake, v);
+};
 const addPop = (x: number, z: number, n: number, hurt = false, h = 150) =>
   pops.push({ x, z, text: String(n), t: 0, dx: (Math.random() - 0.5) * 40, hurt, h });
 let phase: 'playing' | 'cleared' | 'napped' = 'playing';
@@ -148,6 +162,8 @@ function reset() {
   });
   arrows = [];
   pops = [];
+  fxs = [];
+  shake = 0;
   phase = 'playing';
 }
 
@@ -156,6 +172,9 @@ function hitPlayer(dmg: number, fx: number, fz: number) {
   P.hp -= dmg;
   P.hurtT = 0.3;
   addPop(P.x, P.z, dmg, true, CAT_PX);
+  addFx(P.x, P.z, FX_ROW.slash, 150);
+  sfxHurt();
+  if (dmg >= 12) shakeBy(15); // 아픈 공격만
   const d = Math.hypot(P.x - fx, P.z - fz) || 1;
   P.kx = ((P.x - fx) / d) * 4;
   P.kz = ((P.z - fz) / d) * 4;
@@ -165,6 +184,7 @@ function hitPlayer(dmg: number, fx: number, fz: number) {
   }
   // 목숨 하나 쓰고 그 자리에서 부활 (GDD 5장 아홉 목숨)
   P.lives -= 1;
+  shakeBy(24);
   if (P.lives <= 0) {
     P.hp = 0;
     phase = 'napped';
@@ -214,6 +234,12 @@ function update(dt: number) {
   }
 
   if (alive && punchQueued && P.punchT <= 0 && P.dashT <= 0) {
+    const aim = aimAt(enemies, P.x, P.z, PUNCH_RANGE);
+    if (aim) {
+      P.faceX = aim.x;
+      P.faceZ = aim.z;
+      P.flip = aim.x - aim.z >= 0 ? 1 : -1; // 아이소메트릭에선 x-z 가 화면 좌우
+    }
     P.punchT = PUNCH_TIME;
     P.punchHit = false;
     P.animT = 0;
@@ -233,16 +259,20 @@ function update(dt: number) {
     P.punchT -= dt;
     if (!P.punchHit && PUNCH_TIME - P.punchT >= PUNCH_HIT) {
       P.punchHit = true;
-      for (const e of enemies) {
-        if (e.state === 'pop') continue;
-        const dx = e.x - P.x;
-        const dz = e.z - P.z;
-        const d = Math.hypot(dx, dz);
-        if (d > PUNCH_RANGE) continue;
-        if ((dx * P.faceX + dz * P.faceZ) / (d || 1) < Math.cos(PUNCH_ARC / 2)) continue;
+      const targets = punchTargets(enemies, P.x, P.z, P.faceX, P.faceZ, PUNCH_RANGE, PUNCH_ARC);
+      let finish = false;
+      for (const e of targets) {
         damageEnemy(e, PUNCH_DMG, P.x, P.z);
         addPop(e.x, e.z, PUNCH_DMG, false, e.def.size);
+        const down = e.state === 'pop';
+        addFx(e.x, e.z, down ? FX_ROW.burst : FX_ROW.spark, down ? 190 : 125);
+        if (down) {
+          finish = true;
+          sfxPop();
+        }
       }
+      if (targets.length) sfxHit(finish);
+      if (finish) shakeBy(9);
     }
   }
 
@@ -289,6 +319,10 @@ function update(dt: number) {
   for (const q of pops) q.t += dt;
   pops = pops.filter((q) => q.t < POP_LIFE);
 
+  for (const f of fxs) f.t += dt;
+  fxs = fxs.filter((f) => f.t < FX_LIFE);
+  shake = Math.max(0, shake - dt * 46);
+
   if (phase === 'playing' && enemies.length === 0) phase = 'cleared';
 }
 
@@ -302,7 +336,9 @@ function blob(sx: number, sy: number, r: number) {
 function draw() {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.setTransform(scale, 0, 0, scale, ox, oy);
+  const jx = shake > 0 ? (Math.random() - 0.5) * shake : 0;
+  const jy = shake > 0 ? (Math.random() - 0.5) * shake * 0.7 : 0;
+  ctx.setTransform(scale, 0, 0, scale, ox + jx, oy + jy);
   ctx.drawImage(room, 0, 0, BG_W, BG_H);
 
   // 공격 예고 데칼 — 색을 하나로 고정해 가독성 확보 (GDD 8장)
@@ -380,6 +416,11 @@ function draw() {
     ctx.moveTo(sx - a.dx * 14, sy - 24 - a.dz * 7);
     ctx.lineTo(sx + a.dx * 14, sy - 24 + a.dz * 7);
     ctx.stroke();
+  }
+
+  for (const f of fxs) {
+    const t = toScreen(f.x, f.z);
+    drawFx(ctx, f, t.sx, t.sy - f.size * 0.3);
   }
 
   drawPops();
@@ -506,7 +547,7 @@ const step = (t: string) => {
 
 (async () => {
   step('배경');
-  await roomReady;
+  await Promise.all([roomReady, fxReady]);
   step('고양이 시트');
   catSheet = await loadCat();
   step('칼 쥐');
