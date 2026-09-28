@@ -1,0 +1,38 @@
+{
+  "sword": {
+    "name": "칼 쥐",
+    "hp": 30,
+    "speed": 3.2,
+    "damage": 12,
+    "range": 1.2,
+    "windup": 0.45,
+    "cooldown": 1.1,
+    "size": 140,
+    "keepDist": 0,
+    "arrowSpeed": 0
+  },
+  "bow": {
+    "name": "활 쥐",
+    "hp": 20,
+    "speed": 2.6,
+    "damage": 8,
+    "range": 7,
+    "windup": 0.55,
+    "cooldown": 1.9,
+    "size": 130,
+    "keepDist": 4.5,
+    "arrowSpeed": 9
+  },
+  "fat": {
+    "name": "뚱보 쥐",
+    "hp": 60,
+    "speed": 2,
+    "damage": 16,
+    "range": 1.4,
+    "windup": 0.7,
+    "cooldown": 2,
+    "size": 165,
+    "keepDist": 0,
+    "arrowSpeed": 0
+  }
+}
