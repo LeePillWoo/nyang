@@ -88,8 +88,11 @@ export async function loadSheet(url: string, cols: number, rows: number): Promis
       for (let x = 0; x < w; x++) if (a[off + x]) colOn[x] = true;
     }
 
-    // 1차: 프레임마다 실루엣 경계와 발 위치를 잰다
-    const raw = findBands(colOn, cols).map(([x0, x1]) => {
+    // 1차: 프레임마다 실루엣 경계와 발 위치를 잰다.
+    // 가로 기준은 균등 칸 중심으로 잡는다 — bbox 중심을 쓰면 앞으로 뻗는 포즈에서
+    // bbox 가 넓어지는 만큼 캐릭터가 밀려 보인다.
+    const cellW = w / cols;
+    const raw = findBands(colOn, cols).map(([x0, x1], i) => {
       let top = y1;
       let bot = y0;
       for (let y = y0; y <= y1; y++) {
@@ -124,11 +127,12 @@ export async function loadSheet(url: string, cols: number, rows: number): Promis
         }
       }
 
-      return { x0, x1, top, bot, footX, h: bot - top + 1 };
+      return { x0, x1, top, bot, footX, cx: (i + 0.5) * cellW, h: bot - top + 1 };
     });
 
-    // 2차: 앵커를 행 중앙값으로 고정한다. 프레임별 추정값을 그대로 쓰면 추정 오차가 떨림이 된다.
-    const dx = median(raw.map((r) => r.footX - (r.x0 + r.x1) / 2));
+    // 2차: 가로는 프레임별 발 위치에 그대로 맞춘다 — 공격처럼 몸이 앞으로 뻗는 모션에서
+    // 행 대표값 하나로 묶으면 캐릭터가 통째로 밀려 보인다.
+    // 세로는 행 중앙값으로 고정한다 (프레임마다 재면 지면이 출렁인다).
     const anchorY = median(raw.map((r) => r.bot));
     rowH.push(median(raw.map((r) => r.h)));
 
@@ -138,7 +142,7 @@ export async function loadSheet(url: string, cols: number, rows: number): Promis
         sy: r.top,
         sw: r.x1 - r.x0 + 1,
         sh: r.bot - r.top + 1,
-        ox: r.x0 - ((r.x0 + r.x1) / 2 + dx),
+        ox: r.x0 - r.footX,
         oy: r.top - anchorY,
       })),
     );

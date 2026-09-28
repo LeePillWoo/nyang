@@ -406,11 +406,8 @@ function draw() {
       else if (P.punchT > 0)
         col = Math.min(COLS - 1, Math.floor((1 - P.punchT / PUNCH_TIME) * COLS));
       else col = Math.floor(P.animT * (row === CAT_ROW.run ? CAT_FPS.run : CAT_FPS.idle)) % COLS;
-      ctx.save();
-      if (P.invT > 0) ctx.globalAlpha = 0.45 + 0.55 * Math.abs(Math.sin(P.invT * 22));
       P.dispScale = ease(P.dispScale, catSheet.rowScale[row] ?? 1);
       drawFrame(ctx, catSheet, row, col, ps.sx, ps.sy, CAT_PX, P.flip, P.dispScale);
-      ctx.restore();
     },
   });
 
