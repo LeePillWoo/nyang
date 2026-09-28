@@ -80,6 +80,9 @@ canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 const held = (...codes: string[]) => codes.some((c) => keys.has(c));
 const tile = (tx: number, tz: number) => ({ x: (tx + 0.5) * CELL, z: (tz + 0.5) * CELL });
 
+type Pop = { x: number; z: number; text: string; t: number; dx: number; hurt: boolean; h: number };
+const POP_LIFE = 0.85;
+
 type Arrow = {
   x: number;
   z: number;
@@ -113,6 +116,9 @@ const P = {
 
 let enemies: Enemy[] = [];
 let arrows: Arrow[] = [];
+let pops: Pop[] = [];
+const addPop = (x: number, z: number, n: number, hurt = false, h = 150) =>
+  pops.push({ x, z, text: String(n), t: 0, dx: (Math.random() - 0.5) * 40, hurt, h });
 let phase: 'playing' | 'cleared' | 'napped' = 'playing';
 const sheets = {} as Record<Kind, Sheet>;
 let catSheet: Sheet;
@@ -141,6 +147,7 @@ function reset() {
     return makeEnemy(k, sheets[k], p.x, p.z);
   });
   arrows = [];
+  pops = [];
   phase = 'playing';
 }
 
@@ -148,6 +155,7 @@ function hitPlayer(dmg: number, fx: number, fz: number) {
   if (phase !== 'playing' || P.invT > 0 || P.dashT > 0) return; // 구르기 중 무적
   P.hp -= dmg;
   P.hurtT = 0.3;
+  addPop(P.x, P.z, dmg, true, CAT_PX);
   const d = Math.hypot(P.x - fx, P.z - fz) || 1;
   P.kx = ((P.x - fx) / d) * 4;
   P.kz = ((P.z - fz) / d) * 4;
@@ -233,6 +241,7 @@ function update(dt: number) {
         if (d > PUNCH_RANGE) continue;
         if ((dx * P.faceX + dz * P.faceZ) / (d || 1) < Math.cos(PUNCH_ARC / 2)) continue;
         damageEnemy(e, PUNCH_DMG, P.x, P.z);
+        addPop(e.x, e.z, PUNCH_DMG, false, e.def.size);
       }
     }
   }
@@ -276,6 +285,9 @@ function update(dt: number) {
     }
   }
   arrows = arrows.filter((a) => a.life > 0);
+
+  for (const q of pops) q.t += dt;
+  pops = pops.filter((q) => q.t < POP_LIFE);
 
   if (phase === 'playing' && enemies.length === 0) phase = 'cleared';
 }
@@ -370,8 +382,33 @@ function draw() {
     ctx.stroke();
   }
 
+  drawPops();
   if (debug) drawGrid();
   drawHud();
+}
+
+/** 떠오르며 사라지는 데미지 숫자 */
+function drawPops() {
+  ctx.textAlign = 'center';
+  ctx.lineJoin = 'round';
+  ctx.font = 'bold 34px system-ui, sans-serif';
+  for (const q of pops) {
+    const { sx, sy } = toScreen(q.x, q.z);
+    const k = q.t / POP_LIFE;
+    ctx.save();
+    ctx.globalAlpha = k < 0.65 ? 1 : Math.max(0, 1 - (k - 0.65) / 0.35);
+    ctx.translate(sx + q.dx, sy - q.h * 0.72 - 54 * (1 - (1 - k) ** 2));
+    // 튀어나오는 느낌으로 처음 잠깐 크게
+    const pop = k < 0.18 ? 1 + (0.18 - k) * 2.6 : 1;
+    ctx.scale(pop, pop);
+    ctx.lineWidth = 6;
+    ctx.strokeStyle = 'rgba(86,58,44,0.85)';
+    ctx.strokeText(q.text, 0, 0);
+    ctx.fillStyle = q.hurt ? '#ff9083' : '#ffd84a';
+    ctx.fillText(q.text, 0, 0);
+    ctx.restore();
+  }
+  ctx.textAlign = 'left';
 }
 
 function enemyHpBar(e: Enemy, sx: number, sy: number) {
