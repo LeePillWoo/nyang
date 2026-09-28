@@ -7,10 +7,12 @@ import { CAT_FPS, CAT_ROW, loadCat } from './cat.ts';
 import { CELL, resolveCircle } from './collide.ts';
 import {
   aimAt,
+  assignSides,
   damageEnemy,
   enemyFrame,
   makeEnemy,
   punchTargets,
+  separate,
   updateEnemy,
   type Enemy,
   type Kind,
@@ -66,6 +68,20 @@ addEventListener('resize', layout);
 
 const keys = new Set<string>();
 let debug = location.search.includes('grid');
+
+// ?trace — tools/verify.mjs 가 쓴다. 프레임마다 실제로 그린 사각형을 남겨 튐·사라짐을 잡는다.
+const trace: Record<string, unknown>[] | null = location.search.includes('trace') ? [] : null;
+if (trace) Object.assign(window, { __trace: trace });
+function traceDraw(who: string, sh: Sheet, row: number, col: number, sx: number, sy: number, size: number, flip: number, rs: number, extra: object) {
+  if (!trace) return;
+  const r = sh.frames[row] ?? [];
+  const f = r[Math.min(col, r.length - 1)];
+  if (!f) return;
+  const k = (size / sh.base) * rs;
+  const a = sx + flip * f.ox * k;
+  const b = sx + flip * (f.ox + f.sw) * k;
+  trace.push({ t: performance.now(), who, row, col, clamped: col >= r.length, flip, sx, sy, left: Math.min(a, b), right: Math.max(a, b), alpha: ctx.globalAlpha, ...extra });
+}
 let punchQueued = false;
 addEventListener('keydown', (e) => {
   unlockAudio();
@@ -304,7 +320,9 @@ function update(dt: number) {
 
   world.px = P.x;
   world.pz = P.z;
+  assignSides(enemies, P.x, P.z);
   for (const e of enemies) updateEnemy(e, dt, world);
+  separate(enemies, P.x, P.z, grid);
   enemies = enemies.filter((e) => !(e.state === 'pop' && e.t > 0.6));
 
   for (const a of arrows) {
@@ -378,6 +396,7 @@ function draw() {
           blob(sx, sy, e.def.size * 0.24);
         }
         e.dispScale = ease(e.dispScale, e.sheet.rowScale[f.row] ?? 1);
+        traceDraw(e.kind, e.sheet, f.row, f.col, sx, sy, e.def.size, e.flip, e.dispScale, { state: e.state });
         drawFrame(ctx, e.sheet, f.row, f.col, sx, sy, e.def.size, e.flip, e.dispScale);
         ctx.restore();
         if (!popping) enemyHpBar(e, sx, sy);
@@ -407,6 +426,7 @@ function draw() {
         col = Math.min(COLS - 1, Math.floor((1 - P.punchT / PUNCH_TIME) * COLS));
       else col = Math.floor(P.animT * (row === CAT_ROW.run ? CAT_FPS.run : CAT_FPS.idle)) % COLS;
       P.dispScale = ease(P.dispScale, catSheet.rowScale[row] ?? 1);
+      traceDraw('cat', catSheet, row, col, ps.sx, ps.sy, CAT_PX, P.flip, P.dispScale, { hurtT: P.hurtT });
       drawFrame(ctx, catSheet, row, col, ps.sx, ps.sy, CAT_PX, P.flip, P.dispScale);
     },
   });
@@ -563,6 +583,7 @@ const step = (t: string) => {
   step('뚱보 쥐');
   sheets.fat = await loadSheet(fatUrl, 6, 5);
   reset();
+  if (trace) Object.assign(window, { __sheets: { cat: catSheet, ...sheets } });
   help.textContent = 'WASD 이동 · 클릭/J 냥펀치 · Space 구르기 · R 다시 · G 격자';
   requestAnimationFrame(frame);
 })();

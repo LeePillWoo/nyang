@@ -1,7 +1,7 @@
 // node src/enemy.check.ts  (npm run check)
 import assert from 'node:assert/strict';
 import type { Grid } from './collide.ts';
-import { aimAt, damageEnemy, enemyFrame, makeEnemy, punchTargets, updateEnemy, type World } from './enemy.ts';
+import { aimAt, assignSides, damageEnemy, enemyFrame, makeEnemy, punchTargets, separate, updateEnemy, type World } from './enemy.ts';
 
 const grid: Grid = { w: 9, h: 9, solid: new Array(81).fill(false) };
 const sheet = null as never; // 로직만 본다 — 그리기는 안 한다
@@ -136,3 +136,40 @@ console.log('punch.check: ok');
 }
 
 console.log('attack-anim.check: ok');
+
+// 근접 쥐는 고양이 위·아래가 아니라 화면 옆자리로 붙어서 때린다 (몸을 가리지 않게)
+{
+  const { w, log } = world(8, 8);
+  const e = makeEnemy('fat', sheet, 11, 11); // 화면상 고양이 바로 아래에서 출발
+  tick(e, w, 4);
+  const h = (w.px - e.x - (w.pz - e.z)) * Math.SQRT1_2; // 화면 가로 거리
+  const v = (w.px - e.x + (w.pz - e.z)) * Math.SQRT1_2; // 화면 세로 거리
+  assert.ok(log.hits > 0, '옆자리에 붙은 뒤 때려야 한다');
+  assert.ok(Math.abs(v) < 0.7, `세로로 겹치면 안 된다: ${v.toFixed(2)}`);
+  assert.ok(Math.abs(h) > 1.2, `옆으로 떨어져 서야 한다: ${h.toFixed(2)}`);
+}
+
+// 몸끼리 겹치면 비켜선다: 고양이는 그대로, 쥐만 밀린다
+{
+  const a = makeEnemy('sword', sheet, 4.3, 4);
+  const b = makeEnemy('fat', sheet, 4.4, 4.1);
+  separate([a, b], 4, 4, grid);
+  assert.ok(Math.hypot(a.x - 4, a.z - 4) >= 0.999, '고양이와 1m 이상');
+  assert.ok(Math.hypot(b.x - 4, b.z - 4) >= 0.999);
+  assert.ok(Math.hypot(a.x - b.x, a.z - b.z) >= 1.0, '쥐끼리도 떨어진다');
+}
+
+console.log('spacing.check: ok');
+
+// 근접 쥐 둘이 같은 쪽에서 오면 한 마리는 반대편 옆자리로 간다
+{
+  const near = makeEnemy('sword', sheet, 6, 3); // 둘 다 고양이의 화면 오른쪽
+  const far = makeEnemy('fat', sheet, 8, 2);
+  const bow = makeEnemy('bow', sheet, 7, 1);
+  assignSides([far, bow, near], 4, 4);
+  assert.equal(near.side, 1, '가까운 쥐가 자기 쪽을 잡는다');
+  assert.equal(far.side, -1, '다음 쥐는 비어 있는 반대쪽');
+  assert.equal(bow.side, 0, '원거리 쥐는 자리를 안 받는다');
+}
+
+console.log('sides.check: ok');

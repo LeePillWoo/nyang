@@ -4,10 +4,12 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build --base=./",
     "preview": "vite preview",
-    "check": "node src/collide.check.ts && node src/enemy.check.ts"
+    "check": "node src/collide.check.ts && node src/enemy.check.ts",
+    "verify": "npm run build && node tools/verify.mjs"
   },
   "type": "module",
   "devDependencies": {
+    "puppeteer-core": "^25.12.0",
     "typescript": "^7.0.2",
     "vite": "^8.3.0"
   },

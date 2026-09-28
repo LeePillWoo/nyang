@@ -4,13 +4,13 @@
  * 시트가 균등 격자에 정렬돼 있지 않아서 고정 크기로 자르면 발이 잘리고 위치가 튄다.
  * 그래서 알파를 훑어 실제 칸을 찾고, 다시 두 가지를 보정한다.
  *
- *  1) 앵커  — 프레임마다 발바닥(실루엣 하단)을 추정하되, 추정 오차가 그대로 떨림이 되므로
- *             행 단위 중앙값으로 고정한다. 의도된 움직임은 남고 배치 노이즈만 걷힌다.
+ *  1) 앵커  — 가로는 프레임마다 몸 무게중심(전체 픽셀 x 의 중앙값)에 맞춘다. 꼬리·칼·주먹처럼
+ *             가는 부분은 거의 영향이 없어서, 공격 때 몸이 앞으로 밀려나오지 않고 돌아설 때도
+ *             몸이 제자리에서 뒤집힌다. 세로는 행 단위 발바닥 중앙값으로 고정해 땅에 붙인다.
  *  2) 배율  — 행마다 캐릭터 크기가 다르다(이 시트는 151~181px, 17% 차이). 행별 유효 높이로
  *             정규화해서 모션이 바뀔 때 크기가 점프하지 않게 한다.
  */
 const ALPHA = 40;
-const FOOT_BAND = 0.15; // 발 위치를 볼 실루엣 하단 비율. 꼬리에 끌려가지 않게 하단만 본다
 
 export type Frame = { sx: number; sy: number; sw: number; sh: number; ox: number; oy: number };
 export type Sheet = {
@@ -124,34 +124,30 @@ export async function loadSheet(url: string, cols: number, rows: number): Promis
           }
       }
 
-      // 발 x: 하단 띠에 있는 픽셀들의 x 중앙값
-      const band = Math.max(2, Math.round((bot - top) * FOOT_BAND));
-      const counts = new Int32Array(x1 - x0 + 1);
-      let total = 0;
-      for (let y = Math.max(top, bot - band); y <= bot; y++) {
+      // 무게중심 x: 프레임 전체 픽셀의 x 중앙값. 꼬리·칼처럼 가는 부분은 거의 영향이 없다
+      const all = new Int32Array(x1 - x0 + 1);
+      let n = 0;
+      for (let y = top; y <= bot; y++) {
         const off = y * w;
         for (let x = x0; x <= x1; x++)
           if (a[off + x]) {
-            counts[x - x0]++;
-            total++;
+            all[x - x0]++;
+            n++;
           }
       }
-      let acc = 0;
-      let footX = (x0 + x1) / 2;
-      for (let i = 0; i < counts.length; i++) {
-        acc += counts[i];
-        if (acc * 2 >= total) {
-          footX = x0 + i;
+      let massX = (x0 + x1) / 2;
+      for (let i = 0, c = 0; i < all.length; i++) {
+        c += all[i];
+        if (c * 2 >= n) {
+          massX = x0 + i;
           break;
         }
       }
 
-      return { x0, x1, top, bot, footX, h: bot - top + 1 };
+      return { x0, x1, top, bot, massX, h: bot - top + 1 };
     });
 
-    // 2차: 가로는 프레임별 발 위치에 그대로 맞춘다 — 공격처럼 몸이 앞으로 뻗는 모션에서
-    // 행 대표값 하나로 묶으면 캐릭터가 통째로 밀려 보인다.
-    // 세로는 행 중앙값으로 고정한다 (프레임마다 재면 지면이 출렁인다).
+    // 2차: 세로 바닥은 행 중앙값으로 고정한다 (프레임마다 재면 지면이 출렁인다)
     const anchorY = median(raw.map((r) => r.bot));
     rowH.push(median(raw.map((r) => r.h)));
 
@@ -161,7 +157,7 @@ export async function loadSheet(url: string, cols: number, rows: number): Promis
         sy: r.top,
         sw: r.x1 - r.x0 + 1,
         sh: r.bot - r.top + 1,
-        ox: r.x0 - r.footX,
+        ox: r.x0 - r.massX,
         oy: r.top - anchorY,
       })),
     );
