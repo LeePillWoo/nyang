@@ -4,6 +4,7 @@
 // 못 잡는다. 여기서는 Chrome 을 직접 띄워 루프를 실제로 돌리고, 게임의 ?trace 훅이
 // 남긴 프레임별 그리기 기록을 분석한다. 눈으로 볼 연속 촬영은 tools/out/ 에 저장한다.
 import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import puppeteer from 'puppeteer-core';
 import { preview } from 'vite';
 
@@ -12,6 +13,12 @@ const JUMP_FAIL_PX = 60; // 이보다 크게 튀면 실패. 돌아설 때 꼬리
 const MERGE_RATIO = 1.8; // 평소 폭의 이 배를 넘으면 옆 프레임과 합쳐진 것
 const VIEW = { width: 1200, height: 676 };
 const OUT = new URL('./out/', import.meta.url);
+const fsPath = (u) => fileURLToPath(u);
+const readJson = (rel) => JSON.parse(fs.readFileSync(new URL(rel, import.meta.url), 'utf8'));
+const FIELD = readJson('../src/data/field.json');
+const ROOM = readJson('../src/data/rooms.json').alley;
+// 던전 나가는 곳(맵의 'E') 첫 칸 가운데, 월드 좌표 m (타일 2m)
+const EXIT = ROOM.map.flatMap((row, z) => [...row].flatMap((c, x) => (c === 'E' ? [[x * 2 + 1, z * 2 + 1]] : [])))[0];
 
 const CHROME =
   process.env.CHROME_PATH ??
@@ -41,18 +48,41 @@ const browser = await puppeteer.launch({
   defaultViewport: VIEW,
 });
 
-async function open() {
+/** where: 'dungeon' 이면 던전에서 바로 시작, 'field' 면 게임처럼 필드에서 시작 */
+async function open(where = 'dungeon') {
   const page = await browser.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
-  await page.goto(base + '?trace', { waitUntil: 'load' });
+  await page.goto(base + '?trace' + (where === 'dungeon' ? '&dungeon' : ''), { waitUntil: 'load' });
   await page.waitForFunction(() => window.__sheets, { timeout: 60000 });
   return { page, errors };
 }
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * 키를 눌러 목표까지 걸어간다. 40ms 마다 위치를 다시 보고 누를 키를 고친다 (쥐에게 밀려도 따라간다).
+ * keysFor(pos, target) → 누를 키 코드 배열. done() 이 참이 되거나 시간이 다 되면 멈춘다.
+ */
+async function walk(page, getPos, target, keysFor, done, ms = 8000) {
+  let held = [];
+  const set = async (want) => {
+    for (const k of held) if (!want.includes(k)) await page.keyboard.up(k);
+    for (const k of want) if (!held.includes(k)) await page.keyboard.down(k);
+    held = want;
+  };
+  const t0 = Date.now();
+  while (Date.now() - t0 < ms && !(await page.evaluate(done))) {
+    await set(keysFor(await page.evaluate(getPos), target));
+    await sleep(40);
+  }
+  await set([]);
+  return page.evaluate(done);
+}
+
 try {
   // 1) 시트 슬라이스: 모든 행이 6칸이어야 한다 (모자라면 프레임이 합쳐졌거나 사라진 것)
-  const { page, errors } = await open();
+  const { page, errors } = await open('dungeon');
   console.log('\n[시트]');
   const sheets = await page.evaluate(() =>
     Object.fromEntries(Object.entries(window.__sheets).map(([k, s]) => [k, s.frames.map((r) => r.length)])),
@@ -103,9 +133,59 @@ try {
     check(worst <= JUMP_FAIL_PX, `${who}: 가장 크게 튄 양 ${worst.toFixed(0)}px ${at}`);
   }
   await page.close();
-
-  // 4) 눈으로 볼 연속 촬영: 공격 순간과 피격 순간
   fs.mkdirSync(OUT, { recursive: true });
+
+  // 4) 왕복: 필드에서 시작 → 집 앞 워프로 걸어가 머문다 → 던전 → 노란 매트로 걸어 나간다 → 필드
+  console.log('\n[필드 ↔ 던전 왕복]');
+  {
+    const { page, errors } = await open('field');
+    const game = await page.evaluate(() => ({ scene: __game.scene, x: __game.field.x, y: __game.field.y }));
+    check(game.scene === 'field', `필드에서 시작 (장면 ${game.scene})`);
+
+    await page.keyboard.down('KeyD');
+    await sleep(400);
+    await page.keyboard.up('KeyD');
+    const moved = await page.evaluate(() => __game.field.x);
+    check(moved > game.x + 20, `D 키로 오른쪽으로 걷는다 (${game.x.toFixed(0)} → ${moved.toFixed(0)})`);
+
+    // 필드: 화면 기준 방향키
+    const fieldKeys = (p, t) => [
+      ...(t[0] - p.x > 5 ? ['KeyD'] : t[0] - p.x < -5 ? ['KeyA'] : []),
+      ...(t[1] - p.y > 4 ? ['KeyS'] : t[1] - p.y < -4 ? ['KeyW'] : []),
+    ];
+    const warp = await page.evaluate(() => __game.field.warp ?? null);
+    const warpAt = FIELD.warps[0].at;
+    await walk(page, () => ({ x: __game.field.x, y: __game.field.y }), warpAt, fieldKeys, () => __game.field.dwell > 0.3);
+    await page.screenshot({ path: fsPath(new URL('field-warp.png', OUT)) });
+    const entered = await page.waitForFunction(() => __game.scene === 'dungeon', { timeout: 4000 }).then(() => true, () => false);
+    check(entered && warp === null, '워프에 머물면 던전으로 들어간다');
+
+    await sleep(500); // 덮개가 걷히길 기다린다
+    await page.screenshot({ path: fsPath(new URL('dungeon-exit.png', OUT)) });
+    // 던전: 원하는 월드 방향 → 화면 방향키 (아이소메트릭 45도)
+    const dungeonKeys = (p, t) => {
+      const fx = t[0] - p.x;
+      const fz = t[1] - p.z;
+      const d = Math.hypot(fx, fz) || 1;
+      const mx = ((fx - fz) / d) * Math.SQRT1_2;
+      const my = ((fx + fz) / d) * Math.SQRT1_2;
+      return [...(mx > 0.35 ? ['KeyD'] : mx < -0.35 ? ['KeyA'] : []), ...(my > 0.35 ? ['KeyS'] : my < -0.35 ? ['KeyW'] : [])];
+    };
+    const left = await walk(page, () => __game.cat, EXIT, dungeonKeys, () => __game.scene === 'field', 10000);
+    check(left, '노란 매트를 밟으면 필드로 나온다');
+    await sleep(500);
+    const back = await page.evaluate(() => ({ x: __game.field.x, y: __game.field.y, armed: __game.field.armed }));
+    const [bx, by] = FIELD.warps[0].back;
+    // 도착 순간 아직 누르고 있던 키로 몇 픽셀 걸을 수 있다 (게임에서도 정상 동작)
+    check(Math.abs(back.x - bx) < 15 && Math.abs(back.y - by) < 15, `집 앞으로 돌아온다 (${back.x.toFixed(0)}, ${back.y.toFixed(0)})`);
+    await sleep(1500);
+    check((await page.evaluate(() => __game.scene)) === 'field', '돌아오자마자 다시 빨려 들어가지 않는다');
+    await page.screenshot({ path: fsPath(new URL('field-back.png', OUT)) });
+    check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
+    await page.close();
+  }
+
+  // 5) 눈으로 볼 연속 촬영: 공격 순간과 피격 순간
   console.log('\n[연속 촬영] tools/out/');
   for (const [who, when, file] of [
     ['fat', 'windup', 'fat-attack.png'],
@@ -171,6 +251,6 @@ async function burst(who, when, file) {
     S,
     oy,
   );
-  await page.screenshot({ path: decodeURIComponent(file.pathname).replace(/^\/(\w:)/, '$1') });
+  await page.screenshot({ path: fsPath(file) });
   await page.close();
 }

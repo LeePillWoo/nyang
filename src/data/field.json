@@ -1,0 +1,20 @@
+{
+  "name": "바깥 필드",
+  "size": [1672, 941],
+  "start": [1450, 672],
+  "zoom": 2,
+  "speed": 170,
+  "vertical": 0.72,
+  "catSize": 58,
+  "warps": [
+    {
+      "id": "harbor-house",
+      "label": "던전",
+      "at": [1476, 652],
+      "r": 18,
+      "dwell": 0.8,
+      "to": "alley",
+      "back": [1450, 672]
+    }
+  ]
+}

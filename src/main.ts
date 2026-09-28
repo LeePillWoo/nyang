@@ -1,6 +1,6 @@
 import bowUrl from './assets/rat-bow.png';
 import fatUrl from './assets/rat-fat.png';
-import roomUrl from './assets/room-alley.png';
+import roomUrl from './assets/room-alley.webp';
 import swordUrl from './assets/rat-sword.png';
 import { sfxHit, sfxHurt, sfxPop, unlockAudio } from './audio.ts';
 import { CAT_FPS, CAT_ROW, loadCat } from './cat.ts';
@@ -18,8 +18,10 @@ import {
   type Kind,
   type World,
 } from './enemy.ts';
+import { drawField, fieldReady } from './field-draw.ts';
+import { backFrom, FIELD, makeFieldState, updateField, type FieldState } from './field.ts';
 import { drawFx, FX_LIFE, FX_ROW, fxReady, type Fx } from './fx.ts';
-import { BG_H, BG_W, GRID_H, GRID_W, grid, toScreen } from './iso.ts';
+import { BG_H, BG_W, exits, GRID_H, GRID_W, grid, toScreen } from './iso.ts';
 import { drawFrame, loadSheet, type Sheet } from './sheet.ts';
 
 // GDD 5장 스탯
@@ -89,7 +91,10 @@ addEventListener('keydown', (e) => {
   if (e.code === 'Space') e.preventDefault();
   if (e.code === 'KeyG') debug = !debug;
   if (e.code === 'KeyJ') punchQueued = true;
-  if (e.code === 'KeyR') reset();
+  if (e.code === 'KeyR' && scene === 'dungeon') {
+    if (phase === 'napped') leaveDungeon(); // GDD: 목숨을 다 쓰면 마을에서 깨어난다
+    else reset();
+  }
 });
 addEventListener('keyup', (e) => keys.delete(e.code));
 addEventListener('blur', () => keys.clear());
@@ -100,6 +105,11 @@ canvas.addEventListener('mousedown', () => {
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
 const held = (...codes: string[]) => codes.some((c) => keys.has(c));
+/** 화면 기준 방향 입력 -1..1 */
+const input = () => ({
+  mx: (held('KeyD', 'ArrowRight') ? 1 : 0) - (held('KeyA', 'ArrowLeft') ? 1 : 0),
+  my: (held('KeyS', 'ArrowDown') ? 1 : 0) - (held('KeyW', 'ArrowUp') ? 1 : 0),
+});
 const tile = (tx: number, tz: number) => ({ x: (tx + 0.5) * CELL, z: (tz + 0.5) * CELL });
 
 type Pop = { x: number; z: number; text: string; t: number; dx: number; hurt: boolean; h: number };
@@ -153,6 +163,42 @@ const addPop = (x: number, z: number, n: number, hurt = false, h = 150) =>
 let phase: 'playing' | 'cleared' | 'napped' = 'playing';
 const sheets = {} as Record<Kind, Sheet>;
 let catSheet: Sheet;
+
+// 장면: 필드(시작) ↔ 던전. ?dungeon 이면 던전에서 바로 시작한다 (검증용)
+let scene: 'field' | 'dungeon' = location.search.includes('dungeon') ? 'dungeon' : 'field';
+let field: FieldState = makeFieldState(FIELD.start);
+let roomId = 'alley'; // 지금 들어가 있는 던전
+if (trace)
+  Object.assign(window, {
+    __game: {
+      get scene() { return scene; },
+      get field() { return field; },
+      get cat() { return { x: P.x, z: P.z }; },
+    },
+  });
+
+// 장면 전환: 크림색으로 덮은 순간 장면을 바꾸고 다시 걷어낸다
+const FADE = 0.28;
+let fade = 0;
+let fadeTo: (() => void) | null = null;
+const goTo = (swap: () => void) => {
+  if (!fadeTo && fade === 0) fadeTo = swap;
+};
+const enterDungeon = (to: string) =>
+  goTo(() => {
+    scene = 'dungeon';
+    roomId = to;
+    reset();
+    sayHelp();
+  });
+const leaveDungeon = () =>
+  goTo(() => {
+    scene = 'field';
+    field = makeFieldState(backFrom(roomId));
+    sayHelp();
+  });
+const onExit = (x: number, z: number) =>
+  exits.some(([tx, tz]) => tx === Math.floor(x / CELL) && tz === Math.floor(z / CELL));
 
 const SPAWNS: [Kind, number, number][] = [
   ['sword', 2, 2],
@@ -229,8 +275,26 @@ function frame(now: number) {
   last = now;
   lastDt = dt;
   fps += (1 / Math.max(dt, 1e-4) - fps) * 0.1;
-  update(dt);
-  draw();
+  if (fadeTo) {
+    fade = Math.min(1, fade + dt / FADE);
+    if (fade >= 1) {
+      fadeTo();
+      fadeTo = null;
+    }
+  } else if (fade > 0) fade = Math.max(0, fade - dt / FADE);
+
+  // 덮이는 동안은 멈춘다
+  if (!fadeTo) {
+    if (scene === 'field') {
+      const { mx, my } = input();
+      const w = updateField(field, mx, my, dt);
+      if (w) enterDungeon(w.to);
+      punchQueued = false;
+    } else update(dt);
+  }
+  if (scene === 'field') drawFieldScene();
+  else draw();
+  drawFade();
   requestAnimationFrame(frame);
 }
 
@@ -241,8 +305,7 @@ function update(dt: number) {
   P.hurtT = Math.max(0, P.hurtT - dt);
 
   // 화면 기준 입력을 아이소메트릭 축으로 45도 돌린다
-  let mx = (held('KeyD', 'ArrowRight') ? 1 : 0) - (held('KeyA', 'ArrowLeft') ? 1 : 0);
-  let my = (held('KeyS', 'ArrowDown') ? 1 : 0) - (held('KeyW', 'ArrowUp') ? 1 : 0);
+  let { mx, my } = input();
   const len = Math.hypot(mx, my);
   const alive = phase === 'playing';
   if (len > 0 && alive) {
@@ -317,6 +380,7 @@ function update(dt: number) {
   const p = resolveCircle(grid, P.x + vx * dt, P.z + vz * dt, RADIUS);
   P.x = p.x;
   P.z = p.z;
+  if (phase !== 'napped' && onExit(P.x, P.z)) leaveDungeon();
 
   world.px = P.x;
   world.pz = P.z;
@@ -365,6 +429,7 @@ function draw() {
   const jy = shake > 0 ? (Math.random() - 0.5) * shake * 0.7 : 0;
   ctx.setTransform(scale, 0, 0, scale, ox + jx, oy + jy);
   ctx.drawImage(room, 0, 0, BG_W, BG_H);
+  drawExits();
 
   // 공격 예고 데칼 — 색을 하나로 고정해 가독성 확보 (GDD 8장)
   for (const e of enemies) {
@@ -534,10 +599,73 @@ function drawHud() {
     ctx.fillStyle = 'rgba(70,52,42,0.85)';
     ctx.fillText(phase === 'cleared' ? '방 클리어!' : '낮잠…', W / 2, H / 2 - 8);
     ctx.font = '20px system-ui, sans-serif';
-    ctx.fillText('R 키로 다시', W / 2, H / 2 + 30);
+    ctx.fillText(phase === 'cleared' ? '노란 매트로 나가기' : 'R 키로 집에서 깨어나기', W / 2, H / 2 + 30);
     ctx.textAlign = 'left';
   }
   ctx.restore();
+}
+
+/** 필드 장면 + 지역 이름표 */
+function drawFieldScene() {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  drawField(ctx, canvas.width, canvas.height, field, catSheet, last / 1000);
+  const s = Math.min(devicePixelRatio, 2);
+  ctx.setTransform(s, 0, 0, s, 0, 0);
+  ctx.font = 'bold 15px system-ui, sans-serif';
+  const w = ctx.measureText(FIELD.name).width + 28;
+  ctx.fillStyle = 'rgba(255,250,240,0.85)';
+  ctx.beginPath();
+  ctx.roundRect(14, 14, w, 34, 17);
+  ctx.fill();
+  ctx.fillStyle = '#5b4a3f';
+  ctx.fillText(FIELD.name, 28, 36);
+}
+
+/** 나가는 곳(노란 매트) — 바닥을 은은하게 깜빡인다. 방을 비우면 더 밝게 */
+function drawExits() {
+  const pulse = 0.5 + 0.5 * Math.sin((last / 1000) * 3);
+  const strong = phase === 'cleared';
+  let lx = 0;
+  let ly = Infinity;
+  for (const [tx, tz] of exits) {
+    const a = corner(tx, tz);
+    const b = corner(tx + 1, tz);
+    const c = corner(tx + 1, tz + 1);
+    const d = corner(tx, tz + 1);
+    ctx.beginPath();
+    ctx.moveTo(a.sx, a.sy);
+    ctx.lineTo(b.sx, b.sy);
+    ctx.lineTo(c.sx, c.sy);
+    ctx.lineTo(d.sx, d.sy);
+    ctx.closePath();
+    ctx.fillStyle = `rgba(255, 244, 170, ${(strong ? 0.3 : 0.12) + (strong ? 0.2 : 0.1) * pulse})`;
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = `rgba(255, 255, 255, ${0.3 + 0.35 * pulse})`;
+    ctx.stroke();
+    lx += (a.sx + c.sx) / 2 / exits.length;
+    ly = Math.min(ly, a.sy);
+  }
+  if (!exits.length) return;
+  ctx.font = 'bold 22px system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = 5;
+  ctx.strokeStyle = 'rgba(86, 58, 44, 0.8)';
+  ctx.strokeText('밖으로', lx, ly - 8);
+  ctx.fillStyle = '#fff6d8';
+  ctx.fillText('밖으로', lx, ly - 8);
+  ctx.textAlign = 'left';
+}
+
+/** 장면 전환 덮개 */
+function drawFade() {
+  if (fade <= 0) return;
+  const k = fade * fade * (3 - 2 * fade);
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = `rgba(255, 246, 232, ${k})`;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
 }
 
 const corner = (tx: number, tz: number) => toScreen(tx * CELL, tz * CELL);
@@ -567,13 +695,20 @@ function drawGrid() {
 }
 
 const help = document.getElementById('help')!;
+const HELP = {
+  field: 'WASD 이동 · 집 앞 빛나는 원에 잠시 서 있으면 던전으로',
+  dungeon: 'WASD 이동 · 클릭/J 냥펀치 · Space 구르기 · 노란 매트로 나가기 · G 격자',
+};
+function sayHelp() {
+  help.textContent = HELP[scene];
+}
 const step = (t: string) => {
   help.textContent = t + ' 불러오는 중…';
 };
 
 (async () => {
   step('배경');
-  await Promise.all([roomReady, fxReady]);
+  await Promise.all([roomReady, fxReady, fieldReady]);
   step('고양이 시트');
   catSheet = await loadCat();
   step('칼 쥐');
@@ -584,6 +719,6 @@ const step = (t: string) => {
   sheets.fat = await loadSheet(fatUrl, 6, 5);
   reset();
   if (trace) Object.assign(window, { __sheets: { cat: catSheet, ...sheets } });
-  help.textContent = 'WASD 이동 · 클릭/J 냥펀치 · Space 구르기 · R 다시 · G 격자';
+  sayHelp();
   requestAnimationFrame(frame);
 })();
