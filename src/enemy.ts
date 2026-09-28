@@ -24,6 +24,8 @@ export type Enemy = {
   flip: number;
   kx: number; // 넉백 속도
   kz: number;
+  /** 모션이 바뀔 때 크기를 부드럽게 잇기 위한 표시용 배율 */
+  dispScale: number;
 };
 
 /** AI 가 바깥에 요청하는 것들 */
@@ -37,7 +39,21 @@ export type World = {
 
 export function makeEnemy(kind: Kind, sheet: Sheet, x: number, z: number): Enemy {
   const def = ENEMY_DEFS[kind];
-  return { kind, def, sheet, x, z, hp: def.hp, state: 'idle', t: 0, anim: 0, flip: 1, kx: 0, kz: 0 };
+  return {
+    kind,
+    def,
+    sheet,
+    x,
+    z,
+    hp: def.hp,
+    state: 'idle',
+    t: 0,
+    anim: 0,
+    flip: 1,
+    kx: 0,
+    kz: 0,
+    dispScale: 1,
+  };
 }
 
 export function damageEnemy(e: Enemy, dmg: number, fromX: number, fromZ: number) {

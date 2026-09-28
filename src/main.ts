@@ -118,6 +118,7 @@ const P = {
   kx: 0,
   kz: 0,
   animT: 0,
+  dispScale: 1,
 };
 
 let enemies: Enemy[] = [];
@@ -156,6 +157,7 @@ function reset() {
   P.hurtT = 0;
   P.kx = 0;
   P.kz = 0;
+  P.dispScale = 1;
   enemies = SPAWNS.map(([k, tx, tz]) => {
     const p = tile(tx, tz);
     return makeEnemy(k, sheets[k], p.x, p.z);
@@ -172,7 +174,7 @@ function hitPlayer(dmg: number, fx: number, fz: number) {
   P.hp -= dmg;
   P.hurtT = 0.3;
   addPop(P.x, P.z, dmg, true, CAT_PX);
-  addFx(P.x, P.z, FX_ROW.slash, 150);
+  addFx(P.x, P.z, FX_ROW.slash, 263);
   sfxHurt();
   if (dmg >= 12) shakeBy(15); // 아픈 공격만
   const d = Math.hypot(P.x - fx, P.z - fz) || 1;
@@ -203,11 +205,13 @@ const world: World = {
 };
 
 let last = performance.now();
+let lastDt = 1 / 60; // 표시용 보간에 쓴다
 let fps = 0;
 
 function frame(now: number) {
   const dt = Math.min((now - last) / 1000, 1 / 20);
   last = now;
+  lastDt = dt;
   fps += (1 / Math.max(dt, 1e-4) - fps) * 0.1;
   update(dt);
   draw();
@@ -265,7 +269,7 @@ function update(dt: number) {
         damageEnemy(e, PUNCH_DMG, P.x, P.z);
         addPop(e.x, e.z, PUNCH_DMG, false, e.def.size);
         const down = e.state === 'pop';
-        addFx(e.x, e.z, down ? FX_ROW.burst : FX_ROW.spark, down ? 190 : 125);
+        addFx(e.x, e.z, down ? FX_ROW.burst : FX_ROW.spark, down ? 333 : 219);
         if (down) {
           finish = true;
           sfxPop();
@@ -326,6 +330,9 @@ function update(dt: number) {
   if (phase === 'playing' && enemies.length === 0) phase = 'cleared';
 }
 
+/** 모션이 바뀔 때 크기가 툭 튀지 않게 목표값으로 수렴시킨다 (약 0.1초) */
+const ease = (cur: number, target: number) => cur + (target - cur) * (1 - Math.exp(-22 * lastDt));
+
 function blob(sx: number, sy: number, r: number) {
   ctx.fillStyle = 'rgba(120, 85, 55, 0.25)';
   ctx.beginPath();
@@ -370,7 +377,8 @@ function draw() {
         } else {
           blob(sx, sy, e.def.size * 0.24);
         }
-        drawFrame(ctx, e.sheet, f.row, f.col, sx, sy, e.def.size, e.flip);
+        e.dispScale = ease(e.dispScale, e.sheet.rowScale[f.row] ?? 1);
+        drawFrame(ctx, e.sheet, f.row, f.col, sx, sy, e.def.size, e.flip, e.dispScale);
         ctx.restore();
         if (!popping) enemyHpBar(e, sx, sy);
       },
@@ -400,7 +408,8 @@ function draw() {
       else col = Math.floor(P.animT * (row === CAT_ROW.run ? CAT_FPS.run : CAT_FPS.idle)) % COLS;
       ctx.save();
       if (P.invT > 0) ctx.globalAlpha = 0.45 + 0.55 * Math.abs(Math.sin(P.invT * 22));
-      drawFrame(ctx, catSheet, row, col, ps.sx, ps.sy, CAT_PX, P.flip);
+      P.dispScale = ease(P.dispScale, catSheet.rowScale[row] ?? 1);
+      drawFrame(ctx, catSheet, row, col, ps.sx, ps.sy, CAT_PX, P.flip, P.dispScale);
       ctx.restore();
     },
   });

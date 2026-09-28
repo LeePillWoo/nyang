@@ -1,13 +1,25 @@
 /**
  * 스프라이트 시트 슬라이서.
- * 시트가 균등 격자에 정렬돼 있지 않아서(캐릭터가 칸 경계를 넘나든다) 고정 크기로 자르면
- * 발이 잘리고 프레임마다 위치가 튄다. 그래서 알파를 훑어 실제 칸 경계를 찾는다.
+ *
+ * 시트가 균등 격자에 정렬돼 있지 않아서 고정 크기로 자르면 발이 잘리고 위치가 튄다.
+ * 그래서 알파를 훑어 실제 칸을 찾고, 다시 두 가지를 보정한다.
+ *
+ *  1) 앵커  — 프레임마다 발바닥(실루엣 하단)을 추정하되, 추정 오차가 그대로 떨림이 되므로
+ *             행 단위 중앙값으로 고정한다. 의도된 움직임은 남고 배치 노이즈만 걷힌다.
+ *  2) 배율  — 행마다 캐릭터 크기가 다르다(이 시트는 151~181px, 17% 차이). 행별 유효 높이로
+ *             정규화해서 모션이 바뀔 때 크기가 점프하지 않게 한다.
  */
 const ALPHA = 40;
+const FOOT_BAND = 0.15; // 발 위치를 볼 실루엣 하단 비율. 꼬리에 끌려가지 않게 하단만 본다
 
-/** ox/oy = 칸 기준 오프셋 (가로 중심, 바닥). 포즈가 변해도 캐릭터가 흔들리지 않는다. */
 export type Frame = { sx: number; sy: number; sw: number; sh: number; ox: number; oy: number };
-export type Sheet = { img: HTMLImageElement; frames: Frame[][]; base: number };
+export type Sheet = {
+  img: HTMLImageElement;
+  frames: Frame[][];
+  base: number;
+  /** 행별 크기 보정. 기준 행(0) 대비 배율 */
+  rowScale: number[];
+};
 
 /** 내용이 이어지는 구간을 찾아 want 개만 남긴다 (시트 여백의 점 노이즈는 버린다) */
 function findBands(on: boolean[], want: number): [number, number][] {
@@ -29,6 +41,8 @@ function findBands(on: boolean[], want: number): [number, number][] {
     .sort((p, q) => p.b[0] - q.b[0])
     .map((x) => x.b);
 }
+
+const median = (v: number[]) => [...v].sort((a, b) => a - b)[v.length >> 1];
 
 export async function loadSheet(url: string, cols: number, rows: number): Promise<Sheet> {
   const img = new Image();
@@ -64,13 +78,18 @@ export async function loadSheet(url: string, cols: number, rows: number): Promis
     rowOn[y] = hit;
   }
 
-  const frames = findBands(rowOn, rows).map(([y0, y1]) => {
+  const frames: Frame[][] = [];
+  const rowH: number[] = [];
+
+  for (const [y0, y1] of findBands(rowOn, rows)) {
     const colOn: boolean[] = new Array(w).fill(false);
     for (let y = y0; y <= y1; y++) {
       const off = y * w;
       for (let x = 0; x < w; x++) if (a[off + x]) colOn[x] = true;
     }
-    return findBands(colOn, cols).map(([x0, x1]) => {
+
+    // 1차: 프레임마다 실루엣 경계와 발 위치를 잰다
+    const raw = findBands(colOn, cols).map(([x0, x1]) => {
       let top = y1;
       let bot = y0;
       for (let y = y0; y <= y1; y++) {
@@ -82,24 +101,61 @@ export async function loadSheet(url: string, cols: number, rows: number): Promis
             break;
           }
       }
-      // 기준은 프레임 bbox 가 아니라 칸이다. 칸 안에서 캐릭터가 움직이는 건 그대로 두고,
-      // 칸의 가로 중심과 바닥만 고정한다 (bbox 기준이면 포즈가 바뀔 때마다 위치가 튄다).
-      return {
-        sx: x0,
-        sy: top,
-        sw: x1 - x0 + 1,
-        sh: bot - top + 1,
-        ox: x0 - (x0 + x1) / 2,
-        oy: top - y1,
-      };
-    });
-  });
 
-  // 크기 기준은 원래 칸 높이. 프레임마다 실제 높이가 달라도 캐릭터 크기는 일정하게 보인다.
-  return { img, frames, base: h / rows };
+      // 발 x: 하단 띠에 있는 픽셀들의 x 중앙값
+      const band = Math.max(2, Math.round((bot - top) * FOOT_BAND));
+      const counts = new Int32Array(x1 - x0 + 1);
+      let total = 0;
+      for (let y = Math.max(top, bot - band); y <= bot; y++) {
+        const off = y * w;
+        for (let x = x0; x <= x1; x++)
+          if (a[off + x]) {
+            counts[x - x0]++;
+            total++;
+          }
+      }
+      let acc = 0;
+      let footX = (x0 + x1) / 2;
+      for (let i = 0; i < counts.length; i++) {
+        acc += counts[i];
+        if (acc * 2 >= total) {
+          footX = x0 + i;
+          break;
+        }
+      }
+
+      return { x0, x1, top, bot, footX, h: bot - top + 1 };
+    });
+
+    // 2차: 앵커를 행 중앙값으로 고정한다. 프레임별 추정값을 그대로 쓰면 추정 오차가 떨림이 된다.
+    const dx = median(raw.map((r) => r.footX - (r.x0 + r.x1) / 2));
+    const anchorY = median(raw.map((r) => r.bot));
+    rowH.push(median(raw.map((r) => r.h)));
+
+    frames.push(
+      raw.map((r) => ({
+        sx: r.x0,
+        sy: r.top,
+        sw: r.x1 - r.x0 + 1,
+        sh: r.bot - r.top + 1,
+        ox: r.x0 - ((r.x0 + r.x1) / 2 + dx),
+        oy: r.top - anchorY,
+      })),
+    );
+  }
+
+  const baseH = rowH[0] || 1;
+  return {
+    img,
+    frames,
+    base: h / rows,
+    rowScale: rowH.map((v) => baseH / (v || 1)),
+  };
 }
 
-/** (cx, baseY) = 발밑. 프레임 실제 경계를 써서 발이 잘리거나 튀지 않는다. */
+/**
+ * (cx, baseY) = 발밑. rowScale 을 직접 넘기면 모션이 바뀔 때 크기를 부드럽게 이을 수 있다.
+ */
 export function drawFrame(
   ctx: CanvasRenderingContext2D,
   sheet: Sheet,
@@ -109,10 +165,11 @@ export function drawFrame(
   baseY: number,
   size: number,
   flip: number,
+  rowScale = sheet.rowScale[row] ?? 1,
 ) {
   const f = sheet.frames[row]?.[col];
   if (!f) return;
-  const s = size / sheet.base;
+  const s = (size / sheet.base) * rowScale;
   ctx.save();
   ctx.translate(cx, baseY);
   ctx.scale(flip, 1);
