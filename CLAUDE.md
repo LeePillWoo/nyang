@@ -30,6 +30,7 @@
 - 게임 데이터(적, 장난감, 방 템플릿)는 `src/data/` JSON 으로 분리한다.
   적 `enemies.json`, 방 `rooms.json`(네 꼭짓점·충돌 맵·나가는 곳 `E`),
   필드 `field.json`(시작점·워프·고양이 키 `catBody`·지형별 속도와 타이밍 `modes`).
+- 필드 캐릭터 크기는 `catBody` 한 값으로 정한다. 캐릭터에 딸린 거리·파티클은 전부 이 값의 배수로 쓴다 (픽셀 고정값 금지).
 - 던전 입구를 늘릴 땐 `field.json` 의 `warps` 에 항목을 추가한다 (좌표는 필드 그림 픽셀).
 - 낚시 미니게임은 추후 추가. `MiniGame` 인터페이스, `fishing_spot` 방 타입, 세이브의
   `rodRestore`·`fishDex` 필드는 v1부터 자리만 유지한다 (GDD 10장). → 저장을 붙이는 M2 에서 만든다.

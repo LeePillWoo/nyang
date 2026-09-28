@@ -83,6 +83,8 @@ type Part = {
 let parts: Part[] = [];
 const rand = (a: number, b: number) => a + Math.random() * (b - a);
 const LEAVES = ['#5fae4a', '#7cc35a', '#3f8f45', '#9ad16a', '#c9d86a'];
+/** 파티클 값은 고양이 키 34px 에서 맞췄다. 키에 비례해 크기·거리·속도·중력을 같이 줄인다 */
+const U = FIELD.catBody / 34;
 
 const ring = (x: number, y: number, size: number, life = 0.9) =>
   parts.push({ kind: 'ring', x, y, vx: 0, vy: 0, t: 0, life, size, rot: 0, vr: 0, color: '' });
@@ -94,26 +96,26 @@ export function fieldFx(events: FieldEvent[]) {
       for (let i = 0; i < 8; i++)
         parts.push({
           kind: 'leaf',
-          x: e.x + rand(-3, 3),
-          y: e.y + rand(-4, 2),
-          vx: e.flip * rand(8, 42) + rand(-12, 12),
-          vy: rand(-58, -22),
+          x: e.x + rand(-3, 3) * U,
+          y: e.y + rand(-4, 2) * U,
+          vx: (e.flip * rand(8, 42) + rand(-12, 12)) * U,
+          vy: rand(-58, -22) * U,
           t: 0,
           life: rand(0.55, 0.85),
-          size: rand(1.5, 2.7),
+          size: rand(1.5, 2.7) * U,
           rot: rand(0, Math.PI),
           vr: rand(-9, 9),
           color: LEAVES[(Math.random() * LEAVES.length) | 0],
         });
     } else if (e.type === 'splash') {
-      ring(e.x, e.y, 14, 0.7);
+      ring(e.x, e.y, 14 * U, 0.7);
       for (let i = 0; i < 9; i++)
-        parts.push({ kind: 'drop', x: e.x + rand(-6, 6), y: e.y - 2, vx: rand(-30, 30), vy: rand(-70, -35), t: 0, life: rand(0.35, 0.55), size: rand(0.9, 1.6), rot: 0, vr: 0, color: 'rgba(235, 250, 255, 0.95)' });
-    } else if (e.type === 'ripple') ring(e.x, e.y, 16, 1);
+        parts.push({ kind: 'drop', x: e.x + rand(-6, 6) * U, y: e.y - 2 * U, vx: rand(-30, 30) * U, vy: rand(-70, -35) * U, t: 0, life: rand(0.35, 0.55), size: rand(0.9, 1.6) * U, rot: 0, vr: 0, color: 'rgba(235, 250, 255, 0.95)' });
+    } else if (e.type === 'ripple') ring(e.x, e.y, 16 * U, 1);
     else if (e.type === 'stroke') {
-      ring(e.x + rand(-4, 4), e.y + 2, 7, 0.8);
+      ring(e.x + rand(-4, 4) * U, e.y + 2 * U, 7 * U, 0.8);
       for (let i = 0; i < 3; i++)
-        parts.push({ kind: 'drop', x: e.x + rand(-5, 5), y: e.y, vx: rand(-15, 15), vy: rand(-35, -15), t: 0, life: 0.35, size: 0.9, rot: 0, vr: 0, color: 'rgba(235, 250, 255, 0.9)' });
+        parts.push({ kind: 'drop', x: e.x + rand(-5, 5) * U, y: e.y, vx: rand(-15, 15) * U, vy: rand(-35, -15) * U, t: 0, life: 0.35, size: 0.9 * U, rot: 0, vr: 0, color: 'rgba(235, 250, 255, 0.9)' });
     }
   }
 }
@@ -123,10 +125,10 @@ function stepParts(dt: number) {
     p.t += dt;
     if (p.kind === 'leaf') {
       p.vx *= Math.exp(-2.2 * dt); // 공기 저항에 팔랑이며 떨어진다
-      p.vy += 75 * dt;
+      p.vy += 75 * U * dt;
       p.vy *= Math.exp(-1.2 * dt);
       p.rot += p.vr * dt;
-    } else if (p.kind === 'drop') p.vy += 180 * dt;
+    } else if (p.kind === 'drop') p.vy += 180 * U * dt;
     p.x += p.vx * dt;
     p.y += p.vy * dt;
   }
@@ -139,7 +141,7 @@ function drawRings(ctx: CanvasRenderingContext2D) {
     const k = p.t / p.life;
     const r = p.size * (0.35 + 0.65 * Math.sqrt(k));
     ctx.strokeStyle = `rgba(255, 255, 255, ${0.55 * (1 - k)})`;
-    ctx.lineWidth = 1;
+    ctx.lineWidth = Math.max(0.6, U);
     ctx.beginPath();
     ctx.ellipse(p.x, p.y, r, r * 0.42, 0, 0, Math.PI * 2);
     ctx.stroke();
@@ -227,7 +229,7 @@ export function drawField(
   wakeT += dt;
   if (s.mode === 'boat' && wakeT > (s.moving ? 0.16 : 1.4)) {
     wakeT = 0;
-    ring(s.x - (s.moving ? s.flip * 7 : 0), s.y + 1, s.moving ? 11 : 16, s.moving ? 0.9 : 1.6);
+    ring(s.x - (s.moving ? s.flip * 7 * U : 0), s.y + U, (s.moving ? 11 : 16) * U, s.moving ? 0.9 : 1.6);
   }
   stepParts(dt);
   drawRings(ctx);

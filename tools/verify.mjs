@@ -95,7 +95,7 @@ async function fieldBurst(page, until, file, release = []) {
       await im.decode();
       const x = (i % 4) * 310;
       const y = Math.floor(i / 4) * 325;
-      c.drawImage(im, meta.x - 75, meta.y - 110, 150, 150, x + 5, y + 5, 300, 300);
+      c.drawImage(im, meta.x - 50, meta.y - 70, 100, 100, x + 5, y + 5, 300, 300);
       c.fillStyle = '#fff';
       c.fillText(`${i} ${meta.mode}${meta.chop ? ' 휘두름' : ''}`, x + 8, y + 320);
     }
@@ -264,31 +264,49 @@ try {
     const landed = await page.waitForFunction(() => __game.field.mode === 'walk' || __game.field.mode === 'axe', { timeout: 3000 }).then(() => true, () => false);
     check(landed, '뭍에 닿으면 배에서 내린다');
 
-    // 숲: 가장 가까운 숲 한가운데로 걸어간다 (지형 마스크에서 찾는다)
+    // 숲: 좌우로 50px 를 오가도 숲을 벗어나지 않는 가까운 곳을 지형 마스크에서 찾아 그리로 걸어간다.
+    // (가장자리에서 한쪽으로 계속 걸리면 방향에 따라 도끼질 주기 전에 숲을 빠져나간다)
     const woods = await page.evaluate(() => {
       const s = __game.field;
+      const deep = (x, y) => {
+        for (let d = 0; d <= 56; d += 4)
+          for (const [dx, dy] of [[1, 0], [-1, 0], [0, 0.5], [0, -0.5]])
+            if (__game.terrain(x + dx * d, y + dy * d) !== 1) return false;
+        return true;
+      };
       let best = null;
-      for (let y = 30; y < 920; y += 6)
-        for (let x = 30; x < 1650; x += 6) {
-          // 사방 12px 가 모두 숲인 곳 = 숲 한가운데
-          if ([[0, 0], [12, 0], [-12, 0], [0, 12], [0, -12]].every(([dx, dy]) => __game.terrain(x + dx, y + dy) === 1)) {
-            const d = Math.hypot(x - s.x, y - s.y);
-            if (!best || d < best.d) best = { x, y, d };
-          }
+      for (let y = 40; y < 900; y += 6)
+        for (let x = 60; x < 1610; x += 6) {
+          if (__game.terrain(x, y) !== 1 || !deep(x, y)) continue;
+          const d = Math.hypot(x - s.x, y - s.y);
+          if (!best || d < best.d) best = { x, y, d };
         }
       return best;
     });
-    check(!!woods, `가장 가까운 숲 (${woods ? `${woods.x}, ${woods.y}` : '없음'})`);
+    check(!!woods, `가까운 깊은 숲 (${woods ? `${woods.x}, ${woods.y}` : '없음'})`);
     if (woods) {
-      const inWoods = await walk(page, fieldPos, [woods.x, woods.y], fieldKeys, () => __game.field.mode === 'axe', 15000);
-      check(inWoods, '숲에 들어가면 도끼를 든다');
-      const dir = woods.x > (await page.evaluate(() => __game.field.x)) ? 'KeyD' : 'KeyA';
-      await page.keyboard.down(dir);
+      await page.evaluate((x, y) => Object.assign(window, { __wx: x, __wy: y }), woods.x, woods.y);
+      const near = await walk(page, fieldPos, [woods.x, woods.y], fieldKeys, () => {
+        const s = __game.field;
+        return s.mode === 'axe' && Math.hypot(s.x - window.__wx, s.y - window.__wy) < 8;
+      }, 20000);
+      check(near && (await page.evaluate(() => __game.field.mode)) === 'axe', '숲에 들어가면 도끼를 든다');
+      // 그 자리에서 좌우로 오가며 걷는다 — 촬영과 동시에
+      let stop = false;
+      const pace = (async () => {
+        for (let right = true; !stop; right = !right) {
+          const k = right ? 'KeyD' : 'KeyA';
+          await page.keyboard.down(k);
+          await sleep(500);
+          await page.keyboard.up(k);
+        }
+      })();
       await fieldBurst(page, () => __game.field.chopping > 0.3, new URL('field-chop.png', OUT));
       await sleep(1500);
-      await page.keyboard.up(dir);
+      stop = true;
+      await pace;
       const chops = await page.evaluate(() => __game.field.chops);
-      check(chops >= 1, `숲을 걸으면 도끼질을 한다 (${chops}회)`);
+      check(chops >= 2, `숲을 걸으면 도끼질을 한다 (${chops}회)`);
     }
 
     const viol = await page.evaluate(() => __viol);

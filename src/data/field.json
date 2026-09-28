@@ -11,7 +11,7 @@
   "zoom": 2,
   "speed": 170,
   "vertical": 0.72,
-  "catBody": 34,
+  "catBody": 17,
   "forestDelay": 0.15,
   "boardTime": 0.6,
   "modes": {
@@ -27,8 +27,8 @@
     "boat": {
       "speed": 1.15,
       "stroke": 0.55,
-      "offset": 40,
-      "bow": 22
+      "offset": 1.17,
+      "bow": 0.65
     }
   },
   "warps": [

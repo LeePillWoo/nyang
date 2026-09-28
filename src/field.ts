@@ -35,7 +35,8 @@ export type FieldEvent =
 const EDGE = 24; // 그림 가장자리 여백
 const CAM_EASE = 8; // 카메라가 따라오는 속도
 const SEEK = 40; // 물가·뭍을 찾아볼 거리 (px)
-const PUSH = 10; // 배는 물가에서 이만큼 더 안쪽에, 내릴 땐 뭍 안쪽에 선다
+// 캐릭터 크기에 딸린 거리는 전부 고양이 키(catBody)의 배수다 — 키를 바꾸면 같이 줄고 는다
+const PUSH = data.catBody * 0.3; // 배는 물가에서 이만큼 더 안쪽에, 내릴 땐 뭍 안쪽에 선다
 
 export type FieldState = {
   x: number;
@@ -173,13 +174,14 @@ export function updateField(
     const next = at(nx, ny);
     const afloat = s.mode === 'boat';
     // 배는 크니 뱃머리가 먼저 뭍에 닿는다
-    const bow = at(clampX(nx + ux * M.boat.bow), clampY(ny + uy * M.boat.bow * FIELD.vertical));
+    const reach = M.boat.bow * FIELD.catBody;
+    const bow = at(clampX(nx + ux * reach), clampY(ny + uy * reach * FIELD.vertical));
     const ground = (t: Terrain) => t !== WATER && t !== BLOCK;
     if (!afloat && next === WATER) {
       // 물가: 배를 띄우고 올라탄다. 시트 첫 컷은 고양이가 배 왼쪽 offset 만큼에 서 있으니,
       // 배를 그만큼 앞 물 위에 띄우면 고양이가 방금 걷던 자리에서 그대로 뛰어든다
       const face = ux !== 0 ? Math.sign(ux) : s.flip;
-      const fx = clampX(s.x + face * M.boat.offset);
+      const fx = clampX(s.x + face * M.boat.offset * FIELD.catBody);
       const b = at(fx, s.y) === WATER ? { x: fx, y: s.y } : seek(s, ux, uy, (t) => t === WATER, at);
       if (b) {
         s.x = b.x;
@@ -193,7 +195,7 @@ export function updateField(
       // 뭍: 배는 그 자리에 두고 뛰어내린다. 시트는 고양이가 배 왼쪽에 내려서니, 오른쪽 뭍이면 뒤집는다.
       // 마지막 컷에서 고양이가 배 옆 offset 만큼에 서니 그 자리가 뭍이면 거기, 아니면 가까운 뭍
       const face = ux !== 0 ? Math.sign(ux) : s.flip;
-      const lx = clampX(s.x + face * M.boat.offset);
+      const lx = clampX(s.x + face * M.boat.offset * FIELD.catBody);
       const l = ground(at(lx, s.y)) ? { x: lx, y: s.y } : seek(s, ux, uy, ground, at);
       if (l) {
         s.landX = l.x;
@@ -235,7 +237,8 @@ export function updateField(
       s.chopping = Math.max(0, s.chopping - dt);
       if (before > hit && s.chopping <= hit) {
         s.chops++;
-        s.events.push({ type: 'chop', x: s.x + s.flip * 9, y: s.y - 6, flip: s.flip });
+        const b = FIELD.catBody;
+        s.events.push({ type: 'chop', x: s.x + s.flip * b * 0.26, y: s.y - b * 0.18, flip: s.flip });
       }
     } else if (s.moving) {
       s.chopT += dt;
