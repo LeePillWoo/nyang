@@ -1,9 +1,9 @@
-import bowUrl from './assets/rat-bow.png';
-import fatUrl from './assets/rat-fat.png';
+import bowUrl from './assets/rat-bow.webp';
+import fatUrl from './assets/rat-fat.webp';
 import roomUrl from './assets/room-alley.webp';
-import swordUrl from './assets/rat-sword.png';
-import { sfxHit, sfxHurt, sfxPop, unlockAudio } from './audio.ts';
-import { CAT_FPS, CAT_ROW, loadCat } from './cat.ts';
+import swordUrl from './assets/rat-sword.webp';
+import { sfxChop, sfxHit, sfxHurt, sfxPop, sfxRow, sfxSplash, unlockAudio } from './audio.ts';
+import { CAT_FPS, CAT_ROW, loadAxe, loadBoat, loadCat } from './cat.ts';
 import { CELL, resolveCircle } from './collide.ts';
 import {
   aimAt,
@@ -18,8 +18,8 @@ import {
   type Kind,
   type World,
 } from './enemy.ts';
-import { drawField, fieldReady } from './field-draw.ts';
-import { backFrom, FIELD, makeFieldState, updateField, type FieldState } from './field.ts';
+import { drawField, fieldFx, fieldReady, fieldView, terrainAt, terrainReady } from './field-draw.ts';
+import { backFrom, FIELD, makeFieldState, updateField, type FieldEvent, type FieldState } from './field.ts';
 import { drawFx, FX_LIFE, FX_ROW, fxReady, type Fx } from './fx.ts';
 import { BG_H, BG_W, exits, GRID_H, GRID_W, grid, toScreen } from './iso.ts';
 import { drawFrame, loadSheet, type Sheet } from './sheet.ts';
@@ -70,6 +70,7 @@ addEventListener('resize', layout);
 
 const keys = new Set<string>();
 let debug = location.search.includes('grid');
+let showTerrain = location.search.includes('terrain'); // 필드 지형 보기 (T 키)
 
 // ?trace — tools/verify.mjs 가 쓴다. 프레임마다 실제로 그린 사각형을 남겨 튐·사라짐을 잡는다.
 const trace: Record<string, unknown>[] | null = location.search.includes('trace') ? [] : null;
@@ -90,6 +91,7 @@ addEventListener('keydown', (e) => {
   keys.add(e.code);
   if (e.code === 'Space') e.preventDefault();
   if (e.code === 'KeyG') debug = !debug;
+  if (e.code === 'KeyT') showTerrain = !showTerrain;
   if (e.code === 'KeyJ') punchQueued = true;
   if (e.code === 'KeyR' && scene === 'dungeon') {
     if (phase === 'napped') leaveDungeon(); // GDD: 목숨을 다 쓰면 마을에서 깨어난다
@@ -168,14 +170,29 @@ let catSheet: Sheet;
 let scene: 'field' | 'dungeon' = location.search.includes('dungeon') ? 'dungeon' : 'field';
 let field: FieldState = makeFieldState(FIELD.start);
 let roomId = 'alley'; // 지금 들어가 있는 던전
+let axeSheet: Sheet;
+let boatSheet: Sheet;
 if (trace)
   Object.assign(window, {
     __game: {
       get scene() { return scene; },
       get field() { return field; },
       get cat() { return { x: P.x, z: P.z }; },
+      terrain: terrainAt,
+      /** 필드 고양이의 화면 위치 (CSS px) */
+      get catScreen() {
+        const d = Math.min(devicePixelRatio, 2);
+        return { x: (fieldView.ox + field.x * fieldView.sc) / d, y: (fieldView.oy + field.y * fieldView.sc) / d };
+      },
     },
   });
+
+/** 필드 연출 사건 → 소리 */
+function fieldSound(e: FieldEvent) {
+  if (e.type === 'chop') sfxChop();
+  else if (e.type === 'splash') sfxSplash();
+  else if (e.type === 'stroke') sfxRow();
+}
 
 // 장면 전환: 크림색으로 덮은 순간 장면을 바꾸고 다시 걷어낸다
 const FADE = 0.28;
@@ -194,7 +211,7 @@ const enterDungeon = (to: string) =>
 const leaveDungeon = () =>
   goTo(() => {
     scene = 'field';
-    field = makeFieldState(backFrom(roomId));
+    field = makeFieldState(backFrom(roomId), terrainAt);
     sayHelp();
   });
 const onExit = (x: number, z: number) =>
@@ -287,7 +304,9 @@ function frame(now: number) {
   if (!fadeTo) {
     if (scene === 'field') {
       const { mx, my } = input();
-      const w = updateField(field, mx, my, dt);
+      const w = updateField(field, mx, my, dt, terrainAt);
+      field.events.forEach(fieldSound);
+      fieldFx(field.events);
       if (w) enterDungeon(w.to);
       punchQueued = false;
     } else update(dt);
@@ -609,7 +628,7 @@ function drawHud() {
 function drawFieldScene() {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  drawField(ctx, canvas.width, canvas.height, field, catSheet, last / 1000);
+  drawField(ctx, canvas.width, canvas.height, field, { cat: catSheet, axe: axeSheet, boat: boatSheet }, last / 1000, lastDt, showTerrain);
   const s = Math.min(devicePixelRatio, 2);
   ctx.setTransform(s, 0, 0, s, 0, 0);
   ctx.font = 'bold 15px system-ui, sans-serif';
@@ -696,7 +715,7 @@ function drawGrid() {
 
 const help = document.getElementById('help')!;
 const HELP = {
-  field: 'WASD 이동 · 집 앞 빛나는 원에 잠시 서 있으면 던전으로',
+  field: 'WASD 이동 · 숲은 도끼로, 물은 배로 · 집 앞 빛나는 원에 잠시 서 있으면 던전 · T 지형 보기',
   dungeon: 'WASD 이동 · 클릭/J 냥펀치 · Space 구르기 · 노란 매트로 나가기 · G 격자',
 };
 function sayHelp() {
@@ -711,6 +730,11 @@ const step = (t: string) => {
   await Promise.all([roomReady, fxReady, fieldReady]);
   step('고양이 시트');
   catSheet = await loadCat();
+  step('도끼·배 시트');
+  [axeSheet, boatSheet] = await Promise.all([loadAxe(), loadBoat()]);
+  step('지형');
+  await terrainReady;
+  field = makeFieldState(FIELD.start, terrainAt);
   step('칼 쥐');
   sheets.sword = await loadSheet(swordUrl, 6, 5);
   step('활 쥐');
@@ -718,7 +742,7 @@ const step = (t: string) => {
   step('뚱보 쥐');
   sheets.fat = await loadSheet(fatUrl, 6, 5);
   reset();
-  if (trace) Object.assign(window, { __sheets: { cat: catSheet, ...sheets } });
+  if (trace) Object.assign(window, { __sheets: { cat: catSheet, axe: axeSheet, boat: boatSheet, ...sheets } });
   sayHelp();
   requestAnimationFrame(frame);
 })();

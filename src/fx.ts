@@ -1,4 +1,4 @@
-import fxUrl from './assets/fx-hit.png';
+import fxUrl from './assets/fx-hit.webp';
 
 // 2048x768, 256px 3행 8열. 이펙트는 위치가 정확할 필요가 없어 균등 격자로 자른다.
 const SIZE = 256;

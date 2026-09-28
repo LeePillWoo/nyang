@@ -9,6 +9,8 @@
  *             몸이 제자리에서 뒤집힌다. 세로는 행 단위 발바닥 중앙값으로 고정해 땅에 붙인다.
  *  2) 배율  — 행마다 캐릭터 크기가 다르다(이 시트는 151~181px, 17% 차이). 행별 유효 높이로
  *             정규화해서 모션이 바뀔 때 크기가 점프하지 않게 한다.
+ *  3) 배     — 배 시트는 무게중심 대신 선체(바닥 쪽 가장 긴 가로줄) 가운데를 기준으로 잡는다.
+ *             고양이가 배로 뛰어들고 내리는 동안 무게중심을 쓰면 배가 좌우로 미끄러진다.
  */
 const ALPHA = 40;
 
@@ -19,11 +21,22 @@ export type Sheet = {
   base: number;
   /** 행별 크기 보정. 기준 행(0) 대비 배율 */
   rowScale: number[];
+  /** 기준 행(0)의 캐릭터 키 (원본 px). 시트끼리 같은 키로 맞출 때 쓴다 */
+  bodyH: number;
 };
 
-/** 내용이 이어지는 구간을 찾아 want 개만 남긴다 (시트 여백의 점 노이즈는 버린다) */
+export type SheetOptions = { anchor?: 'mass' | 'hull' };
+
+const median = (v: number[]) => [...v].sort((a, b) => a - b)[v.length >> 1];
+
+/**
+ * 내용이 이어지는 구간을 찾아 want 개로 맞춘다.
+ * - 여백의 점 노이즈(보통 조각의 15% 미만)는 버린다.
+ * - 그래도 많으면 한 프레임이 떨어진 조각으로 나뉜 것이다 (배에서 내려 옆에 선 고양이처럼).
+ *   버리지 않고 가장 가까운 이웃끼리 합친다.
+ */
 function findBands(on: boolean[], want: number): [number, number][] {
-  const raw: [number, number][] = [];
+  let raw: [number, number][] = [];
   let s = -1;
   for (let i = 0; i <= on.length; i++) {
     const hit = i < on.length && on[i];
@@ -33,18 +46,20 @@ function findBands(on: boolean[], want: number): [number, number][] {
       s = -1;
     }
   }
-  if (raw.length <= want) return raw;
-  return raw
-    .map((b) => ({ b, size: b[1] - b[0] }))
-    .sort((p, q) => q.size - p.size)
-    .slice(0, want)
-    .sort((p, q) => p.b[0] - q.b[0])
-    .map((x) => x.b);
+  if (raw.length > want) {
+    const usual = median(raw.map(([a, b]) => b - a + 1));
+    raw = raw.filter(([a, b]) => b - a + 1 >= usual * 0.15);
+  }
+  while (raw.length > want) {
+    let gi = 0;
+    for (let i = 1; i < raw.length - 1; i++)
+      if (raw[i + 1][0] - raw[i][1] < raw[gi + 1][0] - raw[gi][1]) gi = i;
+    raw.splice(gi, 2, [raw[gi][0], raw[gi + 1][1]]);
+  }
+  return raw;
 }
 
-const median = (v: number[]) => [...v].sort((a, b) => a - b)[v.length >> 1];
-
-export async function loadSheet(url: string, cols: number, rows: number): Promise<Sheet> {
+export async function loadSheet(url: string, cols: number, rows: number, opts: SheetOptions = {}): Promise<Sheet> {
   const img = new Image();
   // decode() 는 큰 PNG 에서 간헐적으로 멈춘다. onload 로 기다린다.
   await new Promise<void>((ok, fail) => {
@@ -144,7 +159,31 @@ export async function loadSheet(url: string, cols: number, rows: number): Promis
         }
       }
 
-      return { x0, x1, top, bot, massX, h: bot - top + 1 };
+      // 배 시트: 바닥 40% 안에서 줄마다 가장 긴 가로 구간(선체)을 찾아 그 가운데의 중앙값
+      let anchorX = massX;
+      if (opts.anchor === 'hull') {
+        const centers: number[] = [];
+        for (let y = Math.round(bot - (bot - top) * 0.4); y <= bot; y++) {
+          const off = y * w;
+          let best = 0;
+          let at = 0;
+          let run = 0;
+          for (let x = x0; x <= x1 + 1; x++) {
+            if (x <= x1 && a[off + x]) run++;
+            else {
+              if (run > best) {
+                best = run;
+                at = x - run / 2;
+              }
+              run = 0;
+            }
+          }
+          if (best > (x1 - x0) * 0.25) centers.push(at);
+        }
+        if (centers.length) anchorX = median(centers);
+      }
+
+      return { x0, x1, top, bot, anchorX, h: bot - top + 1 };
     });
 
     // 2차: 세로 바닥은 행 중앙값으로 고정한다 (프레임마다 재면 지면이 출렁인다)
@@ -157,7 +196,7 @@ export async function loadSheet(url: string, cols: number, rows: number): Promis
         sy: r.top,
         sw: r.x1 - r.x0 + 1,
         sh: r.bot - r.top + 1,
-        ox: r.x0 - r.massX,
+        ox: r.x0 - r.anchorX,
         oy: r.top - anchorY,
       })),
     );
@@ -169,6 +208,7 @@ export async function loadSheet(url: string, cols: number, rows: number): Promis
     frames,
     base: h / rows,
     rowScale: rowH.map((v) => baseH / (v || 1)),
+    bodyH: baseH,
   };
 }
 

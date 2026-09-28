@@ -44,7 +44,8 @@ const base = server.resolvedUrls.local[0];
 const browser = await puppeteer.launch({
   executablePath: CHROME,
   headless: true,
-  args: ['--enable-unsafe-swiftshader', '--no-first-run'],
+  // 촬영용 탭을 여는 동안 게임 탭이 뒤로 밀려도 루프가 멈추지 않게
+  args: ['--enable-unsafe-swiftshader', '--no-first-run', '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows'],
   defaultViewport: VIEW,
 });
 
@@ -59,6 +60,51 @@ async function open(where = 'dungeon') {
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const SHEET_ROWS = { axe: 4, boat: 4 }; // 나머지 시트는 5행
+
+/** 필드: 화면 기준 방향키 */
+const fieldKeys = (p, t) => [
+  ...(t[0] - p.x > 5 ? ['KeyD'] : t[0] - p.x < -5 ? ['KeyA'] : []),
+  ...(t[1] - p.y > 4 ? ['KeyS'] : t[1] - p.y < -4 ? ['KeyW'] : []),
+];
+const fieldPos = () => ({ x: __game.field.x, y: __game.field.y });
+
+/**
+ * 필드 연속 촬영: until() 이 참이 되는 순간부터 12컷을 고양이 주변만 잘라 한 장으로 붙인다.
+ * 필드는 2배 확대라 고양이가 작아서 한 번 더 2배로 키워 붙인다.
+ */
+async function fieldBurst(page, until, file, release = []) {
+  await page.waitForFunction(until, { polling: 'raf', timeout: 15000 });
+  for (const k of release) await page.keyboard.up(k); // 순간을 잡았으면 더 가지 않게 키를 뗀다
+  const shots = [];
+  for (let i = 0; i < 12; i++) {
+    const meta = await page.evaluate(() => ({ ...__game.catScreen, mode: __game.field.mode, chop: __game.field.chopping > 0 }));
+    shots.push({ img: await page.screenshot({ type: 'jpeg', quality: 90, encoding: 'base64' }), meta });
+  }
+  const view = page.viewport();
+  const p2 = await browser.newPage();
+  await p2.setViewport({ width: 1240, height: 980 });
+  await p2.setContent('<body style="margin:0;background:#222"><canvas id=c width=1240 height=980></canvas></body>');
+  await p2.evaluate(async (shots) => {
+    const c = document.getElementById('c').getContext('2d');
+    c.font = '14px monospace';
+    for (let i = 0; i < shots.length; i++) {
+      const { img, meta } = shots[i];
+      const im = new Image();
+      im.src = 'data:image/jpeg;base64,' + img;
+      await im.decode();
+      const x = (i % 4) * 310;
+      const y = Math.floor(i / 4) * 325;
+      c.drawImage(im, meta.x - 75, meta.y - 110, 150, 150, x + 5, y + 5, 300, 300);
+      c.fillStyle = '#fff';
+      c.fillText(`${i} ${meta.mode}${meta.chop ? ' 휘두름' : ''}`, x + 8, y + 320);
+    }
+  }, shots);
+  await p2.screenshot({ path: fsPath(file) });
+  await p2.close();
+  await page.setViewport(view);
+  await page.bringToFront();
+}
 
 /**
  * 키를 눌러 목표까지 걸어간다. 40ms 마다 위치를 다시 보고 누를 키를 고친다 (쥐에게 밀려도 따라간다).
@@ -88,7 +134,7 @@ try {
     Object.fromEntries(Object.entries(window.__sheets).map(([k, s]) => [k, s.frames.map((r) => r.length)])),
   );
   for (const [k, rows] of Object.entries(sheets))
-    check(rows.length === 5 && rows.every((n) => n === 6), `${k}: 행별 칸 수 ${rows.join('/')}`);
+    check(rows.length === (SHEET_ROWS[k] ?? 5) && rows.every((n) => n === 6), `${k}: 행별 칸 수 ${rows.join('/')}`);
 
   // 2) 루프가 실제로 도는지
   const raf = await page.evaluate(
@@ -148,14 +194,9 @@ try {
     const moved = await page.evaluate(() => __game.field.x);
     check(moved > game.x + 20, `D 키로 오른쪽으로 걷는다 (${game.x.toFixed(0)} → ${moved.toFixed(0)})`);
 
-    // 필드: 화면 기준 방향키
-    const fieldKeys = (p, t) => [
-      ...(t[0] - p.x > 5 ? ['KeyD'] : t[0] - p.x < -5 ? ['KeyA'] : []),
-      ...(t[1] - p.y > 4 ? ['KeyS'] : t[1] - p.y < -4 ? ['KeyW'] : []),
-    ];
     const warp = await page.evaluate(() => __game.field.warp ?? null);
     const warpAt = FIELD.warps[0].at;
-    await walk(page, () => ({ x: __game.field.x, y: __game.field.y }), warpAt, fieldKeys, () => __game.field.dwell > 0.3);
+    await walk(page, fieldPos, warpAt, fieldKeys, () => __game.field.dwell > 0.3);
     await page.screenshot({ path: fsPath(new URL('field-warp.png', OUT)) });
     const entered = await page.waitForFunction(() => __game.scene === 'dungeon', { timeout: 4000 }).then(() => true, () => false);
     check(entered && warp === null, '워프에 머물면 던전으로 들어간다');
@@ -185,7 +226,79 @@ try {
     await page.close();
   }
 
-  // 5) 눈으로 볼 연속 촬영: 공격 순간과 피격 순간
+  // 5) 필드 지형: 바다로 걸어가 배를 타고, 뭍으로 돌아와 내리고, 숲에서 도끼질한다
+  console.log('\n[필드 지형: 걷기 · 배 · 도끼]');
+  {
+    const { page, errors } = await open('field');
+    // 매 프레임 불변식 감시: 물 위를 걷거나 땅 위에서 배를 타면 기록한다
+    await page.evaluate(() => {
+      window.__viol = [];
+      window.__modes = [];
+      const f = () => {
+        if (__game.scene === 'field') {
+          const s = __game.field;
+          const afloat = s.mode === 'boat' || s.mode === 'board' || s.mode === 'unboard';
+          if (afloat !== (__game.terrain(s.x, s.y) === 2)) __viol.push(`${s.mode} @ ${s.x | 0},${s.y | 0}`);
+          if (__modes[__modes.length - 1] !== s.mode) __modes.push(s.mode);
+        }
+        requestAnimationFrame(f);
+      };
+      f();
+    });
+    const start = await page.evaluate(fieldPos);
+
+    // 바다: 선착장에서 남쪽으로
+    await page.keyboard.down('KeyS');
+    await fieldBurst(page, () => __game.field.mode === 'board', new URL('field-board.png', OUT), ['KeyS']);
+    const boarded = await page.waitForFunction(() => __game.field.mode === 'boat', { timeout: 3000 }).then(() => true, () => false);
+    check(boarded, '물가로 걸어가면 배에 오른다');
+    await page.keyboard.down('KeyS');
+    await sleep(350);
+    await page.keyboard.up('KeyS');
+    const rowed = await page.evaluate(fieldPos);
+    check((await page.evaluate(() => __game.field.mode)) === 'boat' && rowed.y > start.y + 25, `배로 나아간다 (y ${start.y | 0} → ${rowed.y | 0})`);
+
+    // 뭍: 다시 북쪽으로
+    await page.keyboard.down('KeyW');
+    await fieldBurst(page, () => __game.field.mode === 'unboard', new URL('field-unboard.png', OUT), ['KeyW']);
+    const landed = await page.waitForFunction(() => __game.field.mode === 'walk' || __game.field.mode === 'axe', { timeout: 3000 }).then(() => true, () => false);
+    check(landed, '뭍에 닿으면 배에서 내린다');
+
+    // 숲: 가장 가까운 숲 한가운데로 걸어간다 (지형 마스크에서 찾는다)
+    const woods = await page.evaluate(() => {
+      const s = __game.field;
+      let best = null;
+      for (let y = 30; y < 920; y += 6)
+        for (let x = 30; x < 1650; x += 6) {
+          // 사방 12px 가 모두 숲인 곳 = 숲 한가운데
+          if ([[0, 0], [12, 0], [-12, 0], [0, 12], [0, -12]].every(([dx, dy]) => __game.terrain(x + dx, y + dy) === 1)) {
+            const d = Math.hypot(x - s.x, y - s.y);
+            if (!best || d < best.d) best = { x, y, d };
+          }
+        }
+      return best;
+    });
+    check(!!woods, `가장 가까운 숲 (${woods ? `${woods.x}, ${woods.y}` : '없음'})`);
+    if (woods) {
+      const inWoods = await walk(page, fieldPos, [woods.x, woods.y], fieldKeys, () => __game.field.mode === 'axe', 15000);
+      check(inWoods, '숲에 들어가면 도끼를 든다');
+      const dir = woods.x > (await page.evaluate(() => __game.field.x)) ? 'KeyD' : 'KeyA';
+      await page.keyboard.down(dir);
+      await fieldBurst(page, () => __game.field.chopping > 0.3, new URL('field-chop.png', OUT));
+      await sleep(1500);
+      await page.keyboard.up(dir);
+      const chops = await page.evaluate(() => __game.field.chops);
+      check(chops >= 1, `숲을 걸으면 도끼질을 한다 (${chops}회)`);
+    }
+
+    const viol = await page.evaluate(() => __viol);
+    check(viol.length === 0, `물 위를 걷거나 땅 위에서 배를 탄 프레임 ${viol.length}개${viol.length ? ': ' + viol[0] : ''}`);
+    console.log('       지나간 모드:', (await page.evaluate(() => __modes)).join(' → '));
+    check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
+    await page.close();
+  }
+
+  // 6) 눈으로 볼 연속 촬영: 공격 순간과 피격 순간
   console.log('\n[연속 촬영] tools/out/');
   for (const [who, when, file] of [
     ['fat', 'windup', 'fat-attack.png'],

@@ -86,3 +86,42 @@ export function sfxHurt() {
   o.start(t);
   o.stop(t + 0.24);
 }
+
+/** 걸러낸 노이즈 한 번. 필드 효과음들이 쓴다 */
+function burst(type: BiquadFilterType, freq: number, q: number, peak: number, dur: number, sweepTo?: number) {
+  const a = audio();
+  if (!a || !noise) return;
+  const t = a.currentTime;
+  const src = a.createBufferSource();
+  src.buffer = noise;
+  const f = a.createBiquadFilter();
+  f.type = type;
+  f.frequency.setValueAtTime(freq, t);
+  if (sweepTo) f.frequency.exponentialRampToValueAtTime(sweepTo, t + dur);
+  f.Q.value = q;
+  src.connect(f);
+  f.connect(envelope(a, peak, dur));
+  src.start(t);
+  src.stop(t + dur + 0.05);
+}
+
+/** 탁 — 도끼로 수풀을 칠 때. 나무를 두드리는 높은 소리 + 짧은 저음 */
+export function sfxChop() {
+  burst('bandpass', 1300, 2.2, 0.22, 0.07);
+  const a = audio();
+  if (!a) return;
+  const t = a.currentTime;
+  const o = a.createOscillator();
+  o.type = 'sine';
+  o.frequency.setValueAtTime(230, t);
+  o.frequency.exponentialRampToValueAtTime(110, t + 0.08);
+  o.connect(envelope(a, 0.22, 0.1));
+  o.start(t);
+  o.stop(t + 0.12);
+}
+
+/** 첨벙 — 배에 올라타고 내릴 때 */
+export const sfxSplash = () => burst('lowpass', 2400, 0.7, 0.28, 0.32, 380);
+
+/** 찰랑 — 노를 한 번 저을 때 (작게) */
+export const sfxRow = () => burst('bandpass', 750, 1.2, 0.07, 0.14);

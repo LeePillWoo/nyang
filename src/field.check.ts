@@ -1,6 +1,19 @@
 // node src/field.check.ts  (npm run check)
 import assert from 'node:assert/strict';
-import { backFrom, FIELD, inWarp, makeFieldState, updateField, type FieldState } from './field.ts';
+import {
+  backFrom,
+  BLOCK,
+  FIELD,
+  FOREST,
+  inWarp,
+  makeFieldState,
+  updateField,
+  WALK,
+  WATER,
+  type FieldState,
+  type Mode,
+  type TerrainAt,
+} from './field.ts';
 
 const warp = FIELD.warps[0];
 const [wx, wy] = warp.at;
@@ -73,3 +86,132 @@ const standOnWarp = () => {
 }
 
 console.log('field.check: ok');
+
+// ── 지형별 움직임 ─────────────────────────────────────────────────────────────
+// 가짜 지도: x ≥ 500 은 물, (x < 300, y < 300) 은 숲, (350..370, 490..530) 은 막힘, 나머지 걷기
+const map: TerrainAt = (x, y) =>
+  x >= 500 ? WATER : x < 300 && y < 300 ? FOREST : x >= 350 && x <= 370 && y >= 490 && y <= 530 ? BLOCK : WALK;
+const tickT = (s: FieldState, mx: number, my: number, secs: number, at = map) => {
+  const seen: Mode[] = [];
+  let chops = 0;
+  for (let i = 0; i < Math.round(secs / 0.016); i++) {
+    updateField(s, mx, my, 0.016, at);
+    if (seen[seen.length - 1] !== s.mode) seen.push(s.mode);
+    chops += s.events.filter((e) => e.type === 'chop').length;
+    // 불변식: 물 위를 걷지 않고, 땅 위에서 배를 타지 않는다
+    const t = at(s.x, s.y);
+    if (s.mode === 'walk' || s.mode === 'axe') assert.notEqual(t, WATER, `물 위를 걷고 있다 (${s.x.toFixed(0)}, ${s.y.toFixed(0)})`);
+    if (s.mode === 'boat' || s.mode === 'board' || s.mode === 'unboard') assert.equal(t, WATER, `땅 위에 배가 있다 (${s.x.toFixed(0)}, ${s.y.toFixed(0)})`);
+  }
+  return { seen, chops };
+};
+
+// 물가로 걸어가면 배에 오르고, 다 오르면 노를 젓는다
+{
+  const s = makeFieldState([460, 400], map);
+  const { seen } = tickT(s, 1, 0, 0.6);
+  assert.deepEqual(seen, ['walk', 'board'], '걷다가 물가에서 배에 오른다');
+  assert.equal(s.flip, 1, '오른쪽 물이면 오른쪽을 보고 뛰어든다');
+  tickT(s, 0, 0, FIELD.boardTime);
+  assert.equal(s.mode, 'boat');
+  const x0 = s.x;
+  let strokes = 0;
+  for (let i = 0; i < 60; i++) {
+    updateField(s, 1, 0, 0.016, map);
+    strokes += s.events.filter((e) => e.type === 'stroke').length;
+  }
+  assert.ok(s.x > x0 + 100, '배로 나아간다');
+  assert.ok(strokes > 0, '노를 저을 때마다 물소리 사건');
+
+  // 뭍으로 돌아오면 내린다. 왼쪽 뭍이면 시트 그대로(고양이가 배 왼쪽에 내려선다)
+  const back = tickT(s, -1, 0, 3);
+  assert.ok(back.seen.includes('unboard'), '뭍에 닿으면 내린다');
+  assert.equal(s.mode, 'walk');
+  assert.ok(s.x < 500, '뭍에 서 있다');
+}
+
+// 오른쪽 뭍에 내릴 땐 시트를 뒤집어 고양이가 배 오른쪽에 내려선다
+{
+  const lake: TerrainAt = (x) => (x < 500 ? WATER : WALK);
+  const s = makeFieldState([520, 400], lake);
+  s.x = 470;
+  s.mode = 'boat';
+  tickT(s, 1, 0, 0.3, lake);
+  assert.equal(s.mode, 'unboard');
+  assert.equal(s.flip, -1);
+}
+
+// 숲: 잠깐 스치면 그대로 걷고, 머물면 도끼를 든다. 숲에선 느리고, 걸으면 도끼질을 한다
+{
+  const s = makeFieldState([310, 200], map);
+  tickT(s, -1, 0, 0.1); // 숲 경계를 막 넘었다
+  assert.equal(s.mode, 'walk', '잠깐 스친 걸로는 안 바뀐다');
+  const { chops } = tickT(s, -1, 0.3, 3.2); // 주기 = 걷기 0.85초 + 휘두르기 0.45초
+  assert.equal(s.mode, 'axe');
+  assert.ok(chops >= 2, `걷는 동안 도끼질: ${chops}회`);
+  const x0 = s.x;
+  tickT(s, 1, 0, 0.5);
+  const forestPace = s.x - x0;
+  const w = makeFieldState([400, 400], map);
+  tickT(w, 1, 0, 0.5);
+  assert.ok(forestPace < (w.x - 400) * 0.7, '숲에선 느리다');
+}
+
+// 숲 경계를 따라 지그재그로 걸어도 모션이 깜빡이지 않는다
+{
+  const s = makeFieldState([300, 250], map);
+  let changes = 0;
+  let last = s.mode;
+  for (let i = 0; i < 120; i++) {
+    updateField(s, i % 10 < 5 ? -1 : 1, 0, 0.016, map); // 0.08초마다 경계를 넘나든다
+    if (s.mode !== last) {
+      changes++;
+      last = s.mode;
+    }
+  }
+  assert.ok(changes <= 1, `경계에서 모션이 ${changes}번 바뀌었다`);
+}
+
+// 막힌 곳(검정)으로는 못 들어간다
+{
+  const s = makeFieldState([330, 510], map);
+  tickT(s, 1, 0, 1);
+  assert.ok(s.x < 350, `막힌 곳을 뚫었다: ${s.x.toFixed(0)}`);
+}
+
+// 배 위에서는 워프가 작동하지 않는다
+{
+  const sea: TerrainAt = () => WATER;
+  const s = makeFieldState(FIELD.start, sea);
+  s.mode = 'boat';
+  s.x = wx;
+  s.y = wy;
+  let got = null;
+  for (let i = 0; i < 200; i++) got = updateField(s, 0, 0, 0.016, sea) ?? got;
+  assert.equal(got, null);
+}
+
+// 무작위로 20초 조작해도 불변식이 깨지지 않는다 (호수 둘, 숲, 막힌 곳이 섞인 지도)
+{
+  let seed = 7;
+  const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+  const mixed: TerrainAt = (x, y) =>
+    Math.hypot(x - 700, y - 400) < 120 || Math.hypot(x - 1100, y - 500) < 80
+      ? WATER
+      : Math.hypot(x - 900, y - 250) < 90
+        ? FOREST
+        : Math.abs(x - 880) < 12 && Math.abs(y - 520) < 30
+          ? BLOCK
+          : WALK;
+  const s = makeFieldState([900, 420], mixed);
+  const modes = new Set<Mode>();
+  for (let i = 0; i < 25; i++) {
+    const mx = Math.round(rnd() * 2 - 1);
+    const my = Math.round(rnd() * 2 - 1);
+    tickT(s, mx, my, 0.8, mixed);
+    modes.add(s.mode);
+  }
+  assert.ok(modes.size >= 2, `여러 지형을 지나갔다: ${[...modes].join(',')}`);
+}
+
+console.log('terrain.check: ok');
