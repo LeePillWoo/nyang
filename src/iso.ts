@@ -2,7 +2,7 @@ import { CELL, type Grid } from './collide.ts';
 import rooms from './data/rooms.json' with { type: 'json' };
 
 // ponytail: 방이 하나라 alley 고정. 방이 늘면 현재 방을 인자로 받는다.
-const ROOM = rooms.alley;
+export const ROOM = rooms.alley;
 
 export const BG_W = ROOM.size[0];
 export const BG_H = ROOM.size[1];

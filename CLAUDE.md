@@ -32,8 +32,12 @@
 ## 규칙
 
 - 게임 데이터(적, 장난감, 방 템플릿)는 `src/data/` JSON 으로 분리한다.
-  적 `enemies.json`, 방 `rooms.json`(네 꼭짓점·충돌 맵·나가는 곳 `E`),
+  적 `enemies.json`, 방 `rooms.json`(네 꼭짓점·충돌 맵·나가는 곳 `E`·쥐 배치 `spawns`),
+  플레이어 `player.json`(체력·목숨·펀치·구르기·무적 시간),
   필드 `field.json`(시작점·워프·고양이 키 `catBody`·지형별 속도와 타이밍 `modes`).
+- 장면마다 **로직 `<장면>.ts` + 그리기 `<장면>-draw.ts`** 로 나눈다 (필드, 던전). 로직 파일은 그림을 불러오지 않아서
+  node 로 체크된다. 소리는 로직이 `events` 로 내보내고 `main.ts` 가 재생한다. `main.ts` 는 입력·장면 전환·불러오기만.
+- 폴더는 아직 나누지 않는다 (GDD 10장의 레이어별 폴더·ECS 는 따르지 않음). 세 번째 장면(거점·미니게임)이 생길 때 장면별 폴더로.
 - 필드 캐릭터 크기는 `catBody` 한 값으로 정한다. 캐릭터에 딸린 거리·파티클은 전부 이 값의 배수로 쓴다 (픽셀 고정값 금지).
 - 던전 입구를 늘릴 땐 `field.json` 의 `warps` 에 항목을 추가한다 (좌표는 필드 그림 픽셀).
 - 낚시 미니게임은 추후 추가. `MiniGame` 인터페이스, `fishing_spot` 방 타입, 세이브의
@@ -50,7 +54,7 @@
 | 명령 | 하는 일 |
 | --- | --- |
 | `npm run dev` | 개발 서버 |
-| `npm run check` | 로직 자체 체크 (충돌, 적 AI, 펀치 판정, 공격 모션, 간격, 필드 워프, 지형별 움직임, 다리) |
+| `npm run check` | 로직 자체 체크 (충돌, 적 AI, 펀치 판정, 공격 모션, 간격, 필드 워프, 지형별 움직임, 다리, 던전 전투 — 피격·무적·부활·낮잠·펀치 타이밍·나가기) |
 | `npm run verify` | 빌드 후 Chrome 으로 실제로 돌려 그리기 검사 + 필드↔던전 왕복 + 필드 지형(배·도끼·암벽·다리·워프까지 갈 수 있나) + 연속 촬영(`tools/out/`) |
 | `npm run build` | 타입 체크 + 빌드 (`--base=./` 상대 경로) |
 | `node tools/terrain.mjs --force` | 필드 그림 색으로 지형 마스크 초안 새로 생성 (**덮어쓴다** — `--force` 없으면 마스크가 있을 때 멈춘다) |
@@ -75,7 +79,9 @@ Pages 는 10분 캐시한다. 확인은 Ctrl+Shift+R.
 ## 파일 지도
 
 ```
-src/main.ts        게임 루프, 입력, 장면 전환(페이드) · 던전: 플레이어·전투·렌더·HUD
+src/main.ts        게임 루프, 입력, 장면 전환(페이드), 사건 → 소리, 불러오기, ?trace 기록
+src/dungeon.ts     던전 로직 (플레이어 이동·냥펀치·구르기·피격·부활, 쥐·화살, 데미지 숫자·이펙트·흔들기 목록) — node 로 체크된다
+src/dungeon-draw.ts 던전 그리기 (방 배경, 공격 예고, 캐릭터 정렬, 화살·이펙트, 데미지 숫자, HUD, 노란 매트, 격자)
 src/field.ts       필드 로직 (걷기·도끼·배 모드, 배 오르내리기, 워프 머물기) — 순수 로직이라 node 로 체크된다
 src/field-draw.ts  필드 그리기 (카메라, 지형 마스크 읽기, 모드별 스프라이트, 수풀·물결·나뭇잎, 워프 임시 그래픽)
 src/enemy.ts       쥐 AI (접근·옆자리·예고·공격·쿨다운), 펀치 판정, 몸 간격
@@ -83,9 +89,9 @@ src/sheet.ts       스프라이트 시트 슬라이서 (칸 찾기·병합 분�
 src/iso.ts         던전 배경 그림 ↔ 월드 좌표 원근 변환, 충돌 맵·나가는 곳
 src/collide.ts     원-AABB 그리드 충돌
 src/cat.ts         고양이 시트 행 배정 (기본 · 도끼 · 배)
-src/fx.ts          타격 이펙트 시트
+src/fx.ts          타격 이펙트 시트 규격·그리기 (그림은 dungeon-draw.ts 가 불러온다)
 src/audio.ts       합성 타격음
-src/data/          enemies.json · rooms.json · field.json
+src/data/          enemies.json · rooms.json · player.json · field.json
 src/*.check.ts     npm run check 로 도는 자체 체크
 tools/verify.mjs   실제 브라우저 검증
 tools/terrain.mjs  필드 지형 마스크 초안 생성
