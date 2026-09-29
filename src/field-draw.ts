@@ -15,6 +15,9 @@ export const fieldReady = new Promise<void>((ok) => {
 fieldImage.src = fieldUrl;
 
 // ── 지형 마스크 (src/assets/field-terrain.png). 반 해상도로 읽어 둔다 ──────────────────────
+// 채널 하나에 지형 하나: R 막힘 · G 숲 · B 물 · A 다리(투명 = 다리). 셋 다 검정·불투명이면 걷기.
+// 겹치면 다리 > 막힘 > 물 > 숲. 채널마다 절반(128)을 넘으면 칠한 것으로 본다.
+// A 를 거꾸로 쓰는 건, 편집기·브라우저가 투명한 픽셀의 RGB 를 버리기 때문이다 (다리 몇 곳만 투명하면 잃을 게 없다).
 const TW = Math.ceil(W / 2);
 const TH = Math.ceil(H / 2);
 let terrain: Uint8Array | null = null;
@@ -31,21 +34,10 @@ export const terrainReady = new Promise<void>((ok) => {
     g.drawImage(im, 0, 0, TW, TH);
     const d = g.getImageData(0, 0, TW, TH).data;
     terrain = new Uint8Array(TW * TH);
-    // 손으로 칠하면 색이 조금씩 섞이니 가장 두드러진 채널로 판정한다
     for (let i = 0; i < terrain.length; i++) {
-      const r = d[i * 4];
-      const gg = d[i * 4 + 1];
-      const b = d[i * 4 + 2];
+      const o = i * 4;
       terrain[i] =
-        r < 70 && gg < 70 && b < 70
-          ? BLOCK
-          : b > r + 60 && b > gg
-            ? WATER
-            : gg > r + 50 && gg > b + 30
-              ? FOREST
-              : r > 200 && gg > 120 && b < 90
-                ? BRIDGE
-                : WALK;
+        d[o + 3] < 128 ? BRIDGE : d[o] >= 128 ? BLOCK : d[o + 2] >= 128 ? WATER : d[o + 1] >= 128 ? FOREST : WALK;
     }
     ok();
   };

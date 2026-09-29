@@ -1,13 +1,18 @@
 // node tools/terrain.mjs — 필드 그림 색으로 지형 마스크 초안을 만든다.
 //
-// 결과: src/assets/field-terrain.png (필드 그림과 같은 크기, 색 네 가지)
-//   흰색 = 걷기, 초록 = 숲(도끼), 파랑 = 물(배), 검정 = 못 감(암석·절벽만. 집·분수대는 걷기),
-//   노랑 = 다리 (걸어서도 지나가고, 배도 내리지 않고 지나간다)
+// 결과: src/assets/field-terrain.png (필드 그림과 같은 크기). 채널 하나에 지형 하나:
+//   R = 막힘 (암석·절벽. 집·분수대는 걷기)   흰색 = 막힘
+//   G = 숲 (도끼)                             흰색 = 숲
+//   B = 물 (배)                               흰색 = 물
+//   A = 다리 — 투명하게 지운 곳이 다리 (걸어서도, 배로도 지나간다)
+//   셋 다 검정·불투명 = 걷기.  겹치면 다리 > 막힘 > 물 > 숲.
+//   A 를 거꾸로(투명 = 다리) 쓰는 건, 편집기·브라우저가 투명한 픽셀의 RGB 를 버리기 때문이다.
 // 초안이라 경계는 거칠다. 그림 편집기에서 필드 위에 겹쳐 놓고 고치면 된다.
 // 시작점·워프·던전에서 나오는 자리 주변은 무조건 걷기로 둔다 (src/data/field.json 에서 읽는다).
-// ⚠ 직접 고친 뒤 이 스크립트를 다시 돌리면 덮어쓴다. 필드 그림을 바꿨을 때만 다시 돌린다.
+// 마스크가 이미 있으면 덮어쓰지 않고 멈춘다 (새 초안이 필요할 때만 --force). 확인만 할 땐 --preview.
 //
-// 미리보기: tools/out/terrain-preview.png (필드 위에 마스크를 반투명으로 겹친 것)
+// 미리보기: tools/out/terrain-preview.png (필드 위에 마스크를 반투명으로 겹친 것),
+//          tools/out/terrain-channels.png (채널별 흑백, --preview 일 때)
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import puppeteer from 'puppeteer-core';
@@ -15,6 +20,7 @@ import puppeteer from 'puppeteer-core';
 const SRC = new URL('../src/assets/field.webp', import.meta.url);
 const OUT = new URL('../src/assets/field-terrain.png', import.meta.url);
 const PREVIEW = new URL('./out/terrain-preview.png', import.meta.url);
+const CHANNELS = new URL('./out/terrain-channels.png', import.meta.url);
 
 const CHROME =
   process.env.CHROME_PATH ??
@@ -47,13 +53,48 @@ if (process.argv.includes('--preview')) {
     g.imageSmoothingEnabled = false;
     g.drawImage(mk, 0, 0, W, H);
     const m = g.getImageData(0, 0, W, H);
+
+    // 채널별 흑백 보기 (2×2: R 막힘 · G 숲 / B 물 · A 다리). A 는 투명 = 다리라 뒤집어 보여 준다
+    const HW = W >> 1;
+    const HH = H >> 1;
+    const ch = document.createElement('canvas');
+    ch.width = HW * 2;
+    ch.height = HH * 2;
+    const chg = ch.getContext('2d');
+    const panels = [
+      ['R 막힘 (암석·절벽)', 0, false],
+      ['G 숲', 1, false],
+      ['B 물', 2, false],
+      ['A 다리 (투명한 곳 = 흰색으로 표시)', 3, true],
+    ];
+    panels.forEach(([label, k, invert], n) => {
+      const img = chg.createImageData(HW, HH);
+      for (let y = 0; y < HH; y++)
+        for (let x = 0; x < HW; x++) {
+          const v = m.data[((y * 2) * W + x * 2) * 4 + k];
+          const g2 = invert ? 255 - v : v;
+          img.data.set([g2, g2, g2, 255], (y * HW + x) * 4);
+        }
+      chg.putImageData(img, (n % 2) * HW, (n >> 1) * HH);
+      chg.fillStyle = '#e33';
+      chg.font = 'bold 22px sans-serif';
+      chg.fillText(label, (n % 2) * HW + 12, (n >> 1) * HH + 30);
+    });
+    chg.strokeStyle = '#e33';
+    chg.lineWidth = 2;
+    chg.strokeRect(0, 0, HW, HH);
+    chg.strokeRect(HW, 0, HW, HH);
+    chg.strokeRect(0, HH, HW, HH);
+    chg.strokeRect(HW, HH, HW, HH);
+
     const count = [0, 0, 0, 0, 0];
     // 게임(src/field-draw.ts)과 같은 판정
     for (let i = 0; i < W * H; i++) {
       const r = m.data[i * 4];
       const gg = m.data[i * 4 + 1];
       const b = m.data[i * 4 + 2];
-      const t = r < 70 && gg < 70 && b < 70 ? 3 : b > r + 60 && b > gg ? 2 : gg > r + 50 && gg > b + 30 ? 1 : r > 200 && gg > 120 && b < 90 ? 4 : 0;
+      const a = m.data[i * 4 + 3];
+      const t = a < 128 ? 4 : r >= 128 ? 3 : b >= 128 ? 2 : gg >= 128 ? 1 : 0;
       count[t]++;
       const tint = [null, [255, 0, 170, 110], [0, 210, 255, 90], [255, 30, 30, 150], [255, 230, 0, 170]][t];
       m.data.set(tint ?? [0, 0, 0, 0], i * 4);
@@ -66,13 +107,22 @@ if (process.argv.includes('--preview')) {
     pg.drawImage(im, 0, 0);
     pg.drawImage(c, 0, 0);
     const pct = (n) => ((100 * n) / (W * H)).toFixed(1) + '%';
-    return { png: p.toDataURL('image/png').split(',')[1], stats: `물 ${pct(count[2])} · 숲 ${pct(count[1])} · 막힘 ${pct(count[3])} · 다리 ${pct(count[4])}` };
+    return { png: p.toDataURL('image/png').split(',')[1], channels: ch.toDataURL('image/png').split(',')[1], stats: `물 ${pct(count[2])} · 숲 ${pct(count[1])} · 막힘 ${pct(count[3])} · 다리 ${pct(count[4])}` };
   }, b64, mask64);
   fs.mkdirSync(new URL('./out/', import.meta.url), { recursive: true });
   fs.writeFileSync(PREVIEW, Buffer.from(out.png, 'base64'));
+  fs.writeFileSync(CHANNELS, Buffer.from(out.channels, 'base64'));
   await browser.close();
   console.log(`preview ${fileURLToPath(PREVIEW)}  (${out.stats}) — 마스크는 그대로`);
+  console.log(`channels ${fileURLToPath(CHANNELS)}`);
   process.exit(0);
+}
+// 직접 다듬은 마스크를 실수로 덮어쓰지 않게 — 이미 있으면 --force 없이는 멈춘다
+if (fs.existsSync(OUT) && !process.argv.includes('--force')) {
+  await browser.close();
+  console.error(`${fileURLToPath(OUT)} 이 이미 있다. 덮어쓰면 직접 고친 내용이 사라진다.`);
+  console.error('미리보기만: node tools/terrain.mjs --preview   /   정말 새 초안으로: node tools/terrain.mjs --force');
+  process.exit(1);
 }
 const field = JSON.parse(fs.readFileSync(new URL('../src/data/field.json', import.meta.url), 'utf8'));
 // 막혀서는 안 되는 곳: 시작점, 워프, 던전에서 나오는 자리
@@ -356,11 +406,6 @@ const { mask, preview, stats } = await page.evaluate(async (b64, keep) => {
   }
 
   // 합치기: (보호 구역은 걷기) > 큰 물 > 폭포(막힘) > 다리 > 분수·길(걷기) > 암석·절벽 > 숲 > 걷기
-  const WALK = [255, 255, 255];
-  const FOREST = [31, 157, 58];
-  const WATER = [30, 111, 224];
-  const BLOCK = [0, 0, 0];
-  const BRIDGE = [255, 200, 0];
   const cls = new Uint8Array(N);
   let nWater = 0;
   let nForest = 0;
@@ -394,16 +439,16 @@ const { mask, preview, stats } = await page.evaluate(async (b64, keep) => {
   mc.height = H;
   const mg = mc.getContext('2d');
   const md = mg.createImageData(W, H);
-  const pal = [WALK, FOREST, WATER, BLOCK, BRIDGE];
+  // 채널 하나에 지형 하나: R 막힘 · G 숲 · B 물 · A 다리(투명 = 다리). 걷기는 셋 다 0, 불투명
+  const pack = [
+    [0, 0, 0, 255], // 걷기
+    [0, 255, 0, 255], // 숲
+    [0, 0, 255, 255], // 물
+    [255, 0, 0, 255], // 막힘
+    [0, 0, 0, 0], // 다리
+  ];
   for (let y = 0; y < H; y++)
-    for (let x = 0; x < W; x++) {
-      const col = pal[cls[(y >> 1) * w + (x >> 1)]];
-      const o = (y * W + x) * 4;
-      md.data[o] = col[0];
-      md.data[o + 1] = col[1];
-      md.data[o + 2] = col[2];
-      md.data[o + 3] = 255;
-    }
+    for (let x = 0; x < W; x++) md.data.set(pack[cls[(y >> 1) * w + (x >> 1)]], (y * W + x) * 4);
   mg.putImageData(md, 0, 0);
 
   const pc = document.createElement('canvas');
