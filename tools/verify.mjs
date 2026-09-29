@@ -360,7 +360,7 @@ try {
           await page.keyboard.up(k);
         }
       })();
-      await fieldBurst(page, () => __game.field.chopping > 0.3, new URL('field-chop.png', OUT));
+      await fieldBurst(page, () => __game.field.chopping > 0, new URL('field-chop.png', OUT));
       await sleep(1500);
       stop = true;
       await pace;

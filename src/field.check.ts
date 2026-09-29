@@ -150,9 +150,11 @@ const tickT = (s: FieldState, mx: number, my: number, secs: number, at = map) =>
   const s = makeFieldState([310, 200], map);
   tickT(s, -1, 0, 0.1); // 숲 경계를 막 넘었다
   assert.equal(s.mode, 'walk', '잠깐 스친 걸로는 안 바뀐다');
-  const { chops } = tickT(s, -1, 0.3, 3.2); // 주기 = 걷기 0.85초 + 휘두르기 0.45초
+  const { chopEvery, chopTime } = FIELD.modes.axe;
+  const { chops } = tickT(s, -1, 0.3, 3.2); // 한 주기 = 걷기 chopEvery + 휘두르기 chopTime
   assert.equal(s.mode, 'axe');
-  assert.ok(chops >= 2, `걷는 동안 도끼질: ${chops}회`);
+  const want = Math.floor((3.2 - 0.3) / (chopEvery + chopTime)) - 1; // 숲에 들어가는 데 걸린 시간·끝자락은 빼고
+  assert.ok(chops >= want, `걷는 동안 도끼질: ${chops}회 (적어도 ${want}회)`);
   const x0 = s.x;
   tickT(s, 1, 0, 0.5);
   const forestPace = s.x - x0;
@@ -179,15 +181,17 @@ const tickT = (s: FieldState, mx: number, my: number, secs: number, at = map) =>
 // 숲에서 지그재그로 걸어도(방향을 바꿀 때마다 잠깐 멈춤) 도끼질은 이어진다
 {
   const s = makeFieldState([150, 150], map);
+  // 한 방향으로 걷는 시간을 도끼질 간격보다 짧게 — 멈출 때마다 타이머가 0 이 되면 한 번도 못 휘두른다
+  const frames = Math.max(1, Math.floor((FIELD.modes.axe.chopEvery * 0.6) / 0.016));
   let chops = 0;
-  for (let seg = 0; seg < 8; seg++) {
+  for (let seg = 0; seg < 40; seg++) {
     updateField(s, 0, 0, 0.016, map); // 방향을 바꾸는 한 프레임 멈춤
-    for (let i = 0; i < 30; i++) {
-      updateField(s, seg % 2 ? -1 : 1, 0, 0.016, map); // 0.48초씩 좌우 — 도끼질 주기(0.85초)보다 짧다
+    for (let i = 0; i < frames; i++) {
+      updateField(s, seg % 2 ? -1 : 1, 0, 0.016, map);
       chops += s.events.filter((e) => e.type === 'chop').length;
     }
   }
-  assert.ok(chops >= 2, `지그재그 4초 동안 도끼질 ${chops}회`);
+  assert.ok(chops >= 2, `지그재그로 걸어도 도끼질 ${chops}회`);
 }
 
 // 막힌 곳(검정)으로는 못 들어간다
