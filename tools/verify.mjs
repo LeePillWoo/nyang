@@ -263,6 +263,29 @@ try {
     await page.screenshot({ path: fsPath(new URL(`room-${id}.png`, OUT)) });
     await page.close();
   }
+  // 3-3) 미니맵: 이정표 점을 실제 마우스로 누르면 그 포탈 위로 워프한다 (그 자리에서 던전으로 빨려 들어가지는 않는다)
+  console.log('\n[미니맵]');
+  {
+    const { page, errors } = await open('field');
+    const target = FIELD.warps.find((w) => w.id === 'pyramid');
+    const pt = await page.evaluate(() => __game.minimapPoint('pyramid'));
+    await page.mouse.move(pt.x, pt.y);
+    await page.mouse.down();
+    await page.mouse.up();
+    const arrived = await page
+      .waitForFunction(([x, y]) => Math.hypot(__game.field.x - x, __game.field.y - y) < 4, { timeout: 4000 }, target.at)
+      .then(() => true, () => false);
+    const at = await page.evaluate(() => [__game.field.x | 0, __game.field.y | 0]);
+    check(arrived, `미니맵 피라미드 점을 누르면 피라미드 포탈로 워프 (${at.join(', ')})`);
+    await sleep(1500);
+    check((await page.evaluate(() => __game.scene)) === 'field', '워프한 자리에서 바로 던전으로 빨려 들어가지 않는다');
+    await page.keyboard.press('KeyM');
+    check(!(await page.evaluate(() => __game.showMap)), 'M 키로 미니맵을 끈다');
+    check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
+    await page.screenshot({ path: fsPath(new URL('minimap.png', OUT)) });
+    await page.close();
+  }
+
   // 4) 왕복: 필드에서 시작 → 집 앞 워프로 걸어가 머문다 → 던전 → 노란 매트로 걸어 나간다 → 필드
   console.log('\n[필드 ↔ 던전 왕복]');
   {
@@ -294,8 +317,13 @@ try {
       const my = ((fx + fz) / d) * Math.SQRT1_2;
       return [...(mx > 0.35 ? ['KeyD'] : mx < -0.35 ? ['KeyA'] : []), ...(my > 0.35 ? ['KeyS'] : my < -0.35 ? ['KeyW'] : [])];
     };
+    // 실제 게임처럼 방을 비운 뒤(클리어) 걸어 나간다 — 클리어하면 못 움직이던 버그가 있었다
+    await page.evaluate(() => {
+      __game.dungeon.enemies = [];
+    });
+    await page.waitForFunction(() => __game.dungeon.phase === 'cleared', { timeout: 3000 });
     const left = await walk(page, () => __game.cat, EXIT, dungeonKeys, () => __game.scene === 'field', 10000);
-    check(left, '노란 매트를 밟으면 필드로 나온다');
+    check(left, '방을 클리어한 뒤 나가는 칸까지 걸어가 필드로 나온다');
     await sleep(500);
     const back = await page.evaluate(() => ({ x: __game.field.x, y: __game.field.y, armed: __game.field.armed }));
     const [bx, by] = FIELD.warps[0].back;

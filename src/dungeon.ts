@@ -183,7 +183,8 @@ export function updateDungeon(d: Dungeon, input: DungeonInput, dt: number): 'exi
   let { mx, my } = input;
   const len = Math.hypot(mx, my);
   P.moving = len > 0;
-  const alive = d.phase === 'playing';
+  // 낮잠(목숨 소진)일 때만 못 움직인다. 클리어한 뒤엔 걸어서 나가야 한다
+  const alive = d.phase !== 'napped';
   if (len > 0 && alive) {
     mx /= len;
     my /= len;

@@ -109,6 +109,24 @@ function run(d: Dungeon, input: typeof still, seconds: number) {
   assert.equal(run(d, still, 0.016).out, null);
 }
 
+// 클리어한 뒤에도 걸을 수 있다 (나가는 칸까지 걸어가야 한다). 낮잠이면 못 걷는다
+{
+  const d = makeDungeon(sheets);
+  d.enemies = [];
+  run(d, still, 0.05);
+  assert.equal(d.phase, 'cleared');
+  const walk = (n: number) => {
+    for (let i = 0; i < n; i++) updateDungeon(d, { ...still, mx: 1 }, 0.016);
+  };
+  const x0 = d.P.x;
+  walk(20);
+  assert.ok(d.P.x > x0 + 0.3, `클리어 뒤 이동: ${x0} -> ${d.P.x}`);
+  d.phase = 'napped';
+  const x1 = d.P.x;
+  walk(20);
+  assert.ok(Math.abs(d.P.x - x1) < 0.01, '낮잠 중엔 못 움직인다');
+}
+
 // 방마다: 몬스터 id 가 있고, 배치가 바닥 위이고, 가운데(시작점)에서 나가는 곳까지 걸어갈 수 있다
 for (const id of Object.keys(ROOMS)) {
   const r = room(id);

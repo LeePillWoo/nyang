@@ -7,6 +7,7 @@
 // - 월드 조각은 src/data/field.json 의 size · grid 와 크기가 맞는지 본다 (어긋나면 실패).
 // - 지형 마스크 src/assets/world/masks/mask_rR_cC.png 가 없는 조각에만 빈 마스크(검정 = 전부 걷기)를 만든다.
 //   **이미 있는 마스크는 건드리지 않는다** (손으로 칠한 마스크 보호).
+// - 미니맵 src/assets/world/minimap.webp 를 조각 36장을 1/8 로 줄여 만든다 (조각이 바뀌었을 때만).
 // - art/temp/, art/metadata/ 와 PNG 가 아닌 파일은 건너뛴다.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -93,6 +94,37 @@ for (const rel of pngs) {
   fs.mkdirSync(path.dirname(dst), { recursive: true });
   fs.writeFileSync(dst, Buffer.from(await encode(fs.readFileSync(src).toString('base64')), 'base64'));
   made++;
+}
+// 미니맵: 조각 36장을 1/8 로 줄여 한 장으로 (src/assets/world/minimap.webp). 조각이 바뀌었거나 없을 때만
+const MINI = path.join(OUT, 'world/minimap.webp');
+const tiles = pngs.filter((p) => p.startsWith('world/tiles/'));
+if (all || !fs.existsSync(MINI) || tiles.some((p) => fs.statSync(path.join(ART, p)).mtimeMs > fs.statSync(MINI).mtimeMs)) {
+  const parts = tiles.map((p) => {
+    const [, r, c] = p.match(/tile_r(\d+)_c(\d+)/).map(Number);
+    return { x: tileX(c), y: tileY(r), d: fs.readFileSync(path.join(ART, p)).toString('base64') };
+  });
+  const webp = await page.evaluate(
+    async (parts, W, H) => {
+      const k = 1 / 8;
+      const cv = document.createElement('canvas');
+      cv.width = Math.round(W * k);
+      cv.height = Math.round(H * k);
+      const g = cv.getContext('2d');
+      g.imageSmoothingQuality = 'high';
+      for (const p of parts) {
+        const im = new Image();
+        im.src = 'data:image/png;base64,' + p.d;
+        await new Promise((ok) => (im.onload = ok));
+        g.drawImage(im, p.x * k, p.y * k, im.naturalWidth * k, im.naturalHeight * k);
+      }
+      return cv.toDataURL('image/webp', 0.85).split(',')[1];
+    },
+    parts,
+    W,
+    H,
+  );
+  fs.writeFileSync(MINI, Buffer.from(webp, 'base64'));
+  console.log('  미니맵  world/minimap.webp');
 }
 await browser.close();
 console.log(`원본 ${pngs.length}장 · 변환 ${made} · 그대로 ${skipped}${bad ? ` · 크기 안 맞음 ${bad}` : ''}`);

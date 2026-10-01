@@ -38,7 +38,3 @@ export function drawFx(ctx: CanvasRenderingContext2D, sheets: Record<FxSheet, Ca
   ctx.restore();
 }
 
-/** 이펙트 한 칸만 그린다 (포탈처럼 계속 떠 있는 것) */
-export function drawFxFrame(ctx: CanvasRenderingContext2D, img: CanvasImageSource, id: FxId, col: number, x: number, y: number, w: number, h: number) {
-  ctx.drawImage(img, col * SIZE, FX[id][1] * SIZE, SIZE, SIZE, x, y, w, h);
-}

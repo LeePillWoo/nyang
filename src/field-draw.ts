@@ -1,7 +1,5 @@
-import { image } from './assets.ts';
 import { AXE_FPS, AXE_ROW, BOAT_FPS, BOAT_ROW, CAT_FPS, CAT_ROW, SNOW_FPS, SNOW_ROW } from './cat.ts';
 import { drawEmote } from './emote.ts';
-import { drawFxFrame, FX_SHEETS } from './fx.ts';
 import { BLOCK, BRIDGE, FIELD, FOREST, WALK, WATER, type FieldEvent, type FieldState, type Terrain, type Warp } from './field.ts';
 import { drawFrame, type Sheet } from './sheet.ts';
 
@@ -427,12 +425,10 @@ export function drawField(
 }
 
 /**
- * 포탈 — 던전 이벤트 시트의 포탈 그림 + 이름표.
+ * 포탈 — 바닥에 숨 쉬는 빛 원 + 빛 기둥 + 이름표 (이펙트 시트의 포탈 그림은 너무 강해서 이 단순한 그림을 쓴다).
  * 머무는 동안 바깥 링이 채워진다.
  * 아직 던전이 연결되지 않은 포탈은 흐리게 그린다. 이름표는 포탈 아래 (위쪽엔 이정표 그림이 있다).
  */
-const PORTAL = image(FX_SHEETS.events);
-
 function drawWarp(ctx: CanvasRenderingContext2D, w: Warp, t: number, progress: number) {
   const [x, y] = w.at;
   const rx = w.r;
@@ -445,17 +441,22 @@ function drawWarp(ctx: CanvasRenderingContext2D, w: Warp, t: number, progress: n
 
   ctx.save();
   if (!w.to) ctx.globalAlpha = 0.45;
-  // 이펙트 시트의 '포탈 활성' 줄: 0~3 켜짐 · 3 유지 · 4~7 꺼짐. 서 있는 포탈은 3번 언저리를 오가며 반짝인다
-  const sheet = PORTAL.img;
-  if (sheet.complete && sheet.naturalWidth) {
-    const col = [2, 3, 4, 3][Math.floor(t * 5) % 4];
-    const size = rx * 3.4 * (1 + 0.04 * pulse);
-    drawFxFrame(ctx, sheet, 'portal_activation', col, x - size / 2, y - size * 0.62, size, size);
-  } else {
-    ctx.fillStyle = `rgba(160, 230, 255, ${0.3 + 0.15 * pulse})`;
-    ellipse(1);
-    ctx.fill();
-  }
+  const beam = ctx.createLinearGradient(x, y, x, y - 46);
+  beam.addColorStop(0, `rgba(190, 240, 255, ${0.35 + 0.2 * pulse})`);
+  beam.addColorStop(1, 'rgba(190, 240, 255, 0)');
+  ctx.fillStyle = beam;
+  ctx.fillRect(x - rx * 0.8, y - 46, rx * 1.6, 46);
+
+  ctx.fillStyle = `rgba(160, 230, 255, ${0.3 + 0.15 * pulse})`;
+  ellipse(1);
+  ctx.fill();
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
+  ctx.stroke();
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = 'rgba(110, 200, 255, 0.9)';
+  ellipse(0.55 + 0.15 * pulse);
+  ctx.stroke();
 
   if (progress > 0) {
     ctx.lineWidth = 3;

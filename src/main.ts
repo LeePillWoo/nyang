@@ -8,8 +8,9 @@ import { makeDungeon, PLAYER, resetDungeon, updateDungeon, type Dungeon, type Du
 import { emotesReady, quiet, say, saying, tickEmote, type EmoteId } from './emote.ts';
 import { ENEMY_DEFS, type Kind } from './enemy.ts';
 import { biomeAt, drawField, fieldFx, fieldReady, fieldView, terrainAt, terrainReady } from './field-draw.ts';
-import { backFrom, FIELD, inWarp, makeFieldState, updateField, type FieldEvent, type FieldState } from './field.ts';
+import { backFrom, FIELD, inWarp, makeFieldState, updateField, type FieldEvent, type FieldState, type Warp } from './field.ts';
 import { ROOMS } from './iso.ts';
+import { drawMinimap, inMinimap, minimapPick, minimapRect, toMini } from './minimap.ts';
 import { loadSheet, type Sheet } from './sheet.ts';
 
 const canvas = document.createElement('canvas');
@@ -30,6 +31,8 @@ const keys = new Set<string>();
 const query = new URLSearchParams(location.search);
 let debug = query.has('grid');
 let showTerrain = query.has('terrain'); // 필드 지형 보기 (T 키)
+let showMap = true; // 필드 미니맵 (M 키)
+let mapHover: Warp | null = null;
 
 // ?trace — tools/verify.mjs 가 쓴다. 프레임마다 실제로 그린 사각형을 남겨 튐·사라짐을 잡는다.
 const trace: Record<string, unknown>[] | null = query.has('trace') ? [] : null;
@@ -51,6 +54,7 @@ addEventListener('keydown', (e) => {
   if (e.code === 'Space') e.preventDefault();
   if (e.code === 'KeyG') debug = !debug;
   if (e.code === 'KeyT') showTerrain = !showTerrain;
+  if (e.code === 'KeyM') showMap = !showMap;
   if (e.code === 'KeyJ') punchQueued = true;
   if (e.code === 'KeyR' && scene === 'dungeon') {
     if (dungeon.phase === 'napped') leaveDungeon(); // GDD: 목숨을 다 쓰면 마을에서 깨어난다
@@ -62,8 +66,19 @@ addEventListener('keydown', (e) => {
 });
 addEventListener('keyup', (e) => keys.delete(e.code));
 addEventListener('blur', () => keys.clear());
-canvas.addEventListener('mousedown', () => {
+const onMap = () => scene === 'field' && showMap;
+canvas.addEventListener('mousemove', (e) => {
+  mapHover = onMap() ? minimapPick(minimapRect(innerWidth), e.offsetX, e.offsetY) : null;
+  canvas.style.cursor = mapHover ? 'pointer' : '';
+});
+canvas.addEventListener('mousedown', (e) => {
   unlockAudio();
+  // 미니맵의 이정표 점을 누르면 그 포탈 위로 워프 (포탈 위에 내려도 한 번 벗어났다 들어와야 빨려 들어간다)
+  if (onMap() && inMinimap(minimapRect(innerWidth), e.offsetX, e.offsetY)) {
+    const w = minimapPick(minimapRect(innerWidth), e.offsetX, e.offsetY);
+    if (w) warpTo(w);
+    return;
+  }
   punchQueued = true;
 });
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -110,6 +125,13 @@ if (trace)
       get emote() { return saying(); },
       get sheets() { return sheets; },
       terrain: terrainAt,
+      /** 미니맵에서 이정표 점의 화면 위치 (CSS px) */
+      minimapPoint: (id: string) => {
+        const w = FIELD.warps.find((v) => v.id === id)!;
+        const [x, y] = toMini(minimapRect(innerWidth), w.at[0], w.at[1]);
+        return { x, y };
+      },
+      get showMap() { return showMap; },
       biome: biomeAt,
       size: FIELD.size,
       /** 필드 고양이의 화면 위치 (CSS px) */
@@ -223,6 +245,14 @@ const enterDungeon = (to: string) =>
     enteredRoom();
     sayHelp();
   });
+/** 미니맵 워프 */
+const warpTo = (w: Warp) =>
+  goTo(() => {
+    field = makeFieldState(w.at, terrainAt);
+    mapHover = null;
+    quiet();
+    say('surprise', 1.2);
+  });
 const leaveDungeon = () =>
   goTo(() => {
     scene = 'field';
@@ -291,6 +321,11 @@ function drawFieldScene() {
   ctx.fill();
   ctx.fillStyle = '#5b4a3f';
   ctx.fillText(FIELD.name, 28, 36);
+  if (showMap) {
+    const sc = fieldView.sc;
+    const view = { x: -fieldView.ox / sc, y: -fieldView.oy / sc, w: canvas.width / sc, h: canvas.height / sc };
+    drawMinimap(ctx, minimapRect(innerWidth), field, view, mapHover, last / 1000);
+  }
 }
 
 /** 장면 전환 덮개 */
@@ -304,7 +339,7 @@ function drawFade() {
 
 const help = document.getElementById('help')!;
 const HELP = {
-  field: 'WASD 이동 · 숲은 도끼로, 물은 배로 · 이정표 앞 포탈에 잠시 서 있으면 던전 · T 지형 보기',
+  field: 'WASD 이동 · 숲은 도끼로, 물은 배로 · 이정표 앞 포탈에 잠시 서 있으면 던전 · 미니맵 점 클릭 = 워프 · M 미니맵 · T 지형 보기',
   dungeon: 'WASD 이동 · 클릭/J 냥펀치 · Space 구르기 · 빛나는 칸으로 나가기 · G 격자',
 };
 function sayHelp() {
