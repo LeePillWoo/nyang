@@ -125,3 +125,51 @@ export const sfxSplash = () => burst('lowpass', 2400, 0.7, 0.28, 0.32, 380);
 
 /** 찰랑 — 노를 한 번 저을 때 (작게) */
 export const sfxRow = () => burst('bandpass', 750, 1.2, 0.07, 0.14);
+
+/** 짧은 음 하나. 낚시 효과음들이 쓴다 */
+function tone(type: OscillatorType, from: number, to: number, peak: number, dur: number, delay = 0) {
+  const a = audio();
+  if (!a) return;
+  const t = a.currentTime + delay;
+  const o = a.createOscillator();
+  o.type = type;
+  o.frequency.setValueAtTime(from, t);
+  o.frequency.exponentialRampToValueAtTime(to, t + dur);
+  const g = a.createGain();
+  g.gain.setValueAtTime(0.0001, a.currentTime);
+  g.gain.setValueAtTime(peak, t);
+  g.gain.exponentialRampToValueAtTime(0.0008, t + dur);
+  g.connect(a.destination);
+  o.connect(g);
+  o.start(t);
+  o.stop(t + dur + 0.02);
+}
+
+// ── 낚시 ──
+/** 휙 — 낚싯대를 던질 때 */
+export const sfxCast = () => burst('bandpass', 500, 0.9, 0.12, 0.3, 2200);
+/** 퐁당 — 찌가 물에 떨어질 때 */
+export function sfxPlop() {
+  burst('lowpass', 1600, 0.7, 0.14, 0.2, 400);
+  tone('sine', 620, 190, 0.16, 0.14);
+}
+/** 톡 — 물고기가 찌를 건드릴 때 (작게) */
+export const sfxNibble = () => tone('sine', 900, 650, 0.07, 0.06);
+/** 퐁! — 찌가 쏙 잠길 때 */
+export function sfxBite() {
+  tone('sine', 480, 120, 0.26, 0.2);
+  burst('lowpass', 1200, 0.8, 0.12, 0.18, 300);
+}
+/** 딸깍 — 릴을 감는 동안 계속 */
+export const sfxReel = () => burst('bandpass', 3200, 6, 0.05, 0.025);
+/** 팅 — 줄이 끊어질 때 */
+export function sfxSnap() {
+  tone('triangle', 1400, 260, 0.22, 0.3);
+  burst('highpass', 2500, 0.7, 0.1, 0.12);
+}
+/** 띠리링 — 낚았을 때 */
+export function sfxCatch() {
+  tone('sine', 660, 660, 0.16, 0.14);
+  tone('sine', 880, 880, 0.16, 0.14, 0.1);
+  tone('sine', 1320, 1320, 0.18, 0.3, 0.2);
+}

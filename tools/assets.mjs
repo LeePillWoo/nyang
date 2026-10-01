@@ -7,6 +7,7 @@
 // - 월드 조각은 src/data/field.json 의 size · grid 와 크기가 맞는지 본다 (어긋나면 실패).
 // - 지형 마스크 src/assets/world/masks/mask_rR_cC.png 가 없는 조각에만 빈 마스크(검정 = 전부 걷기)를 만든다.
 //   **이미 있는 마스크는 건드리지 않는다** (손으로 칠한 마스크 보호).
+// - 낚시 시트 좌표 art/fishing/atlas.json → src/data/fishing-atlas.json (원본이 바뀌었을 때만).
 // - 미니맵 src/assets/world/minimap.webp 를 조각 36장을 1/8 로 줄여 만든다 (조각이 바뀌었을 때만).
 // - art/temp/, art/metadata/ 와 PNG 가 아닌 파일은 건너뛴다.
 import fs from 'node:fs';
@@ -127,5 +128,33 @@ if (all || !fs.existsSync(MINI) || tiles.some((p) => fs.statSync(path.join(ART, 
   console.log('  미니맵  world/minimap.webp');
 }
 await browser.close();
+
+// 낚시 시트 좌표: art/fishing/atlas.json → src/data/fishing-atlas.json (게임이 쓰는 값만, art 는 git 밖이라 옮겨 둔다)
+// 칸마다 [x, y, w, h, 내용 x, y, w, h] — 고양이는 뒤에 [발 x, y, 낚싯대 끝 x, y] (칸 기준)
+const ATLAS = path.join(ART, 'fishing/atlas.json');
+const ATLAS_OUT = path.join(ROOT, 'src/data/fishing-atlas.json');
+if (fs.existsSync(ATLAS) && (all || !fs.existsSync(ATLAS_OUT) || fs.statSync(ATLAS).mtimeMs > fs.statSync(ATLAS_OUT).mtimeMs)) {
+  const src = JSON.parse(fs.readFileSync(ATLAS, 'utf8'));
+  const NAME = { fishing_cat: 'cat', fishing_shadows: 'shadow', fishing_catches: 'catch', fishing_effects: 'fx' };
+  const out = {};
+  for (const sh of src.sheets) {
+    const states = {};
+    for (const st of sh.states)
+      states[st.id] = {
+        name: st.name,
+        fps: st.suggestedFps,
+        loop: st.loop,
+        frames: st.frames.map((i) => {
+          const f = sh.frames[i];
+          const v = [...f.rect, ...f.contentBounds];
+          if (f.suggestedFootPivot) v.push(...f.suggestedFootPivot, ...f.suggestedRodTip);
+          return v.map((n) => Math.round(n * 10) / 10);
+        }),
+      };
+    out[NAME[sh.id] ?? sh.id] = { sheet: sh.file.replace(/\.png$/, ''), states };
+  }
+  fs.writeFileSync(ATLAS_OUT, JSON.stringify(out).replace(/\],\[/g, '],\n[') + '\n');
+  console.log('  낚시 좌표  src/data/fishing-atlas.json');
+}
 console.log(`원본 ${pngs.length}장 · 변환 ${made} · 그대로 ${skipped}${bad ? ` · 크기 안 맞음 ${bad}` : ''}`);
 process.exit(bad ? 1 : 0);

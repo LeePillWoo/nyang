@@ -55,7 +55,8 @@ async function open(where = 'dungeon', room = '') {
   const page = await browser.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
-  await page.goto(base + '?trace' + (where === 'dungeon' ? '&dungeon' + (room ? '=' + room : '') : ''), { waitUntil: 'load' });
+  const q = where === 'dungeon' ? '&dungeon' + (room ? '=' + room : '') : where === 'fishing' ? '&fishing' : '';
+  await page.goto(base + '?trace' + q, { waitUntil: 'load' });
   await page.waitForFunction(() => window.__sheets, { timeout: 60000 });
   return { page, errors };
 }
@@ -312,6 +313,85 @@ try {
     await page.close();
   }
 
+  // 3-4) 낚시 (실제 마우스로, 미리 정해 둔 입질 없이):
+  //  가까운 물고기 앞쪽을 겨눠 링이 작을 때 던진다 → 저절로 오는 입질을 기다려 챈다 → 날뛸 땐 놓고 아니면 감는다 →
+  //  낚음 팝업 · 도감 → Space 로 다시 낚시 → Esc 로 필드 (호수섬 포탈 앞). 그리고 필드의 호수섬 포탈로 들어가면 낚시터
+  console.log('\n[낚시]');
+  {
+    const { page, errors } = await open('fishing');
+    const st = () => page.evaluate(() => ({ phase: __game.fishing.phase, run: __game.fishing.run > 0, fail: __game.fishing.fail }));
+    check((await page.evaluate(() => __game.scene)) === 'fishing', '?fishing 으로 낚시터에서 시작');
+    let bit = false;
+    let miss = Infinity;
+    for (let tries = 0; tries < 4 && !bit; tries++) {
+      await page.waitForFunction(() => __game.fishing.phase === 'ready', { timeout: 8000 });
+      // 찌를 놀라지 않을 만큼 물고기 머리 앞에 (경계 넘으면 물 안으로)
+      const aim = await page.evaluate(() => {
+        const s = __game.fishing;
+        const [dx, dy] = s.spot.defaultCast;
+        const f = s.fishes.filter((v) => v.mode === 'swim' && v.alpha >= 1).sort((a, b) => Math.hypot(a.x - dx, a.y - dy) - Math.hypot(b.x - dx, b.y - dy))[0];
+        const [x0, y0, x1, y1] = [1000, 250, 1520, 715];
+        const x = f ? Math.min(x1, Math.max(x0, f.x + f.hx * (f.def.scare * f.size + 45))) : dx;
+        const y = f ? Math.min(y1, Math.max(y0, f.y + f.hy * (f.def.scare * f.size + 45))) : dy;
+        return { x, y, at: __game.fishScreen(x, y) };
+      });
+      await page.mouse.move(aim.at.x, aim.at.y);
+      await page.mouse.down();
+      await sleep(530); // 링이 가장 작을 때 (ringPeriod 의 절반)
+      await page.mouse.up();
+      await page.waitForFunction(() => __game.fishing.phase === 'wait', { timeout: 3000 });
+      const landed = await page.evaluate(() => [__game.fishing.castX, __game.fishing.castY]);
+      miss = Math.min(miss, Math.hypot(landed[0] - aim.x, landed[1] - aim.y));
+      bit = await page.waitForFunction(() => __game.fishing.phase === 'bite', { polling: 'raf', timeout: 30000 }).then(() => true, () => false);
+      if (!bit) {
+        // 안 물었으면 다시 감고 다시 던진다
+        await page.mouse.down();
+        await page.mouse.up();
+      }
+    }
+    check(miss < 30, `링이 작을 때 떼면 겨눈 곳 가까이 떨어진다 (${miss.toFixed(0)}px)`);
+    check(bit, '물고기 앞쪽에 던지면 저절로 입질이 온다');
+    if (bit) {
+      await page.mouse.down();
+      await page.waitForFunction(() => __game.fishing.phase === 'reel', { timeout: 3000 });
+      let isDown = true;
+      for (let i = 0; i < 1500; i++) {
+        const s = await st();
+        if (s.phase !== 'reel') break;
+        if (s.run && isDown) {
+          await page.mouse.up();
+          isDown = false;
+        } else if (!s.run && !isDown) {
+          await page.mouse.down();
+          isDown = true;
+        }
+        await sleep(30);
+      }
+      if (isDown) await page.mouse.up();
+      const end = await page.evaluate(() => ({ phase: __game.fishing.phase, fail: __game.fishing.fail, catch: __game.fishing.catch, dex: __game.fishing.dex }));
+      check(end.phase === 'caught', `날뛸 땐 놓고 아니면 감아서 낚았다 (${end.catch ? `${end.catch.name} ${end.catch.cm}cm` : end.phase + ' ' + end.fail})`);
+      check(!!end.catch && end.dex[end.catch.kind]?.count === 1 && end.catch.isNew, '처음 잡은 종은 도감에 들어가고 NEW');
+      await sleep(500);
+      await page.screenshot({ path: fsPath(new URL('fishing-caught.png', OUT)) });
+      await sleep(300);
+      await page.keyboard.press('Space');
+      const again = await page.waitForFunction(() => __game.fishing.phase === 'ready', { timeout: 2000 }).then(() => true, () => false);
+      check(again, 'Space 로 다시 낚시');
+    }
+    await page.keyboard.press('Escape');
+    const out = await page.waitForFunction(() => __game.scene === 'field', { timeout: 4000 }).then(() => true, () => false);
+    const lake = FIELD.warps.find((w) => w.id === 'lake_island');
+    const back = await page.evaluate(() => [__game.field.x, __game.field.y]);
+    check(out && Math.hypot(back[0] - lake.back[0], back[1] - lake.back[1]) < 5, `Esc 로 필드의 호수섬 포탈 앞으로 나온다 (${back.map((v) => v | 0).join(', ')})`);
+
+    // 필드의 호수섬 포탈에 서 있으면 낚시터로 들어간다
+    await page.evaluate((at) => Object.assign(__game.field, { x: at[0], y: at[1], camX: at[0], camY: at[1], armed: true, mode: 'walk' }), lake.at);
+    const inFish = await page.waitForFunction(() => __game.scene === 'fishing', { timeout: 5000 }).then(() => true, () => false);
+    check(inFish, '필드의 호수섬 정박지 포탈로 들어가면 낚시터');
+    check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
+    await page.close();
+  }
+
   // 4) 왕복: 필드에서 시작 → 집 앞 워프로 걸어가 머문다 → 던전 → 노란 매트로 걸어 나간다 → 필드
   console.log('\n[필드 ↔ 던전 왕복]');
   {
@@ -487,6 +567,9 @@ try {
     // 워프는 뭍(걷기·숲)에서만 작동한다 — 포탈 한가운데가 물·막힘·다리면 연결해도 못 들어간다
     const wet = await page.evaluate((warps) => warps.filter((w) => __game.terrain(w.at[0], w.at[1]) > 1).map((w) => `${w.id}(지형 ${__game.terrain(w.at[0], w.at[1])})`), FIELD.warps);
     check(wet.length === 0, `모든 포탈이 뭍 위에 있다${wet.length ? ': ' + wet.join(', ') : ''}`);
+    // 던전·낚시터에서 나오면 back 에 선다 — 거기도 뭍이어야 한다
+    const wetBack = await page.evaluate((warps) => warps.filter((w) => w.to && __game.terrain(w.back[0], w.back[1]) > 1).map((w) => w.id), FIELD.warps);
+    check(wetBack.length === 0, `연결된 포탈의 돌아올 자리가 모두 뭍이다${wetBack.length ? ': ' + wetBack.join(', ') : ''}`);
 
     // 막힘: 가장 가까운 암벽·바위 덩어리 한가운데를 향해 3초 동안 밀고 들어가 본다
     const wall = await page.evaluate(() => {

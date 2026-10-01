@@ -114,7 +114,7 @@
       "r": 18,
       "dwell": 0.8,
       "to": "lakeside",
-      "back": [2806, 1129]
+      "back": [2838, 1099]
     },
     {
       "id": "lake_island",
@@ -123,8 +123,8 @@
       "at": [2632, 1182],
       "r": 18,
       "dwell": 0.8,
-      "to": "island",
-      "back": [2632, 1212]
+      "to": "lake_island_fishing",
+      "back": [2664, 1182]
     },
     {
       "id": "sunflower_field",
@@ -313,7 +313,7 @@
       "at": [4560, 1170],
       "r": 18,
       "dwell": 0.8,
-      "to": "",
+      "to": "island",
       "back": [4560, 1200]
     },
     {

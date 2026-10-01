@@ -1,0 +1,43 @@
+{
+  "rules": {
+    "ringMax": 110,
+    "ringMin": 4,
+    "ringPeriod": 1.1,
+    "flight": 0.55,
+    "settle": 0.7,
+    "hookTime": 0.45,
+    "perfect": 0.35,
+    "reelSpeed": 90,
+    "reelTension": 0.5,
+    "drain": 0.15,
+    "tired": 0.2,
+    "snapGrace": 0.35,
+    "slackBelow": 0.15,
+    "slackTime": 2.2,
+    "landRadius": 26,
+    "failTime": 1.8,
+    "boredTime": 15
+  },
+  "spots": {
+    "lake_island_fishing": {
+      "name": "호수섬 정박지",
+      "image": "fishing/lake_island_fishing_bg_v2",
+      "size": [1672, 941],
+      "seat": [735, 482],
+      "catScale": 0.9,
+      "water": [[960, 210], [1560, 210], [1560, 755], [965, 755]],
+      "landing": [985, 545],
+      "defaultCast": [1160, 535],
+      "popup": [1210, 340],
+      "fishCount": 4,
+      "fish": {
+        "silver_minnow": 34,
+        "golden_crucian": 26,
+        "green_perch": 18,
+        "rainbow_trout": 12,
+        "blue_catfish": 7,
+        "sunset_koi": 3
+      }
+    }
+  }
+}

@@ -5,6 +5,7 @@ import { hitPlayer, makeDungeon, PLAYER, updateDungeon, type Dungeon, type Dunge
 import data from './data/field.json' with { type: 'json' };
 import { ENEMY_DEFS, makeEnemy } from './enemy.ts';
 import { FX } from './fx.ts';
+import { SPOTS } from './fishing.ts';
 import { room, ROOMS } from './iso.ts';
 
 const sheets = {} as never; // 로직만 본다 — 그리기는 안 한다
@@ -147,7 +148,7 @@ for (const id of Object.keys(ROOMS)) {
       }
   assert.ok(r.exits.some(([x, z]) => seen.has(z * r.gridW + x)), `${id}: 시작점에서 나가는 곳까지 못 간다`);
 }
-// 연결된 포탈은 있는 방을 가리킨다
-for (const w of data.warps) if (w.to) assert.ok(ROOMS[w.to], `포탈 ${w.id}: 없는 방 ${w.to}`);
+// 연결된 포탈은 있는 방이나 낚시터를 가리킨다
+for (const w of data.warps) if (w.to) assert.ok(ROOMS[w.to] || SPOTS[w.to], `포탈 ${w.id}: 없는 방 ${w.to}`);
 
 console.log('dungeon.check: ok');
