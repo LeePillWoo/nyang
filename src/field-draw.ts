@@ -1,18 +1,21 @@
-import { AXE_FPS, AXE_ROW, BOAT_FPS, BOAT_ROW, CAT_FPS, CAT_ROW } from './cat.ts';
+import { image } from './assets.ts';
+import { AXE_FPS, AXE_ROW, BOAT_FPS, BOAT_ROW, CAT_FPS, CAT_ROW, SNOW_FPS, SNOW_ROW } from './cat.ts';
+import { drawEmote } from './emote.ts';
+import { drawFxFrame, FX_SHEETS } from './fx.ts';
 import { BLOCK, BRIDGE, FIELD, FOREST, WALK, WATER, type FieldEvent, type FieldState, type Terrain, type Warp } from './field.ts';
 import { drawFrame, type Sheet } from './sheet.ts';
 
-export type FieldSheets = { cat: Sheet; axe: Sheet; boat: Sheet };
+export type FieldSheets = { cat: Sheet; axe: Sheet; boat: Sheet; snow: Sheet };
 
-// ── 필드 조각 (src/assets/field/tile_rR_cC.webp · mask_rR_cC.png, 원본은 art/field/ → node tools/tiles.mjs) ──
+// ── 필드 조각 (src/assets/world/tiles/tile_rR_cC.webp · world/masks/mask_rR_cC.png, 원본 art/world/tiles/ → node tools/assets.mjs) ──
 // 필드는 grid 칸으로 자른 조각을 바둑판처럼 이어 붙인 한 장이다. 좌표는 이어 붙인 전체 그림의 픽셀.
 // 그림은 카메라 근처 조각만 불러온다. 마스크는 처음에 전부 읽는다 (고양이가 어디로 가든 지형을 알아야 한다).
 const [W, H] = FIELD.size;
 const [COLS, ROWS] = FIELD.grid;
 const tileX = (c: number) => Math.floor((c * W) / COLS);
 const tileY = (r: number) => Math.floor((r * H) / ROWS);
-const TILE_URL = import.meta.glob<string>('./assets/field/tile_*.webp', { eager: true, query: '?url', import: 'default' });
-const MASK_URL = import.meta.glob<string>('./assets/field/mask_*.png', { eager: true, query: '?url', import: 'default' });
+const TILE_URL = import.meta.glob<string>('./assets/world/tiles/tile_*.webp', { eager: true, query: '?url', import: 'default' });
+const MASK_URL = import.meta.glob<string>('./assets/world/masks/mask_*.png', { eager: true, query: '?url', import: 'default' });
 
 type Tile = {
   x: number;
@@ -26,6 +29,10 @@ type Tile = {
   load?: Promise<void>;
   terrain?: Uint8Array;
   tint?: HTMLCanvasElement;
+  /** field.json biomes 의 글자: 's' 눈 지역 · 'd' 사막 지역 · '.' 보통 */
+  zone: string;
+  /** 1/4 해상도 발밑 판정 (0 보통 · 1 눈 · 2 모래). 그림을 불러온 조각만 */
+  biome?: Uint8Array;
 };
 const tiles: Tile[] = [];
 for (let r = 0; r < ROWS; r++)
@@ -36,8 +43,9 @@ for (let r = 0; r < ROWS; r++)
       y: tileY(r),
       w: tileX(c + 1) - tileX(c),
       h: tileY(r + 1) - tileY(r),
-      url: TILE_URL[`./assets/field/tile_${n}.webp`],
-      mask: MASK_URL[`./assets/field/mask_${n}.png`],
+      url: TILE_URL[`./assets/world/tiles/tile_${n}.webp`],
+      mask: MASK_URL[`./assets/world/masks/mask_${n}.png`],
+      zone: FIELD.biomes[r]?.[c] ?? '.',
     });
   }
 
@@ -63,6 +71,7 @@ function want(t: Tile) {
       const im = new Image();
       im.onload = () => {
         t.img = im;
+        if (t.zone !== '.') t.biome = readBiome(im, t.zone);
         ok();
       };
       im.onerror = () => ok();
@@ -70,6 +79,38 @@ function want(t: Tile) {
     });
   }
   return t.load;
+}
+
+// ── 눈밭·모래 (걷는 모션만 바뀐다) ── 지역은 조각 단위로 field.json 에 적고, 그 안에서 발밑 색으로 가른다:
+// 눈 지역에선 밝고 무채색인 곳만 눈 (흙길·풀은 보통 걷기), 사막 지역에선 모래색이면 모래.
+const BQ = 4;
+function readBiome(im: HTMLImageElement, zone: string) {
+  const w = Math.ceil(im.naturalWidth / BQ);
+  const h = Math.ceil(im.naturalHeight / BQ);
+  const c = document.createElement('canvas');
+  c.width = w;
+  c.height = h;
+  const g = c.getContext('2d', { willReadFrequently: true })!;
+  g.drawImage(im, 0, 0, w, h);
+  const d = g.getImageData(0, 0, w, h).data;
+  const out = new Uint8Array(w * h);
+  for (let i = 0; i < out.length; i++) {
+    const [r, gr, b] = [d[i * 4], d[i * 4 + 1], d[i * 4 + 2]];
+    const hi = Math.max(r, gr, b);
+    const lo = Math.min(r, gr, b);
+    if (zone === 's') out[i] = (r + gr + b) / 3 > 200 && hi - lo < 45 ? 1 : 0;
+    else out[i] = r > 170 && r >= gr && gr > b && r - b > 40 && gr > 120 ? 2 : 0;
+  }
+  return out;
+}
+export type Biome = '' | 'snow' | 'sand';
+export function biomeAt(x: number, y: number): Biome {
+  const px = Math.min(W - 1, Math.max(0, x | 0));
+  const py = Math.min(H - 1, Math.max(0, y | 0));
+  const t = tileAt(px, py);
+  if (!t.biome) return '';
+  const v = t.biome[(((py - t.y) / BQ) | 0) * Math.ceil(t.w / BQ) + (((px - t.x) / BQ) | 0)];
+  return v === 1 ? 'snow' : v === 2 ? 'sand' : '';
 }
 
 /** 시작점 주변 조각 (첫 화면이 비어 보이지 않게) */
@@ -338,10 +379,19 @@ export function drawField(
   const loop = (fps: number) => Math.floor(s.animT * fps) % 6;
   const once = (p: number) => Math.min(5, Math.floor(p * 6));
   switch (s.mode) {
-    case 'walk':
-      row = s.moving ? CAT_ROW.run : CAT_ROW.idle;
-      col = loop(s.moving ? CAT_FPS.run : CAT_FPS.idle);
+    case 'walk': {
+      const b = s.moving ? biomeAt(s.x, s.y) : '';
+      if (b) {
+        sheet = sheets.snow;
+        size = (body * sheets.snow.base) / sheets.snow.bodyH;
+        row = b === 'snow' ? SNOW_ROW.snow : SNOW_ROW.sand;
+        col = loop(b === 'snow' ? SNOW_FPS.snow : SNOW_FPS.sand);
+      } else {
+        row = s.moving ? CAT_ROW.run : CAT_ROW.idle;
+        col = loop(s.moving ? CAT_FPS.run : CAT_FPS.idle);
+      }
       break;
+    }
     case 'axe':
       sheet = sheets.axe;
       size = k * sheets.axe.base;
@@ -373,13 +423,16 @@ export function drawField(
   drawFrame(ctx, sheet, row, col, s.x, s.y + bob, size, s.flip, rs);
   if (s.mode === 'axe') drawFoliage(ctx, s.x, s.y, body);
   drawBits(ctx);
+  drawEmote(ctx, s.x, s.y - body * (afloat ? 1.5 : 1.2), body * 0.8);
 }
 
 /**
- * 워프 임시 그래픽 — 바닥에 숨 쉬는 빛 원 + 빛 기둥 + 이름표.
- * 머무는 동안 바깥 링이 채워진다. 스프라이트 시트가 오면 이 함수만 바꾸면 된다.
+ * 포탈 — 던전 이벤트 시트의 포탈 그림 + 이름표.
+ * 머무는 동안 바깥 링이 채워진다.
  * 아직 던전이 연결되지 않은 포탈은 흐리게 그린다. 이름표는 포탈 아래 (위쪽엔 이정표 그림이 있다).
  */
+const PORTAL = image(FX_SHEETS.events);
+
 function drawWarp(ctx: CanvasRenderingContext2D, w: Warp, t: number, progress: number) {
   const [x, y] = w.at;
   const rx = w.r;
@@ -392,22 +445,17 @@ function drawWarp(ctx: CanvasRenderingContext2D, w: Warp, t: number, progress: n
 
   ctx.save();
   if (!w.to) ctx.globalAlpha = 0.45;
-  const beam = ctx.createLinearGradient(x, y, x, y - 46);
-  beam.addColorStop(0, `rgba(190, 240, 255, ${0.35 + 0.2 * pulse})`);
-  beam.addColorStop(1, 'rgba(190, 240, 255, 0)');
-  ctx.fillStyle = beam;
-  ctx.fillRect(x - rx * 0.8, y - 46, rx * 1.6, 46);
-
-  ctx.fillStyle = `rgba(160, 230, 255, ${0.3 + 0.15 * pulse})`;
-  ellipse(1);
-  ctx.fill();
-  ctx.lineWidth = 1.5;
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
-  ctx.stroke();
-  ctx.lineWidth = 1;
-  ctx.strokeStyle = 'rgba(110, 200, 255, 0.9)';
-  ellipse(0.55 + 0.15 * pulse);
-  ctx.stroke();
+  // 이펙트 시트의 '포탈 활성' 줄: 0~3 켜짐 · 3 유지 · 4~7 꺼짐. 서 있는 포탈은 3번 언저리를 오가며 반짝인다
+  const sheet = PORTAL.img;
+  if (sheet.complete && sheet.naturalWidth) {
+    const col = [2, 3, 4, 3][Math.floor(t * 5) % 4];
+    const size = rx * 3.4 * (1 + 0.04 * pulse);
+    drawFxFrame(ctx, sheet, 'portal_activation', col, x - size / 2, y - size * 0.62, size, size);
+  } else {
+    ctx.fillStyle = `rgba(160, 230, 255, ${0.3 + 0.15 * pulse})`;
+    ellipse(1);
+    ctx.fill();
+  }
 
   if (progress > 0) {
     ctx.lineWidth = 3;

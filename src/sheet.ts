@@ -35,26 +35,57 @@ const median = (v: number[]) => [...v].sort((a, b) => a - b)[v.length >> 1];
  * - 그래도 많으면 한 프레임이 떨어진 조각으로 나뉜 것이다 (배에서 내려 옆에 선 고양이처럼).
  *   버리지 않고 가장 가까운 이웃끼리 합친다.
  */
-function findBands(on: boolean[], want: number): [number, number][] {
+/**
+ * cover[i] = i 번째 줄(열)의 알파 픽셀 수. 알파가 있는 구간을 찾아 want 개로 맞춘다.
+ * - 많으면: 점 노이즈(보통 폭의 15% 미만)를 버리고, 그래도 많으면 가장 가까운 구간끼리 합친다.
+ * - 가는 조각(효과선 등, 보통 폭의 35% 미만)은 가까운 옆 구간에 붙인다 — 그대로 두면 한 칸을 차지하고
+ *   대신 진짜 두 컷이 한 칸으로 합쳐진다 (갈매기 선원 공격 행).
+ * - 모자라면: 가장 넓은 구간을 가운데 절반에서 알파가 가장 적은 줄로 가른다 — 칼끝·주먹·볏이 옆 칸에
+ *   닿으면 사이에 빈 줄이 없다 (칼 쥐·뚱보 쥐 공격 행, 얼음볏 펭귄 행).
+ */
+function findBands(cover: Int32Array, want: number): [number, number][] {
   let raw: [number, number][] = [];
   let s = -1;
-  for (let i = 0; i <= on.length; i++) {
-    const hit = i < on.length && on[i];
+  for (let i = 0; i <= cover.length; i++) {
+    const hit = i < cover.length && cover[i] > 0;
     if (hit && s < 0) s = i;
     if (!hit && s >= 0) {
       raw.push([s, i - 1]);
       s = -1;
     }
   }
+  const width = ([a, b]: [number, number]) => b - a + 1;
   if (raw.length > want) {
-    const usual = median(raw.map(([a, b]) => b - a + 1));
-    raw = raw.filter(([a, b]) => b - a + 1 >= usual * 0.15);
+    const usual = median(raw.map(width));
+    raw = raw.filter((r) => width(r) >= usual * 0.15);
   }
   while (raw.length > want) {
     let gi = 0;
     for (let i = 1; i < raw.length - 1; i++)
       if (raw[i + 1][0] - raw[i][1] < raw[gi + 1][0] - raw[gi][1]) gi = i;
     raw.splice(gi, 2, [raw[gi][0], raw[gi + 1][1]]);
+  }
+  const usual = median(raw.map(width));
+  for (let i = 0; i < raw.length && raw.length > 1; ) {
+    if (width(raw[i]) >= usual * 0.35) {
+      i++;
+      continue;
+    }
+    const gapL = i > 0 ? raw[i][0] - raw[i - 1][1] : Infinity;
+    const gapR = i < raw.length - 1 ? raw[i + 1][0] - raw[i][1] : Infinity;
+    const j = gapL <= gapR ? i - 1 : i + 1;
+    raw[j] = [Math.min(raw[j][0], raw[i][0]), Math.max(raw[j][1], raw[i][1])];
+    raw.splice(i, 1);
+    if (j < i) i--;
+  }
+  while (raw.length < want && raw.length) {
+    let wi = 0;
+    for (let i = 1; i < raw.length; i++) if (width(raw[i]) > width(raw[wi])) wi = i;
+    const [b0, b1] = raw[wi];
+    const q = Math.floor((b1 - b0) / 4);
+    let cut = b0 + q;
+    for (let x = b0 + q; x <= b1 - q; x++) if (cover[x] < cover[cut]) cut = x;
+    raw.splice(wi, 1, [b0, cut - 1], [cut, b1]);
   }
   return raw;
 }
@@ -81,49 +112,23 @@ export async function loadSheet(url: string, cols: number, rows: number, opts: S
   const a = new Uint8Array(w * h);
   for (let i = 0, j = 3; i < a.length; i++, j += 4) a[i] = rgba[j] > ALPHA ? 1 : 0;
 
-  const rowOn: boolean[] = new Array(h);
+  const rowCover = new Int32Array(h);
   for (let y = 0; y < h; y++) {
     const off = y * w;
-    let hit = false;
-    for (let x = 0; x < w; x++)
-      if (a[off + x]) {
-        hit = true;
-        break;
-      }
-    rowOn[y] = hit;
+    for (let x = 0; x < w; x++) rowCover[y] += a[off + x];
   }
 
   const frames: Frame[][] = [];
   const rowH: number[] = [];
 
-  for (const [y0, y1] of findBands(rowOn, rows)) {
-    const colOn: boolean[] = new Array(w).fill(false);
+  for (const [y0, y1] of findBands(rowCover, rows)) {
+    const cover = new Int32Array(w);
     for (let y = y0; y <= y1; y++) {
       const off = y * w;
-      for (let x = 0; x < w; x++) if (a[off + x]) colOn[x] = true;
+      for (let x = 0; x < w; x++) cover[x] += a[off + x];
     }
 
-    // 칼끝·주먹이 옆 칸에 닿으면 사이에 빈 열이 없어 두 프레임이 한 덩어리로 잡힌다
-    // (칼 쥐·뚱보 쥐 공격 행이 5칸으로 잡혀 마지막 프레임이 사라지고 있었다).
-    // 모자란 만큼 가장 넓은 구간을, 가운데 절반에서 알파가 가장 적은 열로 가른다.
-    const bands = findBands(colOn, cols);
-    if (bands.length < cols) {
-      const cover = new Int32Array(w);
-      for (let y = y0; y <= y1; y++) {
-        const off = y * w;
-        for (let x = 0; x < w; x++) cover[x] += a[off + x];
-      }
-      while (bands.length < cols) {
-        let wi = 0;
-        for (let i = 1; i < bands.length; i++)
-          if (bands[i][1] - bands[i][0] > bands[wi][1] - bands[wi][0]) wi = i;
-        const [b0, b1] = bands[wi];
-        const q = Math.floor((b1 - b0) / 4);
-        let cut = b0 + q;
-        for (let x = b0 + q; x <= b1 - q; x++) if (cover[x] < cover[cut]) cut = x;
-        bands.splice(wi, 1, [b0, cut - 1], [cut, b1]);
-      }
-    }
+    const bands = findBands(cover, cols);
 
     // 1차: 프레임마다 실루엣 경계와 발 위치를 잰다
     const raw = bands.map(([x0, x1]) => {

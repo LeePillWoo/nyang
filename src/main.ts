@@ -1,15 +1,15 @@
-// 게임 뼈대 — 캔버스·입력·장면 전환(필드 ↔ 던전)·소리·불러오기.
+// 게임 뼈대 — 캔버스·입력·장면 전환(필드 ↔ 던전)·소리·감정·불러오기.
 // 필드는 field.ts(로직) / field-draw.ts(그리기), 던전은 dungeon.ts / dungeon-draw.ts.
-import bowUrl from './assets/monster/rat-bow.webp';
-import fatUrl from './assets/monster/rat-fat.webp';
-import swordUrl from './assets/monster/rat-sword.webp';
+import { assetUrl } from './assets.ts';
 import { sfxChop, sfxHit, sfxHurt, sfxPop, sfxRow, sfxSplash, unlockAudio } from './audio.ts';
-import { loadAxe, loadBoat, loadCat } from './cat.ts';
-import { drawDungeon, dungeonReady } from './dungeon-draw.ts';
-import { makeDungeon, resetDungeon, updateDungeon, type Dungeon, type DungeonEvent } from './dungeon.ts';
-import type { Kind } from './enemy.ts';
-import { drawField, fieldFx, fieldReady, fieldView, terrainAt, terrainReady } from './field-draw.ts';
-import { backFrom, FIELD, makeFieldState, updateField, type FieldEvent, type FieldState } from './field.ts';
+import { loadAxe, loadBoat, loadCat, loadSnow } from './cat.ts';
+import { drawDungeon, dungeonReady, roomReady } from './dungeon-draw.ts';
+import { makeDungeon, PLAYER, resetDungeon, updateDungeon, type Dungeon, type DungeonEvent } from './dungeon.ts';
+import { emotesReady, quiet, say, saying, tickEmote, type EmoteId } from './emote.ts';
+import { ENEMY_DEFS, type Kind } from './enemy.ts';
+import { biomeAt, drawField, fieldFx, fieldReady, fieldView, terrainAt, terrainReady } from './field-draw.ts';
+import { backFrom, FIELD, inWarp, makeFieldState, updateField, type FieldEvent, type FieldState } from './field.ts';
+import { ROOMS } from './iso.ts';
 import { loadSheet, type Sheet } from './sheet.ts';
 
 const canvas = document.createElement('canvas');
@@ -27,11 +27,12 @@ layout();
 addEventListener('resize', layout);
 
 const keys = new Set<string>();
-let debug = location.search.includes('grid');
-let showTerrain = location.search.includes('terrain'); // 필드 지형 보기 (T 키)
+const query = new URLSearchParams(location.search);
+let debug = query.has('grid');
+let showTerrain = query.has('terrain'); // 필드 지형 보기 (T 키)
 
 // ?trace — tools/verify.mjs 가 쓴다. 프레임마다 실제로 그린 사각형을 남겨 튐·사라짐을 잡는다.
-const trace: Record<string, unknown>[] | null = location.search.includes('trace') ? [] : null;
+const trace: Record<string, unknown>[] | null = query.has('trace') ? [] : null;
 if (trace) Object.assign(window, { __trace: trace });
 function traceDraw(who: string, sh: Sheet, row: number, col: number, sx: number, sy: number, size: number, flip: number, rs: number, extra: object) {
   if (!trace) return;
@@ -53,7 +54,10 @@ addEventListener('keydown', (e) => {
   if (e.code === 'KeyJ') punchQueued = true;
   if (e.code === 'KeyR' && scene === 'dungeon') {
     if (dungeon.phase === 'napped') leaveDungeon(); // GDD: 목숨을 다 쓰면 마을에서 깨어난다
-    else resetDungeon(dungeon);
+    else {
+      resetDungeon(dungeon);
+      enteredRoom();
+    }
   }
 });
 addEventListener('keyup', (e) => keys.delete(e.code));
@@ -71,23 +75,42 @@ const input = () => ({
   my: (held('KeyS', 'ArrowDown') ? 1 : 0) - (held('KeyW', 'ArrowUp') ? 1 : 0),
 });
 
+/** 몬스터 시트 — 방에 들어갈 때 그 방 몬스터 것만 불러온다 (51종을 처음에 다 받으면 20MB) */
 const sheets = {} as Record<Kind, Sheet>;
+const loading = new Map<Kind, Promise<Sheet>>();
+function enemySheet(k: Kind) {
+  let p = loading.get(k);
+  if (!p) {
+    p = loadSheet(assetUrl(ENEMY_DEFS[k].sheet), 6, 5).then((s) => (sheets[k] = s));
+    loading.set(k, p);
+  }
+  return p;
+}
+/** 방 배경 + 그 방 몬스터 시트 */
+const prepareRoom = (id: string) => Promise.all([roomReady(id), ...ROOMS[id].spawns.map(([k]) => enemySheet(k as Kind))]);
+
 let catSheet: Sheet;
 let axeSheet: Sheet;
 let boatSheet: Sheet;
+let snowSheet: Sheet;
 let dungeon: Dungeon;
 
-// 장면: 필드(시작) ↔ 던전. ?dungeon 이면 던전에서 바로 시작한다 (검증용)
-let scene: 'field' | 'dungeon' = location.search.includes('dungeon') ? 'dungeon' : 'field';
+// 장면: 필드(시작) ↔ 던전. ?dungeon 이면 골목 던전에서, ?dungeon=<방 id> 면 그 방에서 바로 시작한다 (검증용)
+const startRoom = query.get('dungeon') || 'alley';
+let scene: 'field' | 'dungeon' = query.has('dungeon') ? 'dungeon' : 'field';
 let field: FieldState = makeFieldState(FIELD.start);
-let roomId = 'alley'; // 지금 들어가 있는 던전
+let roomId = startRoom; // 지금 들어가 있는 던전
 if (trace)
   Object.assign(window, {
     __game: {
       get scene() { return scene; },
       get field() { return field; },
       get cat() { return { x: dungeon.P.x, z: dungeon.P.z }; },
+      get dungeon() { return dungeon; },
+      get emote() { return saying(); },
+      get sheets() { return sheets; },
       terrain: terrainAt,
+      biome: biomeAt,
       size: FIELD.size,
       /** 필드 고양이의 화면 위치 (CSS px) */
       get catScreen() {
@@ -95,6 +118,9 @@ if (trace)
         return { x: (fieldView.ox + field.x * fieldView.sc) / d, y: (fieldView.oy + field.y * fieldView.sc) / d };
       },
     },
+    /** 모든 몬스터 시트를 불러와 행별 칸 수를 돌려준다 (검증용) */
+    __allEnemySheets: async () =>
+      Object.fromEntries(await Promise.all(Object.keys(ENEMY_DEFS).map(async (k) => [k, (await enemySheet(k)).frames.map((r) => r.length)]))),
   });
 
 /** 필드 연출 사건 → 소리 */
@@ -110,24 +136,98 @@ function dungeonSound(e: DungeonEvent) {
   else if (e.type === 'hurt') sfxHurt();
 }
 
-// 장면 전환: 크림색으로 덮은 순간 장면을 바꾸고 다시 걷어낸다
+// ── 감정 ── 고양이 머리 위 아이콘 (src/emote.ts). 상황이 바뀌는 순간에만 띄운다
+const mood = {
+  biome: '' as string,
+  /** 지역 감정을 마지막으로 띄운 때 (지역마다) */
+  biomeT: {} as Record<string, number>,
+  boatT: 0,
+  seasick: false,
+  chops: 0,
+  stillT: 0,
+  portal: '' as string,
+  lives: 0,
+  scared: false,
+  phase: '' as string,
+};
+function fieldMood(dt: number, now: number) {
+  const b = field.mode === 'walk' || field.mode === 'axe' ? biomeAt(field.x, field.y) : '';
+  if (b && b !== mood.biome && now - (mood.biomeT[b] ?? -99) > 20) {
+    say(b === 'snow' ? 'cold' : 'heat', 2);
+    mood.biomeT[b] = now;
+  }
+  mood.biome = b;
+  if (field.mode === 'boat') {
+    mood.boatT += dt;
+    if (mood.boatT > 8 && !mood.seasick) {
+      say('seasick', 2.2);
+      mood.seasick = true;
+    }
+  } else if (field.mode === 'walk' || field.mode === 'axe') {
+    mood.boatT = 0;
+    mood.seasick = false;
+  }
+  for (const e of field.events) if (e.type === 'chop' && ++mood.chops % 5 === 0) say('exertion', 1.2);
+  // 포탈 위: 연결된 곳이면 의욕, 아직 아니면 갸웃
+  const w = FIELD.warps.find((v) => inWarp(v, field.x, field.y));
+  if (w && w.id !== mood.portal) say(w.to ? 'determination' : 'question', 1.6);
+  mood.portal = w?.id ?? '';
+  mood.stillT = field.moving ? 0 : mood.stillT + dt;
+  if (mood.stillT > 7) {
+    say('sleep', 3);
+    mood.stillT = 4;
+  }
+}
+function dungeonMood() {
+  const P = dungeon.P;
+  for (const e of dungeon.events) {
+    if (e.type === 'hurt') say('sweat', 1.2);
+    else if (e.type === 'pop') say('pride', 1.3);
+  }
+  if (P.lives < mood.lives) say('dizzy', 2);
+  mood.lives = P.lives;
+  if (P.hp > 0 && P.hp < PLAYER.maxHp * 0.3 && !mood.scared) {
+    say('fear', 2);
+    mood.scared = true;
+  } else if (P.hp >= PLAYER.maxHp * 0.3) mood.scared = false;
+  if (dungeon.phase !== mood.phase) {
+    if (dungeon.phase === 'cleared') say('delight', 3);
+    else if (dungeon.phase === 'napped') say('sleep', 99);
+    mood.phase = dungeon.phase;
+  }
+}
+/** 방에 막 들어왔을 때 (리셋 포함) */
+function enteredRoom() {
+  mood.lives = dungeon.P.lives;
+  mood.phase = dungeon.phase;
+  mood.scared = false;
+  quiet();
+  say((dungeon.room.def.mood ?? 'determination') as EmoteId, 2);
+}
+
+// 장면 전환: 크림색으로 덮은 순간 장면을 바꾸고 다시 걷어낸다. 바꾸는 일이 불러오기를 기다리면 덮인 채로 기다린다
 const FADE = 0.28;
 let fade = 0;
-let fadeTo: (() => void) | null = null;
-const goTo = (swap: () => void) => {
+let fadeTo: (() => void | Promise<void>) | null = null;
+let swapping = false;
+const goTo = (swap: () => void | Promise<void>) => {
   if (!fadeTo && fade === 0) fadeTo = swap;
 };
 const enterDungeon = (to: string) =>
-  goTo(() => {
+  goTo(async () => {
+    step(ROOMS[to].name);
+    await prepareRoom(to);
     scene = 'dungeon';
     roomId = to;
-    resetDungeon(dungeon);
+    resetDungeon(dungeon, to);
+    enteredRoom();
     sayHelp();
   });
 const leaveDungeon = () =>
   goTo(() => {
     scene = 'field';
     field = makeFieldState(backFrom(roomId), terrainAt);
+    quiet();
     sayHelp();
   });
 
@@ -142,9 +242,13 @@ function frame(now: number) {
   fps += (1 / Math.max(dt, 1e-4) - fps) * 0.1;
   if (fadeTo) {
     fade = Math.min(1, fade + dt / FADE);
-    if (fade >= 1) {
-      fadeTo();
-      fadeTo = null;
+    if (fade >= 1 && !swapping) {
+      swapping = true;
+      const swap = fadeTo;
+      Promise.resolve(swap()).finally(() => {
+        fadeTo = null;
+        swapping = false;
+      });
     }
   } else if (fade > 0) fade = Math.max(0, fade - dt / FADE);
 
@@ -155,13 +259,16 @@ function frame(now: number) {
       const w = updateField(field, mx, my, dt, terrainAt);
       field.events.forEach(fieldSound);
       fieldFx(field.events);
+      fieldMood(dt, now / 1000);
       if (w) enterDungeon(w.to);
     } else {
       const out = updateDungeon(dungeon, { ...input(), punch: punchQueued, dash: keys.has('Space') }, dt);
       dungeon.events.forEach(dungeonSound);
+      dungeonMood();
       if (out === 'exit') leaveDungeon();
     }
     punchQueued = false;
+    tickEmote(dt);
   }
   if (scene === 'field') drawFieldScene();
   else drawDungeon(ctx, canvas.width, canvas.height, dungeon, catSheet, { t: last / 1000, dt: lastDt, fps, grid: debug, trace: trace ? traceDraw : undefined });
@@ -173,7 +280,7 @@ function frame(now: number) {
 function drawFieldScene() {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  drawField(ctx, canvas.width, canvas.height, field, { cat: catSheet, axe: axeSheet, boat: boatSheet }, last / 1000, lastDt, showTerrain);
+  drawField(ctx, canvas.width, canvas.height, field, { cat: catSheet, axe: axeSheet, boat: boatSheet, snow: snowSheet }, last / 1000, lastDt, showTerrain);
   const s = Math.min(devicePixelRatio, 2);
   ctx.setTransform(s, 0, 0, s, 0, 0);
   ctx.font = 'bold 15px system-ui, sans-serif';
@@ -197,8 +304,8 @@ function drawFade() {
 
 const help = document.getElementById('help')!;
 const HELP = {
-  field: 'WASD 이동 · 숲은 도끼로, 물은 배로 · 집 앞 빛나는 원에 잠시 서 있으면 던전 · T 지형 보기',
-  dungeon: 'WASD 이동 · 클릭/J 냥펀치 · Space 구르기 · 노란 매트로 나가기 · G 격자',
+  field: 'WASD 이동 · 숲은 도끼로, 물은 배로 · 이정표 앞 포탈에 잠시 서 있으면 던전 · T 지형 보기',
+  dungeon: 'WASD 이동 · 클릭/J 냥펀치 · Space 구르기 · 빛나는 칸으로 나가기 · G 격자',
 };
 function sayHelp() {
   help.textContent = HELP[scene];
@@ -209,22 +316,19 @@ const step = (t: string) => {
 
 (async () => {
   step('배경');
-  await Promise.all([dungeonReady, fieldReady]);
+  await Promise.all([dungeonReady, fieldReady, emotesReady]);
   step('고양이 시트');
   catSheet = await loadCat();
-  step('도끼·배 시트');
-  [axeSheet, boatSheet] = await Promise.all([loadAxe(), loadBoat()]);
+  step('도끼·배·눈길 시트');
+  [axeSheet, boatSheet, snowSheet] = await Promise.all([loadAxe(), loadBoat(), loadSnow()]);
   step('지형');
   await terrainReady;
   field = makeFieldState(FIELD.start, terrainAt);
-  step('칼 쥐');
-  sheets.sword = await loadSheet(swordUrl, 6, 5);
-  step('활 쥐');
-  sheets.bow = await loadSheet(bowUrl, 6, 5);
-  step('뚱보 쥐');
-  sheets.fat = await loadSheet(fatUrl, 6, 5);
-  dungeon = makeDungeon(sheets);
-  if (trace) Object.assign(window, { __sheets: { cat: catSheet, axe: axeSheet, boat: boatSheet, ...sheets } });
+  step('던전');
+  await prepareRoom(startRoom);
+  dungeon = makeDungeon(sheets, startRoom);
+  if (scene === 'dungeon') enteredRoom();
+  if (trace) Object.assign(window, { __sheets: { cat: catSheet, axe: axeSheet, boat: boatSheet, snow: snowSheet, ...sheets } });
   sayHelp();
   requestAnimationFrame(frame);
 })();

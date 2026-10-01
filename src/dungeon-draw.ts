@@ -1,28 +1,21 @@
-// 던전 그리기 — 방 배경, 쥐·고양이·화살·이펙트, 데미지 숫자, HUD, 나가는 곳, 격자(G 키).
+// 던전 그리기 — 방 배경, 몬스터·고양이·화살·이펙트, 데미지 숫자, 감정, HUD, 나가는 곳, 격자(G 키).
 // 로직은 dungeon.ts. 여기는 상태를 읽어서 그리기만 한다 (표시용 배율 dispScale 만 갱신).
-import fxUrl from './assets/fx/hit.webp';
-import roomUrl from './assets/dungeon/alley/room.webp';
+import { image } from './assets.ts';
 import { CAT_FPS, CAT_ROW } from './cat.ts';
 import { CELL } from './collide.ts';
 import { PLAYER, POP_LIFE, POP_OUT, type Dungeon } from './dungeon.ts';
 import { enemyFrame, type Enemy } from './enemy.ts';
-import { drawFx } from './fx.ts';
-import { BG_H, BG_W, exits, GRID_H, GRID_W, grid, toScreen } from './iso.ts';
+import { drawEmote } from './emote.ts';
+import { drawFx, FX_SHEETS, type FxSheet } from './fx.ts';
+import { ROOMS, type Room } from './iso.ts';
 import { drawFrame, type Sheet } from './sheet.ts';
 
 const COLS = 6;
 
-function image(url: string): [HTMLImageElement, Promise<void>] {
-  const im = new Image();
-  const ready = new Promise<void>((ok) => {
-    im.onload = () => ok();
-  });
-  im.src = url;
-  return [im, ready];
-}
-const [room, roomReady] = image(roomUrl);
-const [fxSheet, fxReady] = image(fxUrl);
-export const dungeonReady = Promise.all([roomReady, fxReady]);
+const FX_IMG = Object.fromEntries(Object.entries(FX_SHEETS).map(([k, p]) => [k, image(p).img])) as Record<FxSheet, HTMLImageElement>;
+/** 이펙트 시트 (방 배경은 들어갈 때 roomReady 로 따로 불러온다) */
+export const dungeonReady = Promise.all(Object.values(FX_SHEETS).map((p) => image(p).ready));
+export const roomReady = (id: string) => image(ROOMS[id].image).ready;
 
 /** 검증용 그리기 기록 (?trace). main.ts 가 넘긴다 */
 export type TraceFn = (
@@ -52,9 +45,11 @@ export type DungeonView = {
 /** cw, ch 는 캔버스 실제 픽셀 */
 export function drawDungeon(ctx: CanvasRenderingContext2D, cw: number, ch: number, d: Dungeon, cat: Sheet, v: DungeonView) {
   const P = d.P;
-  const scale = Math.min(cw / BG_W, ch / BG_H);
-  const ox = (cw - BG_W * scale) / 2;
-  const oy = (ch - BG_H * scale) / 2;
+  const R = d.room;
+  const toScreen = R.toScreen;
+  const scale = Math.min(cw / R.W, ch / R.H);
+  const ox = (cw - R.W * scale) / 2;
+  const oy = (ch - R.H * scale) / 2;
   /** 모션이 바뀔 때 크기가 툭 튀지 않게 목표값으로 수렴시킨다 (약 0.1초) */
   const ease = (cur: number, target: number) => cur + (target - cur) * (1 - Math.exp(-22 * v.dt));
 
@@ -63,7 +58,7 @@ export function drawDungeon(ctx: CanvasRenderingContext2D, cw: number, ch: numbe
   const jx = d.shake > 0 ? (Math.random() - 0.5) * d.shake : 0;
   const jy = d.shake > 0 ? (Math.random() - 0.5) * d.shake * 0.7 : 0;
   ctx.setTransform(scale, 0, 0, scale, ox + jx, oy + jy);
-  ctx.drawImage(room, 0, 0, BG_W, BG_H);
+  ctx.drawImage(image(R.def.image).img, 0, 0, R.W, R.H);
   drawExits(ctx, d, v.t);
 
   // 공격 예고 데칼 — 색을 하나로 고정해 가독성 확보 (GDD 8장)
@@ -128,6 +123,7 @@ export function drawDungeon(ctx: CanvasRenderingContext2D, cw: number, ch: numbe
       P.dispScale = ease(P.dispScale, cat.rowScale[row] ?? 1);
       v.trace?.('cat', cat, row, col, ps.sx, ps.sy, size, P.flip, P.dispScale, { hurtT: P.hurtT, alpha: ctx.globalAlpha });
       drawFrame(ctx, cat, row, col, ps.sx, ps.sy, size, P.flip, P.dispScale);
+      drawEmote(ctx, ps.sx, ps.sy - size * 0.7, size * 0.36);
     },
   });
 
@@ -146,11 +142,11 @@ export function drawDungeon(ctx: CanvasRenderingContext2D, cw: number, ch: numbe
 
   for (const f of d.fxs) {
     const t = toScreen(f.x, f.z);
-    drawFx(ctx, fxSheet, f, t.sx, t.sy - f.size * 0.3);
+    drawFx(ctx, FX_IMG, f, t.sx, t.sy - f.size * 0.3);
   }
 
   drawPops(ctx, d);
-  if (v.grid) drawGrid(ctx);
+  if (v.grid) drawGrid(ctx, R);
   drawHud(ctx, cw, ch, d, v.fps);
 }
 
@@ -167,7 +163,7 @@ function drawPops(ctx: CanvasRenderingContext2D, d: Dungeon) {
   ctx.lineJoin = 'round';
   ctx.font = 'bold 34px system-ui, sans-serif';
   for (const q of d.pops) {
-    const { sx, sy } = toScreen(q.x, q.z);
+    const { sx, sy } = d.room.toScreen(q.x, q.z);
     const k = q.t / POP_LIFE;
     ctx.save();
     ctx.globalAlpha = k < 0.65 ? 1 : Math.max(0, 1 - (k - 0.65) / 0.35);
@@ -234,7 +230,18 @@ function drawHud(ctx: CanvasRenderingContext2D, cw: number, ch: number, d: Dunge
   ctx.font = '15px system-ui, sans-serif';
   ctx.fillStyle = '#4a3b33';
   ctx.fillText(`${fps.toFixed(0)} fps`, W - 84, 28);
-  ctx.fillText(`쥐 ${d.enemies.filter((e) => e.state !== 'pop').length}`, W - 84, 50);
+  ctx.fillText(`적 ${d.enemies.filter((e) => e.state !== 'pop').length}`, W - 84, 50);
+  // 방 이름
+  ctx.textAlign = 'center';
+  ctx.font = 'bold 15px system-ui, sans-serif';
+  const nw = ctx.measureText(d.room.def.name).width + 28;
+  ctx.fillStyle = 'rgba(255,250,240,0.85)';
+  ctx.beginPath();
+  ctx.roundRect(W / 2 - nw / 2, 14, nw, 30, 15);
+  ctx.fill();
+  ctx.fillStyle = '#5b4a3f';
+  ctx.fillText(d.room.def.name, W / 2, 34);
+  ctx.textAlign = 'left';
 
   if (d.phase !== 'playing') {
     ctx.textAlign = 'center';
@@ -248,9 +255,8 @@ function drawHud(ctx: CanvasRenderingContext2D, cw: number, ch: number, d: Dunge
   ctx.restore();
 }
 
-const corner = (tx: number, tz: number) => toScreen(tx * CELL, tz * CELL);
-
-function tilePath(ctx: CanvasRenderingContext2D, tx: number, tz: number) {
+function tilePath(ctx: CanvasRenderingContext2D, r: Room, tx: number, tz: number) {
+  const corner = (x: number, z: number) => r.toScreen(x * CELL, z * CELL);
   const a = corner(tx, tz);
   const b = corner(tx + 1, tz);
   const c = corner(tx + 1, tz + 1);
@@ -266,13 +272,14 @@ function tilePath(ctx: CanvasRenderingContext2D, tx: number, tz: number) {
 
 /** 나가는 곳(노란 매트) — 바닥을 은은하게 깜빡인다. 방을 비우면 더 밝게 */
 function drawExits(ctx: CanvasRenderingContext2D, d: Dungeon, t: number) {
+  const exits = d.room.exits;
   if (!exits.length) return;
   const pulse = 0.5 + 0.5 * Math.sin(t * 3);
   const strong = d.phase === 'cleared';
   let lx = 0;
   let ly = Infinity;
   for (const [tx, tz] of exits) {
-    const { a, c } = tilePath(ctx, tx, tz);
+    const { a, c } = tilePath(ctx, d.room, tx, tz);
     ctx.fillStyle = `rgba(255, 244, 170, ${(strong ? 0.3 : 0.12) + (strong ? 0.2 : 0.1) * pulse})`;
     ctx.fill();
     ctx.lineWidth = 2;
@@ -293,12 +300,12 @@ function drawExits(ctx: CanvasRenderingContext2D, d: Dungeon, t: number) {
 }
 
 /** G 키 — 바닥 격자와 막힌 칸 */
-function drawGrid(ctx: CanvasRenderingContext2D) {
+function drawGrid(ctx: CanvasRenderingContext2D, r: Room) {
   ctx.lineWidth = 1;
-  for (let tz = 0; tz < GRID_H; tz++) {
-    for (let tx = 0; tx < GRID_W; tx++) {
-      tilePath(ctx, tx, tz);
-      ctx.fillStyle = grid.solid[tz * GRID_W + tx] ? 'rgba(220,60,60,0.35)' : 'rgba(60,140,255,0.1)';
+  for (let tz = 0; tz < r.gridH; tz++) {
+    for (let tx = 0; tx < r.gridW; tx++) {
+      tilePath(ctx, r, tx, tz);
+      ctx.fillStyle = r.grid.solid[tz * r.gridW + tx] ? 'rgba(220,60,60,0.35)' : 'rgba(60,140,255,0.1)';
       ctx.fill();
       ctx.strokeStyle = 'rgba(20,60,120,0.5)';
       ctx.stroke();

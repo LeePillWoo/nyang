@@ -2,8 +2,10 @@
 import assert from 'node:assert/strict';
 import { CELL } from './collide.ts';
 import { hitPlayer, makeDungeon, PLAYER, updateDungeon, type Dungeon, type DungeonEvent } from './dungeon.ts';
-import { makeEnemy } from './enemy.ts';
-import { exits } from './iso.ts';
+import data from './data/field.json' with { type: 'json' };
+import { ENEMY_DEFS, makeEnemy } from './enemy.ts';
+import { FX } from './fx.ts';
+import { room, ROOMS } from './iso.ts';
 
 const sheets = {} as never; // 로직만 본다 — 그리기는 안 한다
 const still = { mx: 0, my: 0, punch: false, dash: false };
@@ -97,8 +99,8 @@ function run(d: Dungeon, input: typeof still, seconds: number) {
 
 // 노란 매트를 밟으면 'exit'. 낮잠 중에는 안 나간다
 {
-  const [tx, tz] = exits[0];
   const d = makeDungeon(sheets);
+  const [tx, tz] = d.room.exits[0];
   d.enemies = [];
   Object.assign(d.P, { x: (tx + 0.5) * CELL, z: (tz + 0.5) * CELL });
   assert.equal(run(d, still, 0.016).out, 'exit');
@@ -106,5 +108,28 @@ function run(d: Dungeon, input: typeof still, seconds: number) {
   d.phase = 'napped';
   assert.equal(run(d, still, 0.016).out, null);
 }
+
+// 방마다: 몬스터 id 가 있고, 배치가 바닥 위이고, 가운데(시작점)에서 나가는 곳까지 걸어갈 수 있다
+for (const id of Object.keys(ROOMS)) {
+  const r = room(id);
+  assert.ok(r.exits.length > 0, `${id}: 나가는 곳(E)이 없다`);
+  const open = (x: number, z: number) => x >= 0 && z >= 0 && x < r.gridW && z < r.gridH && !r.grid.solid[z * r.gridW + x];
+  for (const [k, x, z] of r.def.spawns) {
+    assert.ok(ENEMY_DEFS[k as string], `${id}: 없는 몬스터 ${k}`);
+    assert.ok(open(x as number, z as number), `${id}: ${k} 가 막힌 칸 (${x},${z}) 에 선다`);
+  }
+  if (r.def.popFx) assert.ok(r.def.popFx in FX, `${id}: 없는 이펙트 ${r.def.popFx}`);
+  const seen = new Set<number>();
+  const q = [[Math.floor(r.gridW / 2), Math.floor(r.gridH / 2)]];
+  for (const [x, z] of q)
+    for (const [nx, nz] of [[x + 1, z], [x - 1, z], [x, z + 1], [x, z - 1]])
+      if (open(nx, nz) && !seen.has(nz * r.gridW + nx)) {
+        seen.add(nz * r.gridW + nx);
+        q.push([nx, nz]);
+      }
+  assert.ok(r.exits.some(([x, z]) => seen.has(z * r.gridW + x)), `${id}: 시작점에서 나가는 곳까지 못 간다`);
+}
+// 연결된 포탈은 있는 방을 가리킨다
+for (const w of data.warps) if (w.to) assert.ok(ROOMS[w.to], `포탈 ${w.id}: 없는 방 ${w.to}`);
 
 console.log('dungeon.check: ok');

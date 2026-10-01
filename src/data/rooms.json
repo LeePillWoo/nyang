@@ -2,7 +2,12 @@
   "alley": {
     "name": "해바라기 골목",
     "size": [1672, 941],
-    "corners": { "n": [845, 163], "e": [1592, 487], "s": [838, 936], "w": [86, 505] },
+    "corners": {
+      "n": [845, 163],
+      "e": [1592, 487],
+      "s": [838, 936],
+      "w": [86, 505]
+    },
     "map": [
       "..##EE...",
       ".........",
@@ -18,6 +23,360 @@
       ["sword", 2, 2],
       ["bow", 7, 2],
       ["fat", 6, 6]
-    ]
+    ],
+    "image": "backgrounds/arenas/background_v1",
+    "mood": "determination"
+  },
+  "lakeside": {
+    "name": "호숫가",
+    "image": "backgrounds/arenas/01_lakeside_v1",
+    "size": [1672, 941],
+    "corners": {
+      "n": [845, 163],
+      "e": [1592, 487],
+      "s": [838, 936],
+      "w": [86, 505]
+    },
+    "map": [
+      "......EE.",
+      ".........",
+      ".........",
+      ".........",
+      ".........",
+      ".........",
+      ".........",
+      ".........",
+      "........."
+    ],
+    "spawns": [
+      ["frog_lily", 2, 2],
+      ["slime_drop", 7, 2],
+      ["frog_pouch", 6, 6],
+      ["slime_wave", 2, 7]
+    ],
+    "mood": "rhythm"
+  },
+  "dock": {
+    "name": "선착장",
+    "image": "backgrounds/arenas/02_dock_v1",
+    "size": [1672, 941],
+    "corners": {
+      "n": [845, 163],
+      "e": [1592, 487],
+      "s": [838, 936],
+      "w": [86, 505]
+    },
+    "map": [
+      "......EE.",
+      ".........",
+      ".........",
+      ".........",
+      ".........",
+      ".........",
+      ".........",
+      ".........",
+      "........."
+    ],
+    "spawns": [
+      ["crab_shell", 2, 2],
+      ["gull_scout", 7, 2],
+      ["gull_sailor", 6, 6],
+      ["crab_chest", 2, 7]
+    ],
+    "mood": "focus"
+  },
+  "island": {
+    "name": "섬",
+    "image": "backgrounds/arenas/03_island_v1",
+    "size": [1672, 941],
+    "corners": {
+      "n": [845, 163],
+      "e": [1592, 487],
+      "s": [838, 936],
+      "w": [86, 505]
+    },
+    "map": [
+      ".........",
+      ".........",
+      ".........",
+      ".........",
+      "E........",
+      "E........",
+      ".........",
+      ".........",
+      "........."
+    ],
+    "spawns": [
+      ["turtle_dune", 2, 2],
+      ["crab_cup", 7, 2],
+      ["turtle_wood", 6, 6]
+    ],
+    "mood": "relief"
+  },
+  "forest": {
+    "name": "나무숲",
+    "image": "backgrounds/arenas/04_forest_v1",
+    "size": [1672, 941],
+    "corners": {
+      "n": [845, 163],
+      "e": [1592, 487],
+      "s": [838, 936],
+      "w": [86, 505]
+    },
+    "map": [
+      "....EE...",
+      ".........",
+      ".........",
+      ".........",
+      ".........",
+      ".........",
+      ".........",
+      ".........",
+      "........."
+    ],
+    "spawns": [
+      ["mushroom_parasol", 2, 2],
+      ["beetle_acorn", 7, 2],
+      ["sprout_bramble", 6, 6],
+      ["mushroom_cluster", 2, 7]
+    ],
+    "mood": "focus"
+  },
+  "meadow": {
+    "name": "해바라기 초원",
+    "image": "backgrounds/arenas/05_sunflower_meadow_v1",
+    "size": [1672, 941],
+    "corners": {
+      "n": [845, 163],
+      "e": [1592, 487],
+      "s": [838, 936],
+      "w": [86, 505]
+    },
+    "map": [
+      "....EE...",
+      ".........",
+      ".........",
+      ".........",
+      ".........",
+      ".........",
+      ".........",
+      ".........",
+      "........."
+    ],
+    "spawns": [
+      ["sunflower_short", 2, 2],
+      ["beetle_leafwing", 7, 2],
+      ["sunflower_twin", 6, 6],
+      ["sprout_twig", 2, 7]
+    ],
+    "mood": "delight"
+  },
+  "mountain": {
+    "name": "산길",
+    "image": "backgrounds/arenas/06_mountain_pass_v1",
+    "size": [1672, 941],
+    "corners": {
+      "n": [845, 163],
+      "e": [1592, 487],
+      "s": [838, 936],
+      "w": [86, 505]
+    },
+    "map": [
+      ".........",
+      "E........",
+      "E........",
+      ".........",
+      ".........",
+      ".........",
+      ".........",
+      ".........",
+      "........."
+    ],
+    "spawns": [
+      ["golem_stack", 2, 2],
+      ["sprout_coil", 7, 2],
+      ["golem_boulder", 6, 6]
+    ],
+    "mood": "determination"
+  },
+  "christmas_gift_workshop": {
+    "name": "크리스마스 선물공방 안뜰",
+    "image": "backgrounds/dungeons/01_christmas_gift_workshop_v2",
+    "size": [1672, 941],
+    "corners": {
+      "n": [845, 163],
+      "e": [1592, 487],
+      "s": [838, 936],
+      "w": [86, 505]
+    },
+    "map": [
+      "..EE.....",
+      ".........",
+      ".........",
+      ".........",
+      ".........",
+      ".........",
+      ".........",
+      ".........",
+      "........."
+    ],
+    "spawns": [
+      ["gift_ruby", 2, 2],
+      ["gift_emerald", 7, 2],
+      ["gift_bauble", 6, 6],
+      ["gift_ruby", 2, 7]
+    ],
+    "popFx": "gift_confetti",
+    "mood": "gift_anticipation"
+  },
+  "frozen_bell_shrine": {
+    "name": "빙결 종탑 유적",
+    "image": "backgrounds/dungeons/02_frozen_bell_shrine_v1",
+    "size": [1672, 941],
+    "corners": {
+      "n": [845, 163],
+      "e": [1592, 487],
+      "s": [838, 936],
+      "w": [86, 505]
+    },
+    "map": [
+      "EE.......",
+      ".........",
+      ".........",
+      ".........",
+      ".........",
+      ".........",
+      ".........",
+      ".........",
+      "........."
+    ],
+    "spawns": [
+      ["penguin_scarf", 2, 2],
+      ["penguin_icecrest", 7, 2],
+      ["penguin_bell", 6, 6],
+      ["penguin_scarf", 2, 7]
+    ],
+    "popFx": "ice_impact",
+    "mood": "listening"
+  },
+  "pyramid_tomb": {
+    "name": "고양이 피라미드 석실",
+    "image": "backgrounds/dungeons/03_pyramid_tomb_v1",
+    "size": [1672, 941],
+    "corners": {
+      "n": [845, 163],
+      "e": [1592, 487],
+      "s": [838, 936],
+      "w": [86, 505]
+    },
+    "map": [
+      ".....EE..",
+      ".........",
+      ".........",
+      ".........",
+      ".........",
+      ".........",
+      ".........",
+      ".........",
+      "........."
+    ],
+    "spawns": [
+      ["jackal_linen", 2, 2],
+      ["jackal_urn", 7, 2],
+      ["jackal_pharaoh", 6, 6],
+      ["scarab_turquoise", 2, 7]
+    ],
+    "popFx": "sand_puff",
+    "mood": "treasure_temptation"
+  },
+  "dune_ruins": {
+    "name": "모래 미끄럼틀 유적",
+    "image": "backgrounds/dungeons/04_dune_ruins_v1",
+    "size": [1672, 941],
+    "corners": {
+      "n": [845, 163],
+      "e": [1592, 487],
+      "s": [838, 936],
+      "w": [86, 505]
+    },
+    "map": [
+      ".........",
+      ".........",
+      "E........",
+      "E........",
+      ".........",
+      ".........",
+      ".........",
+      ".........",
+      "........."
+    ],
+    "spawns": [
+      ["scarab_turquoise", 2, 2],
+      ["scarab_wing", 7, 2],
+      ["scarab_crescent", 6, 6],
+      ["jackal_urn", 2, 7]
+    ],
+    "popFx": "sand_puff",
+    "mood": "suspicion"
+  },
+  "crystal_cavern": {
+    "name": "수정·버섯등불 동굴",
+    "image": "backgrounds/dungeons/05_crystal_cavern_v1",
+    "size": [1672, 941],
+    "corners": {
+      "n": [845, 163],
+      "e": [1592, 487],
+      "s": [838, 936],
+      "w": [86, 505]
+    },
+    "map": [
+      "......EE.",
+      ".........",
+      ".........",
+      ".........",
+      ".........",
+      ".........",
+      ".........",
+      ".........",
+      "........."
+    ],
+    "spawns": [
+      ["bat_cyan", 2, 2],
+      ["bat_quartz", 7, 2],
+      ["bat_amber", 6, 6],
+      ["bat_cyan", 2, 7]
+    ],
+    "popFx": "crystal_impact",
+    "mood": "dazzled"
+  },
+  "pirate_cove": {
+    "name": "해적섬 보물항구 전투장",
+    "image": "backgrounds/dungeons/06_pirate_cove_v1",
+    "size": [1672, 941],
+    "corners": {
+      "n": [845, 163],
+      "e": [1592, 487],
+      "s": [838, 936],
+      "w": [86, 505]
+    },
+    "map": [
+      ".........",
+      ".........",
+      ".........",
+      ".........",
+      ".........",
+      ".........",
+      "E........",
+      "E........",
+      "........."
+    ],
+    "spawns": [
+      ["otter_paddle", 2, 2],
+      ["otter_buoy", 7, 2],
+      ["otter_captain", 6, 6],
+      ["otter_paddle", 2, 7]
+    ],
+    "popFx": "pirate_smoke",
+    "mood": "treasure_temptation"
   }
 }

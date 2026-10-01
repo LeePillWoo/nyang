@@ -14,15 +14,24 @@
 ## 기술 스택 (현재)
 
 - Canvas 2D + TypeScript + Vite. **Three.js 는 쓰지 않는다** (2026-09-28 에 걷어냄).
-- 장면: **바깥 필드**(시작, 전투 없이 자유 이동) ↔ **던전**(전투). 필드 워프에 머물면 던전, 던전 노란 매트로 나오면 필드.
-  필드는 지형에 따라 걷기 · 숲은 도끼로 헤치기 · 물은 배로 바뀐다.
-- 던전 배경: 방마다 렌더된 그림 1장. 바닥 네 꼭짓점을 찍어 원근 변환으로 좌표를 맞춘다 (src/iso.ts).
+- 장면: **바깥 필드**(시작, 전투 없이 자유 이동) ↔ **던전**(전투). 필드 포탈에 머물면 던전, 던전의 빛나는 칸으로 나오면 필드.
+  필드는 지형에 따라 걷기 · 숲은 도끼로 헤치기 · 물은 배로 바뀌고, 눈밭·모래밭에선 걷는 모션이 바뀐다.
+- 던전: 방 13개 (골목 + 전투장 6 + 신규 던전 6, `rooms.json`). 방마다 배경 그림 1장 + 바닥 네 꼭짓점(원근 변환, src/iso.ts)
+  + 충돌 맵 + 몬스터 배치. 배경 13장이 같은 틀이라 네 꼭짓점이 모두 같다. 방에 들어갈 때 그 방 배경·몬스터 시트만 불러온다.
+- 몬스터 51종 (`enemies.json`): 쥐 3종(`layout: rat` — 대기·이동·공격·피격·쓰러짐)과 필드·확장 몬스터 48종
+  (`layout: monster` — 대기·이동·공격 예고·공격·도망/뿅). 몬스터 시트엔 피격 행이 없어 도망 행 앞 2칸을 피격으로 쓴다.
+  스탯은 가족(개구리·펭귄…)마다 기본값 + 변형마다 조금씩 세게, 가족마다 한 변형은 원거리.
+- 감정 아이콘(src/emote.ts): 고양이 머리 위에 하나씩. 좌표는 `emotions.json` (원본 art/metadata 에서 옮김).
+  띄우는 때는 main.ts 의 fieldMood·dungeonMood — 눈밭 추위, 사막 더위, 배 멀미, 도끼질 힘주기, 포탈(연결 의욕·미연결 갸웃),
+  가만히 7초 졸음, 방 입장(방마다 `mood`), 피격 땀, 마무리 뿌듯, 목숨 소모 어지러움, 체력 30% 미만 겁, 클리어 신남, 낮잠.
 - 필드 배경: **6×6 조각(청크)을 이어 붙인 5016×2823 지도** (2026-10-01). 조각은 836×470 / 836×471 (짝수 행 470, 홀수 행 471).
   좌표는 이어 붙인 전체 그림의 픽셀. 화면에는 `field.json` 의 `view`(836×470, 조각 한 장 크기)만큼 보이게 확대한다.
   그림은 카메라 근처 조각만 불러오고, 보이는 조각을 1:1 로 한 장에 붙인 뒤 확대한다 (조각마다 확대하면 경계에 실금).
-  원본은 `art/field/tile_rR_cC.png` (git 에 안 올림) → `node tools/tiles.mjs` → `src/assets/field/tile_rR_cC.webp`.
+  원본 `art/world/tiles/tile_rR_cC.png` → `node tools/assets.mjs` → `src/assets/world/tiles/tile_rR_cC.webp`.
+  눈밭·모래: `field.json` `biomes` 에 조각마다 지역('s' 눈 · 'd' 사막)을 적고, 그 안에서 발밑 색으로 가른다
+  (눈 지역의 흙길·풀은 보통 걷기). 모션만 바뀌고 속도·지형 규칙은 그대로.
   한 장 지도 시절의 지도는 가운데 판(r2–r3 × c2–c3, 원점 1672, 941)에 그대로 들어 있다.
-- 필드 지형: 조각마다 `src/assets/field/mask_rR_cC.png` (조각과 같은 크기), **채널 하나에 지형 하나** —
+- 필드 지형: 조각마다 `src/assets/world/masks/mask_rR_cC.png` (조각과 같은 크기), **채널 하나에 지형 하나** —
   R 막힘(암석·절벽) · G 숲(도끼) · B 물(배) · A 다리(**투명 = 다리**, 편집기가 투명 픽셀의 RGB 를 버려서 거꾸로 쓴다).
   각 채널 흰색 = 칠함(128 이상). 셋 다 검정·불투명 = 걷기. 겹치면 다리 > 막힘 > 물 > 숲.
   **막는 건 암석·절벽뿐, 집·분수대는 걷기** (사용자 결정). 배는 물 아니면 다리 위에만 서고, 다리는 내리지 않고 넘어간다.
@@ -31,27 +40,35 @@
   사용자가 마스크를 직접 고쳐 올린다 — 받으면 `npm run verify`.
   초안 생성기 `tools/terrain.mjs` 는 아직 한 장 지도 기준이라 **지금은 못 쓴다** (마스크 요청 때 조각 기준으로 고친다).
 - 그림은 전부 WebP (Chrome 인코더는 알파를 무손실로 저장해서 시트 칸 자르기가 PNG 와 같다). 지형 마스크만 PNG.
-- **리소스 폴더** — 원본은 `art/` (git 밖, 사용자가 여기에 넣는다), 게임용은 `src/assets/`. 두 곳의 분류를 똑같이 맞춘다:
-  `cat/` 고양이 시트 · `monster/` 몬스터 시트 · `dungeon/<던전 id>/` 던전 방 배경 · `fx/` 이펙트 · `field/` 필드 조각.
-  원본 → 게임용은 `node tools/webp.mjs <원본.png> <src/assets/...webp>` (필드 조각은 `tools/tiles.mjs`).
-  도끼·배 시트는 원본 PNG 가 없어서 `art/cat/` 에도 WebP 로 들어 있다.
-- 캐릭터·적·이펙트: 스프라이트 시트 (src/sheet.ts 가 알파를 훑어 칸을 찾는다).
+- **리소스 폴더** — 원본은 `art/` (git 밖, **구조는 사용자가 정한다** — `art/README.md`, `art/resource_catalog.json`).
+  게임용 `src/assets/` 는 art 와 **같은 경로**에 확장자만 .webp: `node tools/assets.mjs` (바뀐 원본만 다시 변환).
+  `world/tiles` 필드 조각 · `backgrounds/arenas` 전투장 · `backgrounds/dungeons` 신규 던전 · `characters/player` 고양이 ·
+  `characters/enemies/{core,field,expansion}` 몬스터 · `emotions` · `effects`. 마스크만 우리가 만든다: `src/assets/world/masks/`.
+  코드·데이터는 경로를 확장자 없이 적는다 (`'characters/enemies/core/pirate_rat_v1'`) — `src/assets.ts` 의 `assetUrl`·`image`.
+  원본이 v2 로 바뀌면 데이터의 경로만 고친다.
+- 캐릭터·적·이펙트: 스프라이트 시트 (src/sheet.ts 가 알파를 훑어 칸을 찾는다). 효과선 같은 가는 조각은 옆 칸에 붙이고,
+  모자란 칸·행은 알파가 가장 적은 줄로 가른다 (볏이 윗줄에 닿은 펭귄, 효과선이 한 칸을 차지한 갈매기).
+  이펙트 시트 3장(기본 타격·지형 타격·던전 이벤트)은 8×3 균등 격자, 이름은 fx.ts 의 `FX`. 방의 `popFx` 가 쓰러질 때 이펙트.
+  필드 포탈 그림은 던전 이벤트 시트의 '포탈 활성' 줄.
 - 충돌은 자체 구현 (원·AABB + 그리드), 저장은 IndexedDB (아직 없음).
 - 타격음은 Web Audio 합성 (src/audio.ts). 효과음 에셋이 생기면 Howler 로 교체.
 
 ## 규칙
 
 - 게임 데이터(적, 장난감, 방 템플릿)는 `src/data/` JSON 으로 분리한다.
-  적 `enemies.json`, 방 `rooms.json`(네 꼭짓점·충돌 맵·나가는 곳 `E`·쥐 배치 `spawns`),
+  적 `enemies.json`(시트·layout·스탯), 방 `rooms.json`(배경·네 꼭짓점·충돌 맵·나가는 곳 `E`·몬스터 배치 `spawns`·`popFx`·`mood`),
+  감정 `emotions.json`,
   플레이어 `player.json`(체력·목숨·펀치·구르기·무적 시간),
-  필드 `field.json`(지도 크기 `size`·조각 수 `grid`·화면 넓이 `view`·시작점·워프·고양이 키 `catBody`·지형별 속도와 타이밍 `modes`).
+  필드 `field.json`(지도 크기 `size`·조각 수 `grid`·화면 넓이 `view`·지역 `biomes`·시작점·워프·고양이 키 `catBody`·지형별 속도와 타이밍 `modes`).
 - 장면마다 **로직 `<장면>.ts` + 그리기 `<장면>-draw.ts`** 로 나눈다 (필드, 던전). 로직 파일은 그림을 불러오지 않아서
   node 로 체크된다. 소리는 로직이 `events` 로 내보내고 `main.ts` 가 재생한다. `main.ts` 는 입력·장면 전환·불러오기만.
 - 폴더는 아직 나누지 않는다 (GDD 10장의 레이어별 폴더·ECS 는 따르지 않음). 세 번째 장면(거점·미니게임)이 생길 때 장면별 폴더로.
 - 필드 캐릭터 크기는 `catBody` 한 값으로 정한다. 캐릭터에 딸린 거리·파티클은 전부 이 값의 배수로 쓴다 (픽셀 고정값 금지).
 - **포탈 = 이정표.** 필드 그림의 이정표 34곳 좌표가 `docs/signposts.json` 에 있고(사용자 제공), 포탈은 그 기둥 바로 앞에 있다
   (`field.json` `warps` 의 `sign` = 기둥 바닥, `at` = 포탈). `to` 가 빈 값이면 **아직 연결 전**이다 — 흐리게 그려지고 빨아들이지 않는다.
-  연결된 건 고양이 항구 → 골목(`alley`) 하나뿐. 던전을 연결할 땐 `to` 에 방 id 를 넣고 `back`(돌아올 자리, 뭍)을 확인한다.
+  연결된 포탈 13곳: 고양이 항구→골목, 신규 던전 6곳(`resource_catalog.json` 의 dungeons 대로), 전투장 6곳(테마가 맞는 이정표로 —
+  우리가 고른 것, `field.json` 에서 바꾸면 된다). 연결할 땐 `to` 에 방 id 를 넣고 `back`(돌아올 자리, 뭍)을 확인한다.
+  원본 좌표는 `art/world/portal_signposts.json` (`docs/signposts.json` 은 같은 내용의 저장소 사본).
   포탈은 뭍(걷기·숲) 위에 있어야 한다 — `npm run verify` 가 검사한다.
 - 던전 입구를 늘릴 땐 `field.json` 의 `warps` 에 항목을 추가한다 (좌표는 이어 붙인 전체 지도 픽셀 — 조각 rR_cC 안의 (x, y) 는 (c×836 + x, ⌊r×470.5⌋ + y)).
 - 낚시 미니게임은 추후 추가. `MiniGame` 인터페이스, `fishing_spot` 방 타입, 세이브의
@@ -68,13 +85,13 @@
 | 명령 | 하는 일 |
 | --- | --- |
 | `npm run dev` | 개발 서버 |
-| `npm run check` | 로직 자체 체크 (충돌, 적 AI, 펀치 판정, 공격 모션, 간격, 필드 워프, 지형별 움직임, 다리, 던전 전투 — 피격·무적·부활·낮잠·펀치 타이밍·나가기) |
-| `npm run verify` | 빌드 후 Chrome 으로 실제로 돌려 그리기 검사 + 필드↔던전 왕복 + 필드 지형(배·도끼·암벽·다리·워프까지 갈 수 있나) + 연속 촬영(`tools/out/`) |
+| `npm run check` | 로직 자체 체크 (충돌, 적 AI, 펀치 판정, 공격 모션, 간격, 필드 워프, 지형별 움직임, 다리, 던전 전투 — 피격·무적·부활·낮잠·펀치 타이밍·나가기, 방 13개 — 몬스터 id·배치·나가는 곳까지 길, 포탈 → 방) |
+| `npm run verify` | 빌드 후 Chrome 으로 실제로 돌려 그리기 검사 + 몬스터 시트 51종 칸 수 + 방 13개 4초씩(튐·빠진 칸·에러, 화면 `tools/out/room-*.png`) + 필드↔던전 왕복 + 필드 지형(배·도끼·암벽·다리·워프) + 연속 촬영 |
 | `npm run build` | 타입 체크 + 빌드 (`--base=./` 상대 경로) |
-| `node tools/tiles.mjs` | 필드 조각 원본(`art/field/`) → WebP. 크기가 자리와 안 맞으면 멈춘다. 마스크가 없는 조각에만 빈 마스크를 만든다 (**있는 마스크는 안 건드린다**) |
+| `node tools/assets.mjs` | 원본 `art/` → `src/assets/` WebP (같은 경로, 바뀐 것만. `--all` 이면 전부). 필드 조각 크기가 자리와 안 맞으면 실패. 마스크 없는 조각에만 빈 마스크 (**있는 마스크는 안 건드린다**) |
 | `node tools/terrain.mjs` | (한 장 지도 기준 — 조각 전환 뒤 아직 안 고침, 쓰지 말 것) |
 
-URL 옵션: `?dungeon` 던전에서 바로 시작, `?grid` 바닥 격자·막힌 칸 (던전에서 G 키), `?terrain` 필드 지형 보기 (필드에서 T 키), `?trace` 검증용 기록.
+URL 옵션: `?dungeon` 골목 던전에서 바로 시작 (`?dungeon=<방 id>` 면 그 방), `?grid` 바닥 격자·막힌 칸 (던전에서 G 키), `?terrain` 필드 지형 보기 (필드에서 T 키), `?trace` 검증용 기록.
 
 ### 배포 (GitHub Pages, gh-pages 브랜치)
 
@@ -93,24 +110,26 @@ Pages 는 10분 캐시한다. 확인은 Ctrl+Shift+R.
 ## 파일 지도
 
 ```
-src/main.ts        게임 루프, 입력, 장면 전환(페이드), 사건 → 소리, 불러오기, ?trace 기록
-src/dungeon.ts     던전 로직 (플레이어 이동·냥펀치·구르기·피격·부활, 쥐·화살, 데미지 숫자·이펙트·흔들기 목록) — node 로 체크된다
-src/dungeon-draw.ts 던전 그리기 (방 배경, 공격 예고, 캐릭터 정렬, 화살·이펙트, 데미지 숫자, HUD, 노란 매트, 격자)
+src/main.ts        게임 루프, 입력, 장면 전환(페이드·방 불러오기 기다림), 사건 → 소리·감정, 몬스터 시트 불러오기, ?trace 기록
+src/assets.ts      리소스 경로 → URL, 그림 한 번만 불러오기
+src/emote.ts       고양이 머리 위 감정 아이콘
+src/dungeon.ts     던전 로직 (플레이어 이동·냥펀치·구르기·피격·부활, 몬스터·화살, 데미지 숫자·이펙트·흔들기 목록) — node 로 체크된다
+src/dungeon-draw.ts 던전 그리기 (방 배경, 공격 예고, 캐릭터 정렬, 화살·이펙트, 데미지 숫자, 감정, HUD·방 이름, 나가는 칸, 격자)
 src/field.ts       필드 로직 (걷기·도끼·배 모드, 배 오르내리기, 워프 머물기) — 순수 로직이라 node 로 체크된다
-src/field-draw.ts  필드 그리기 (조각 불러오기·이어 붙이기, 카메라, 조각별 지형 마스크 읽기, 모드별 스프라이트, 수풀·물결·나뭇잎, 워프 임시 그래픽)
-src/enemy.ts       쥐 AI (접근·옆자리·예고·공격·쿨다운), 펀치 판정, 몸 간격
+src/field-draw.ts  필드 그리기 (조각 불러오기·이어 붙이기, 카메라, 조각별 지형 마스크 읽기, 모드별 스프라이트, 눈밭·모래 판정, 수풀·물결·나뭇잎, 포탈, 감정)
+src/enemy.ts       몬스터 AI (접근·옆자리·예고·공격·쿨다운), 시트 구성별 프레임, 펀치 판정, 몸 간격
 src/sheet.ts       스프라이트 시트 슬라이서 (칸 찾기·병합 분리·앵커·행 배율)
-src/iso.ts         던전 배경 그림 ↔ 월드 좌표 원근 변환, 충돌 맵·나가는 곳
+src/iso.ts         방 (rooms.json) → 배경 그림 ↔ 월드 좌표 원근 변환, 충돌 맵·나가는 곳
 src/collide.ts     원-AABB 그리드 충돌
-src/cat.ts         고양이 시트 행 배정 (기본 · 도끼 · 배)
-src/fx.ts          타격 이펙트 시트 규격·그리기 (그림은 dungeon-draw.ts 가 불러온다)
+src/cat.ts         고양이 시트 행 배정 (기본 · 도끼 · 배 · 눈/모래)
+src/fx.ts          이펙트 시트 3장 규격·이름표(FX)·그리기 (그림은 그리는 쪽이 불러온다)
 src/audio.ts       합성 타격음
-src/data/          enemies.json · rooms.json · player.json · field.json (필드 + 포탈)
-src/assets/        cat/ · monster/ · dungeon/<id>/ · fx/ · field/ (원본은 art/ 에 같은 분류)
+src/data/          enemies.json · rooms.json · player.json · field.json (필드 + 포탈) · emotions.json
+src/assets/        art/ 와 같은 구조의 WebP + world/masks/ (지형 마스크)
 docs/signposts.json 필드 이정표 34곳 좌표 (사용자 제공 원본)
 src/*.check.ts     npm run check 로 도는 자체 체크
 tools/verify.mjs   실제 브라우저 검증
-tools/tiles.mjs    필드 조각 원본 → WebP + 빈 마스크
+tools/assets.mjs   원본 art/ → src/assets/ WebP + 빈 마스크
 tools/terrain.mjs  필드 지형 마스크 초안 생성 (한 장 지도 기준, 고칠 예정)
 tools/webp.mjs     PNG → WebP (알파 무손실)
 ```

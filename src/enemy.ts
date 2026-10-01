@@ -2,17 +2,42 @@ import { CELL, isSolid, resolveCircle, type Grid } from './collide.ts';
 import defs from './data/enemies.json' with { type: 'json' };
 import type { Sheet } from './sheet.ts';
 
+/**
+ * 시트 구성은 둘 (enemies.json 의 layout):
+ * - rat     쥐 3종: 대기 · 이동 · 공격(앞 3칸 준비 + 뒤 3칸 타격) · 피격 · 쓰러짐
+ * - monster 필드·확장 몬스터: 대기 · 이동 · 공격 예고 · 공격·회복 · 도망·뿅 퇴장(앞 2칸 움찔, 뒤 4칸 연기)
+ */
 export const RAT_ROW = { idle: 0, move: 1, attack: 2, hurt: 3, down: 4 };
+export const MON_ROW = { idle: 0, move: 1, telegraph: 2, attack: 3, retreat: 4 };
 export const RAT_FPS = { idle: 6, move: 12, hurt: 10, down: 8 };
-/** 공격 행 6칸 = 앞 3칸 준비 동작 + 뒤 3칸 타격. 타격 3칸을 보여주는 시간 */
+/** 쥐: 공격 행 뒤 3칸(타격)을 보여주는 시간 */
 const STRIKE_TIME = 0.24;
+/** 몬스터: 공격·회복 행 6칸을 보여주는 시간 */
+const MON_STRIKE_TIME = 0.42;
+/** 몬스터: 쓰러질 때 연기 4칸을 보여주는 시간 (dungeon.ts 의 POP_OUT 안에 끝난다) */
+const MON_POP_TIME = 0.5;
 /** 근접 쥐가 공격을 시작해도 되는 화면 세로 오차(m). 위·아래로 붙으면 스프라이트가 겹쳐 몸을 가린다 */
 const SIDE_TOL = 0.7;
 /** 근접 쥐가 서는 옆자리 거리 (사거리 대비) */
 const SLOT = 0.85;
 
-export type Kind = keyof typeof defs;
-export type Def = (typeof defs)[Kind];
+export type Def = {
+  name: string;
+  /** 시트 (src/assets/ 기준, 확장자 없이) */
+  sheet: string;
+  layout: 'rat' | 'monster';
+  hp: number;
+  speed: number;
+  damage: number;
+  range: number;
+  windup: number;
+  cooldown: number;
+  size: number;
+  keepDist: number;
+  arrowSpeed: number;
+};
+/** 몬스터 id (enemies.json 의 키) */
+export type Kind = string;
 export const ENEMY_DEFS = defs as Record<Kind, Def>;
 
 export type State = 'idle' | 'chase' | 'windup' | 'recover' | 'hurt' | 'pop';
@@ -47,6 +72,7 @@ export type World = {
 
 export function makeEnemy(kind: Kind, sheet: Sheet, x: number, z: number): Enemy {
   const def = ENEMY_DEFS[kind];
+  if (!def) throw new Error('몬스터 없음: ' + kind);
   return {
     kind,
     def,
@@ -176,6 +202,7 @@ export function enemyFrame(e: Enemy, cols: number): { row: number; col: number }
     const f = Math.floor(e.anim * fps);
     return { row, col: once ? Math.min(cols - 1, f) : f % cols };
   };
+  if (e.def.layout === 'monster') return monsterFrame(e, cols, pick);
   switch (e.state) {
     case 'pop':
       return pick(RAT_ROW.down, RAT_FPS.down, true);
@@ -194,6 +221,26 @@ export function enemyFrame(e: Enemy, cols: number): { row: number; col: number }
       return pick(RAT_ROW.move, RAT_FPS.move);
     default:
       return pick(RAT_ROW.idle, RAT_FPS.idle);
+  }
+}
+
+function monsterFrame(e: Enemy, cols: number, pick: (row: number, fps: number, once?: boolean) => { row: number; col: number }) {
+  const span = (row: number, from: number, n: number, k: number) => ({ row, col: Math.min(cols - 1, from + Math.min(n - 1, Math.floor(k * n))) });
+  switch (e.state) {
+    case 'pop':
+      return span(MON_ROW.retreat, 2, 4, e.t / MON_POP_TIME);
+    case 'hurt':
+      // 피격 행이 없다 — 도망 행 앞 2칸(움찔)을 쓴다
+      return span(MON_ROW.retreat, 0, 2, e.t / 0.25);
+    case 'windup':
+      return span(MON_ROW.telegraph, 0, 6, e.t / e.def.windup);
+    case 'recover':
+      if (e.t < MON_STRIKE_TIME) return span(MON_ROW.attack, 0, 6, e.t / MON_STRIKE_TIME);
+      return pick(MON_ROW.idle, RAT_FPS.idle);
+    case 'chase':
+      return pick(MON_ROW.move, RAT_FPS.move);
+    default:
+      return pick(MON_ROW.idle, RAT_FPS.idle);
   }
 }
 

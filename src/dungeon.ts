@@ -3,7 +3,7 @@
  * 그림을 불러오지 않는 순수 로직이라 node 에서 체크할 수 있다. 그리기는 dungeon-draw.ts,
  * 소리는 events 로 내보내고 main.ts 가 재생한다 (필드의 field.ts / field-draw.ts 와 같은 모양).
  *
- * 플레이어 스탯은 src/data/player.json, 방의 쥐 배치는 src/data/rooms.json 의 spawns.
+ * 플레이어 스탯은 src/data/player.json, 방(배경·바닥·충돌 맵·몬스터 배치)은 src/data/rooms.json.
  */
 import { CELL, resolveCircle } from './collide.ts';
 import player from './data/player.json' with { type: 'json' };
@@ -19,8 +19,8 @@ import {
   type Kind,
   type World,
 } from './enemy.ts';
-import { FX_LIFE, FX_ROW, type Fx } from './fx.ts';
-import { exits, GRID_H, GRID_W, grid, ROOM } from './iso.ts';
+import { FX_LIFE, type Fx, type FxId } from './fx.ts';
+import { room, type Room } from './iso.ts';
 import type { Sheet } from './sheet.ts';
 
 export const PLAYER = player;
@@ -80,22 +80,24 @@ export type Dungeon = {
   shake: number;
   phase: Phase;
   events: DungeonEvent[];
+  /** 몬스터 종류별 시트. 방에 들어가기 전에 그 방 몬스터 것을 채워 둔다 (node 체크에선 빈 객체) */
   sheets: Record<Kind, Sheet>;
   world: World;
+  room: Room;
 };
 
 const tile = (tx: number, tz: number) => ({ x: (tx + 0.5) * CELL, z: (tz + 0.5) * CELL });
 
-const addFx = (d: Dungeon, x: number, z: number, row: number, size: number) =>
-  d.fxs.push({ x, z, row, t: 0, size, rot: Math.random() * Math.PI * 2 });
+const addFx = (d: Dungeon, x: number, z: number, id: FxId, size: number) =>
+  d.fxs.push({ x, z, id, t: 0, size, rot: Math.random() * Math.PI * 2 });
 const addPop = (d: Dungeon, x: number, z: number, n: number, hurt = false, h = 150) =>
   d.pops.push({ x, z, text: String(n), t: 0, dx: (Math.random() - 0.5) * 40, hurt, h });
 const shakeBy = (d: Dungeon, v: number) => {
   d.shake = Math.max(d.shake, v);
 };
 
-/** sheets: 쥐 종류별 스프라이트 시트 (쥐가 들고 다닌다. node 체크에선 아무 값이나) */
-export function makeDungeon(sheets: Record<Kind, Sheet>): Dungeon {
+/** sheets: 몬스터 종류별 스프라이트 시트 (몬스터가 들고 다닌다. node 체크에선 아무 값이나) */
+export function makeDungeon(sheets: Record<Kind, Sheet>, roomId = 'alley'): Dungeon {
   const d = {
     P: makePlayer(),
     enemies: [],
@@ -106,11 +108,12 @@ export function makeDungeon(sheets: Record<Kind, Sheet>): Dungeon {
     phase: 'playing',
     events: [],
     sheets,
+    room: room(roomId),
   } as unknown as Dungeon;
   d.world = {
     px: 0,
     pz: 0,
-    grid,
+    grid: d.room.grid,
     hitPlayer: (dmg, fx, fz) => hitPlayer(d, dmg, fx, fz),
     spawnArrow: (x, z, dx, dz, speed, dmg) => d.arrows.push({ x, z, dx, dz, speed, dmg, life: 3 }),
   };
@@ -118,11 +121,13 @@ export function makeDungeon(sheets: Record<Kind, Sheet>): Dungeon {
   return d;
 }
 
-/** 방에 새로 들어온 상태로 — 방 가운데에 서고, 쥐를 다시 배치한다 */
-export function resetDungeon(d: Dungeon) {
-  const c = tile(Math.floor(GRID_W / 2), Math.floor(GRID_H / 2));
+/** 방에 새로 들어온 상태로 — 방 가운데에 서고, 몬스터를 다시 배치한다. roomId 를 주면 그 방으로 옮긴다 */
+export function resetDungeon(d: Dungeon, roomId = d.room.id) {
+  d.room = room(roomId);
+  d.world.grid = d.room.grid;
+  const c = tile(Math.floor(d.room.gridW / 2), Math.floor(d.room.gridH / 2));
   Object.assign(d.P, makePlayer(), { x: c.x, z: c.z });
-  d.enemies = ROOM.spawns.map(([k, tx, tz]) => {
+  d.enemies = d.room.def.spawns.map(([k, tx, tz]) => {
     const p = tile(tx as number, tz as number);
     return makeEnemy(k as Kind, d.sheets[k as Kind], p.x, p.z);
   });
@@ -140,7 +145,7 @@ export function hitPlayer(d: Dungeon, dmg: number, fx: number, fz: number) {
   P.hp -= dmg;
   P.hurtT = 0.3;
   addPop(d, P.x, P.z, dmg, true, player.size);
-  addFx(d, P.x, P.z, FX_ROW.slash, 263);
+  addFx(d, P.x, P.z, 'slash', 263);
   d.events.push({ type: 'hurt' });
   if (dmg >= SHAKE_HURT_MIN_DMG) shakeBy(d, SHAKE_HURT); // 아픈 공격만
   const dist = Math.hypot(P.x - fx, P.z - fz) || 1;
@@ -162,8 +167,8 @@ export function hitPlayer(d: Dungeon, dmg: number, fx: number, fz: number) {
   }
 }
 
-const onExit = (x: number, z: number) =>
-  exits.some(([tx, tz]) => tx === Math.floor(x / CELL) && tz === Math.floor(z / CELL));
+const onExit = (r: Room, x: number, z: number) =>
+  r.exits.some(([tx, tz]) => tx === Math.floor(x / CELL) && tz === Math.floor(z / CELL));
 
 /** 한 프레임 진행. 나가는 곳(노란 매트)을 밟았으면 'exit' */
 export function updateDungeon(d: Dungeon, input: DungeonInput, dt: number): 'exit' | null {
@@ -219,7 +224,7 @@ export function updateDungeon(d: Dungeon, input: DungeonInput, dt: number): 'exi
         damageEnemy(e, punch.damage, P.x, P.z);
         addPop(d, e.x, e.z, punch.damage, false, e.def.size);
         const down = e.state === 'pop';
-        addFx(d, e.x, e.z, down ? FX_ROW.burst : FX_ROW.spark, down ? 333 : 219);
+        addFx(d, e.x, e.z, down ? ((d.room.def.popFx as FxId) ?? 'burst') : 'spark', down ? 333 : 219);
         if (down) {
           finish = true;
           d.events.push({ type: 'pop' });
@@ -248,23 +253,23 @@ export function updateDungeon(d: Dungeon, input: DungeonInput, dt: number): 'exi
   P.kx *= decay;
   P.kz *= decay;
 
-  const p = resolveCircle(grid, P.x + vx * dt, P.z + vz * dt, player.radius);
+  const p = resolveCircle(d.room.grid, P.x + vx * dt, P.z + vz * dt, player.radius);
   P.x = p.x;
   P.z = p.z;
-  const leave = d.phase !== 'napped' && onExit(P.x, P.z);
+  const leave = d.phase !== 'napped' && onExit(d.room, P.x, P.z);
 
   d.world.px = P.x;
   d.world.pz = P.z;
   assignSides(d.enemies, P.x, P.z);
   for (const e of d.enemies) updateEnemy(e, dt, d.world);
-  separate(d.enemies, P.x, P.z, grid);
+  separate(d.enemies, P.x, P.z, d.room.grid);
   d.enemies = d.enemies.filter((e) => !(e.state === 'pop' && e.t > POP_OUT));
 
   for (const a of d.arrows) {
     a.life -= dt;
     a.x += a.dx * a.speed * dt;
     a.z += a.dz * a.speed * dt;
-    const hit = resolveCircle(grid, a.x, a.z, 0.12);
+    const hit = resolveCircle(d.room.grid, a.x, a.z, 0.12);
     if (hit.x !== a.x || hit.z !== a.z) a.life = 0;
     if (Math.hypot(a.x - P.x, a.z - P.z) < player.radius + 0.2) {
       hitPlayer(d, a.dmg, a.x, a.z);

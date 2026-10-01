@@ -16,7 +16,8 @@ const OUT = new URL('./out/', import.meta.url);
 const fsPath = (u) => fileURLToPath(u);
 const readJson = (rel) => JSON.parse(fs.readFileSync(new URL(rel, import.meta.url), 'utf8'));
 const FIELD = readJson('../src/data/field.json');
-const ROOM = readJson('../src/data/rooms.json').alley;
+const ROOMS = readJson('../src/data/rooms.json');
+const ROOM = ROOMS.alley;
 // 던전 나가는 곳(맵의 'E') 첫 칸 가운데, 월드 좌표 m (타일 2m)
 const EXIT = ROOM.map.flatMap((row, z) => [...row].flatMap((c, x) => (c === 'E' ? [[x * 2 + 1, z * 2 + 1]] : [])))[0];
 
@@ -50,17 +51,17 @@ const browser = await puppeteer.launch({
 });
 
 /** where: 'dungeon' 이면 던전에서 바로 시작, 'field' 면 게임처럼 필드에서 시작 */
-async function open(where = 'dungeon') {
+async function open(where = 'dungeon', room = '') {
   const page = await browser.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
-  await page.goto(base + '?trace' + (where === 'dungeon' ? '&dungeon' : ''), { waitUntil: 'load' });
+  await page.goto(base + '?trace' + (where === 'dungeon' ? '&dungeon' + (room ? '=' + room : '') : ''), { waitUntil: 'load' });
   await page.waitForFunction(() => window.__sheets, { timeout: 60000 });
   return { page, errors };
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const SHEET_ROWS = { axe: 4, boat: 4 }; // 나머지 시트는 5행
+const SHEET_ROWS = { axe: 4, boat: 4, snow: 4 }; // 나머지 시트는 5행
 
 /** 필드: 화면 기준 방향키 */
 const fieldKeys = (p, t) => [
@@ -181,6 +182,33 @@ async function walkField(page, target, done, ms = 20000) {
   return page.evaluate(done);
 }
 
+/** 한 캐릭터의 그리기 기록 검사: 없는 칸 요청 · 반투명 · 프레임 병합 · 그림이 혼자 튄 양 */
+function motionCheck(tr, who, prefix = '') {
+  const L = tr.filter((r) => r.who === who && r.state !== 'pop');
+  let worst = 0;
+  let at = '';
+  for (let i = 1; i < L.length; i++) {
+    const a = L[i - 1];
+    const b = L[i];
+    // 몸 중심이 움직인 양에서 캐릭터 위치가 움직인 양을 뺀 것 = 그림이 혼자 튄 양
+    const j = Math.abs((b.left + b.right - a.left - a.right) / 2 - (b.sx - a.sx));
+    if (j > worst) {
+      worst = j;
+      at = `r${a.row}c${a.col}→r${b.row}c${b.col}${a.flip !== b.flip ? ' (돌아섬)' : ''}`;
+    }
+  }
+  const widths = L.map((r) => r.right - r.left).sort((p, q) => p - q);
+  const usual = widths[widths.length >> 1] ?? 0;
+  const merged = L.filter((r) => r.right - r.left > usual * MERGE_RATIO).length;
+  const clamped = L.filter((r) => r.clamped).length;
+  const faded = L.filter((r) => r.alpha !== 1).length;
+  const w = prefix + who;
+  check(L.length > 0 && clamped === 0, `${w}: 없는 칸 요청 ${clamped}회 (${L.length}프레임 중)`);
+  check(faded === 0, `${w}: 반투명으로 그린 프레임 ${faded}회`);
+  check(merged === 0, `${w}: 옆 프레임과 합쳐진 프레임 ${merged}회 (평소 폭 ${usual.toFixed(0)}px)`);
+  check(worst <= JUMP_FAIL_PX, `${w}: 가장 크게 튄 양 ${worst.toFixed(0)}px ${at}`);
+}
+
 try {
   // 1) 시트 슬라이스: 모든 행이 6칸이어야 한다 (모자라면 프레임이 합쳐졌거나 사라진 것)
   const { page, errors } = await open('dungeon');
@@ -209,33 +237,32 @@ try {
   const tr = await page.evaluate(() => window.__trace);
   check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
 
-  for (const who of ['cat', 'sword', 'bow', 'fat']) {
-    const L = tr.filter((r) => r.who === who && r.state !== 'pop');
-    let worst = 0;
-    let at = '';
-    for (let i = 1; i < L.length; i++) {
-      const a = L[i - 1];
-      const b = L[i];
-      // 몸 중심이 움직인 양에서 캐릭터 위치가 움직인 양을 뺀 것 = 그림이 혼자 튄 양
-      const j = Math.abs((b.left + b.right - a.left - a.right) / 2 - (b.sx - a.sx));
-      if (j > worst) {
-        worst = j;
-        at = `r${a.row}c${a.col}→r${b.row}c${b.col}${a.flip !== b.flip ? ' (돌아섬)' : ''}`;
-      }
-    }
-    const widths = L.map((r) => r.right - r.left).sort((p, q) => p - q);
-    const usual = widths[widths.length >> 1];
-    const merged = L.filter((r) => r.right - r.left > usual * MERGE_RATIO).length;
-    const clamped = L.filter((r) => r.clamped).length;
-    const faded = L.filter((r) => r.alpha !== 1).length;
-    check(L.length > 0 && clamped === 0, `${who}: 없는 칸 요청 ${clamped}회 (${L.length}프레임 중)`);
-    check(faded === 0, `${who}: 반투명으로 그린 프레임 ${faded}회`);
-    check(merged === 0, `${who}: 옆 프레임과 합쳐진 프레임 ${merged}회 (평소 폭 ${usual.toFixed(0)}px)`);
-    check(worst <= JUMP_FAIL_PX, `${who}: 가장 크게 튄 양 ${worst.toFixed(0)}px ${at}`);
-  }
+  for (const who of ['cat', 'sword', 'bow', 'fat']) motionCheck(tr, who);
   await page.close();
   fs.mkdirSync(OUT, { recursive: true });
 
+  // 3-1) 몬스터 시트 전부 (방에 들어갈 때만 불러오니 여기서 한꺼번에 불러 본다)
+  console.log('\n[몬스터 시트]');
+  {
+    const { page } = await open('dungeon');
+    const all = await page.evaluate(() => window.__allEnemySheets());
+    const bad = Object.entries(all).filter(([, rows]) => rows.length !== 5 || rows.some((n) => n !== 6));
+    check(bad.length === 0, `몬스터 ${Object.keys(all).length}종 모두 5행 x 6칸${bad.length ? ': ' + bad.map(([k, r]) => `${k}(${r.join('/')})`).join(', ') : ''}`);
+    await page.close();
+  }
+
+  // 3-2) 방마다: 들어가서 잠깐 맞아 본다 — 그림 튐·빠진 칸·에러. 화면은 tools/out/room-<id>.png
+  console.log('\n[방]');
+  for (const id of Object.keys(ROOMS).filter((k) => k !== 'alley')) {
+    const { page, errors } = await open('dungeon', id);
+    await sleep(4000);
+    const tr = await page.evaluate(() => window.__trace);
+    const name = await page.evaluate(() => __game.dungeon.room.def.name);
+    check(errors.length === 0 && name === ROOMS[id].name, `${id} (${name}): 페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
+    for (const who of ['cat', ...new Set(ROOMS[id].spawns.map(([k]) => k))]) motionCheck(tr, who, id + ' ');
+    await page.screenshot({ path: fsPath(new URL(`room-${id}.png`, OUT)) });
+    await page.close();
+  }
   // 4) 왕복: 필드에서 시작 → 집 앞 워프로 걸어가 머문다 → 던전 → 노란 매트로 걸어 나간다 → 필드
   console.log('\n[필드 ↔ 던전 왕복]');
   {
