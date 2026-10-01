@@ -153,8 +153,17 @@ export function sfxPlop() {
   burst('lowpass', 1600, 0.7, 0.14, 0.2, 400);
   tone('sine', 620, 190, 0.16, 0.14);
 }
-/** 톡 — 물고기가 찌를 건드릴 때 (작게) */
-export const sfxNibble = () => tone('sine', 900, 650, 0.07, 0.06);
+/** 톡 — 물고기가 찌를 건드릴 때. strength 0.5 짧은 톡 · 1 큰 톡. 음높이를 조금씩 흔들어 매번 다르게 */
+export const sfxNibble = (strength = 1) => {
+  const f = 780 + Math.random() * 260;
+  tone('sine', f, f * 0.72, 0.04 + 0.05 * strength, 0.04 + 0.04 * strength);
+};
+/** 퐁 — 헛잠김 (반쯤 잠겼다 떠오름) */
+export const sfxDunk = () => tone('sine', 560, 300, 0.12, 0.1);
+/** 뾰옹 — 찌가 쑥 떠오를 때 (찌올림) */
+export const sfxLift = () => tone('sine', 320, 980, 0.16, 0.28);
+/** 스르륵 — 찌가 옆으로 끌려갈 때 */
+export const sfxDrag = () => burst('bandpass', 1400, 1.4, 0.12, 0.45, 500);
 /** 퐁! — 찌가 쏙 잠길 때 */
 export function sfxBite() {
   tone('sine', 480, 120, 0.26, 0.2);

@@ -4,7 +4,7 @@
 import { image } from './assets.ts';
 import atlas from './data/fishing-atlas.json' with { type: 'json' };
 import { drawEmote } from './emote.ts';
-import { fishLen, RULES, SPOTS, type Fish, type FishEvent, type FishingState } from './fishing.ts';
+import { fishLen, mouth, RULES, SPOTS, type FailHint, type FailReason, type Fish, type FishEvent, type FishingState } from './fishing.ts';
 
 /** 칸마다 [x, y, w, h, 내용 x, y, w, h] — 고양이는 뒤에 [발 x, y, 낚싯대 끝 x, y] (칸 기준) */
 type St = { name: string; fps: number; loop: boolean; frames: number[][] };
@@ -43,18 +43,35 @@ let shots: Shot[] = [];
 let ripples: Ripple[] = [];
 let banner: { text: string; color: string; t: number } | null = null;
 let rippleT = 0;
+/** 물 위에 떠올랐다 사라지는 짧은 말 (펄쩍! 휙!) */
+let words: { text: string; x: number; y: number; t: number; color: string }[] = [];
 
 const shot = (id: string, x: number, y: number, scale: number) => shots.push({ st: A.fx.states[id], x, y, t: 0, scale });
 const ripple = (x: number, y: number, r: number, life = 0.9) => ripples.push({ x, y, t: 0, life, r });
 const say = (text: string, color: string) => {
   banner = { text, color, t: 0 };
 };
-const FAIL_TEXT = { early: '너무 일찍 챘어요!', late: '미끼만 먹고 도망갔어요…', snap: '줄이 끊어졌어요!', slack: '바늘이 빠졌어요…' };
+/** 실패 글자 — 무엇에 속았는지 / 무엇을 놓쳤는지 알려 줘서 패턴을 배우게 한다 */
+function failText(reason: FailReason, hint: FailHint) {
+  if (reason === 'early')
+    return hint === 'approach'
+      ? '아직 다가오는 중이었어요!'
+      : hint === 'dunk'
+        ? '헛잠김이었어요! 쏙 잠겨서 안 올라올 때 채요'
+        : hint === 'flurry'
+          ? '따다닥 연타는 맛보기예요, 조금 더!'
+          : '톡톡은 맛보기예요, 조금 더 기다려요';
+  if (reason === 'late')
+    return hint === 'lift' ? '찌가 쑥 떠오른 게 입질이었어요!' : hint === 'drag' ? '찌를 끌고 갈 때 채야 해요!' : '미끼만 먹고 도망갔어요…';
+  return reason === 'snap' ? '줄이 끊어졌어요!' : '바늘이 빠졌어요…';
+}
+const word = (text: string, x: number, y: number, color = '#fff6d8') => words.push({ text, x, y, t: 0, color });
 
 /** 낚시터에 들어올 때 연출을 비운다 */
 export function resetFishingFx() {
   shots = [];
   ripples = [];
+  words = [];
   banner = null;
 }
 
@@ -66,11 +83,29 @@ export function fishingFx(s: FishingState, events: FishEvent[]) {
         ripple(e.x, e.y, 30, 1.2);
         break;
       case 'nibble':
-        ripple(s.bobX, s.bobY, 16, 0.7);
+        ripple(s.bobX, s.bobY, e.strength > 0.7 ? 18 : 11, e.strength > 0.7 ? 0.8 : 0.5);
+        break;
+      case 'dunk':
+        ripple(s.bobX, s.bobY, 22, 0.8);
+        break;
+      case 'hesitate':
+        ripple(e.x, e.y, 20, 0.8);
+        break;
+      case 'abandon':
+        say('그냥 가 버렸어요… 망설이는 녀석이었네', '#fff6d8');
         break;
       case 'bite':
         ripple(s.bobX, s.bobY, 26, 0.9);
-        shot('cast_splash', s.bobX, s.bobY - 8, 0.3);
+        if (e.kind === 'sink') shot('cast_splash', s.bobX, s.bobY - 8, 0.3);
+        break;
+      case 'jump':
+        shot('cast_splash', e.x, e.y - 14, 0.95);
+        ripple(e.x, e.y, 40, 1);
+        word('펄쩍!', e.x, e.y - 50, '#ffd84a');
+        break;
+      case 'zig':
+        shot('cast_splash', e.x, e.y - 8, 0.3);
+        word('휙!', e.x, e.y - 34);
         break;
       case 'hook':
         if (e.perfect) say('완벽한 챔질!', '#ffd84a');
@@ -87,7 +122,7 @@ export function fishingFx(s: FishingState, events: FishEvent[]) {
         break;
       case 'fail':
         shot('escape_wake', e.x, e.y, 0.75);
-        say(FAIL_TEXT[e.reason], '#ff9083');
+        say(failText(e.reason, e.hint), '#ff9083');
         break;
       case 'legend':
         say('반짝이는 그림자가 나타났다!', '#ffd84a');
@@ -178,6 +213,22 @@ export function drawFishing(ctx: CanvasRenderingContext2D, cw: number, ch: numbe
   drawAim(ctx, s, tipX, tipY);
   drawEmote(ctx, cox + (cbx + cbw * 0.42) * k, coy + cby * k - 2, 72);
 
+  // 펄쩍! 휙!
+  ctx.textAlign = 'center';
+  ctx.lineJoin = 'round';
+  ctx.font = 'bold 30px system-ui, sans-serif';
+  for (const w of words) {
+    const a = Math.min(1, (0.9 - w.t) / 0.3);
+    ctx.globalAlpha = Math.max(0, a);
+    ctx.lineWidth = 6;
+    ctx.strokeStyle = 'rgba(70,52,42,0.8)';
+    ctx.strokeText(w.text, w.x, w.y - w.t * 40);
+    ctx.fillStyle = w.color;
+    ctx.fillText(w.text, w.x, w.y - w.t * 40);
+  }
+  ctx.globalAlpha = 1;
+  ctx.textAlign = 'left';
+
   if (s.phase === 'caught' && s.catch) drawCatch(ctx, s, v);
   for (const sh of shots) if (sh.st === A.fx.states.catch_sparkle) cell(ctx, IMG('fx'), at(sh.st, sh.t), sh.x, sh.y, sh.scale);
   drawUi(ctx, s, v);
@@ -189,6 +240,8 @@ function stepFx(s: FishingState, dt: number) {
   for (const r of ripples) r.t += dt;
   ripples = ripples.filter((r) => r.t < r.life);
   if (banner && (banner.t += dt) > 1.8) banner = null;
+  for (const w of words) w.t += dt;
+  words = words.filter((w) => w.t < 0.9);
   // 걸린 물고기 둘레엔 물결이 계속 인다 (날뛸 땐 더 자주)
   rippleT += dt;
   const f = s.hooked;
@@ -197,9 +250,12 @@ function stepFx(s: FishingState, dt: number) {
     const m = mouth(f);
     ripple(m.x, m.y, s.run > 0 ? 26 : 16, 0.7);
   }
+  // 끌려가는 찌 뒤로 물결 꼬리
+  if (s.phase === 'bite' && s.biteKind === 'drag' && rippleT > 0.12) {
+    rippleT = 0;
+    ripple(s.bobX, s.bobY, 12, 0.7);
+  }
 }
-
-const mouth = (f: Fish) => ({ x: f.x + f.hx * fishLen(f) * 0.42, y: f.y + f.hy * fishLen(f) * 0.42 * 0.6 });
 
 function drawShadow(ctx: CanvasRenderingContext2D, s: FishingState, f: Fish, t: number) {
   const st = A.shadow.states[f.def.shadow];
@@ -209,7 +265,9 @@ function drawShadow(ctx: CanvasRenderingContext2D, s: FishingState, f: Fish, t: 
   const flip = f.hx < 0 ? -1 : 1;
   let rot = (flip > 0 ? Math.atan2(f.hy, f.hx) : -Math.atan2(f.hy, -f.hx)) * 0.6;
   if (hooked && s.run > 0) rot += Math.sin(t * 32) * 0.16; // 날뛸 땐 몸부림
-  cell(ctx, IMG('shadow'), fr, f.x, f.y, scale, flip, rot, (hooked ? 0.45 : 0.32) * f.alpha);
+  // 펄쩍 뛰어 물 밖에 있는 동안은 그림자가 옅다
+  const air = hooked && s.jumpT > 0 ? 0.3 : 1;
+  cell(ctx, IMG('shadow'), fr, f.x, f.y, scale, flip, rot, (hooked ? 0.45 : 0.32) * f.alpha * air);
   // 전설 물고기는 가끔 반짝인다 — 알아보고 노리게
   if (f.def.legendary && f.mode !== 'leave') {
     const lt = (t + f.id * 0.7) % 2.4;
@@ -250,7 +308,7 @@ function lineEnd(s: FishingState, tipX: number, tipY: number) {
     }
     case 'wait':
     case 'bite':
-      return { x: s.bobX, y: s.bobY - 4, flying: false };
+      return { x: s.bobX, y: s.bobY - 4 - liftUp(s), flying: false };
     case 'hook':
     case 'reel':
       return s.hooked ? { ...mouth(s.hooked), flying: false } : null;
@@ -273,15 +331,37 @@ function drawLine(ctx: CanvasRenderingContext2D, s: FishingState, x0: number, y0
   ctx.stroke();
 }
 
+/** 찌올림: 찌가 쑥 떠오른 높이 (줄 끝도 따라 올라간다) */
+const liftUp = (s: FishingState) => (s.phase === 'bite' && s.biteKind === 'lift' ? Math.min(1, s.reactT / 0.3) * 20 : 0);
+
 function drawBobber(ctx: CanvasRenderingContext2D, s: FishingState, end: { x: number; y: number; flying: boolean } | null, t: number) {
   const F = A.fx.states;
   const img = IMG('fx');
   const k = 0.45;
   const lift = 26; // 찌 그림의 물에 닿는 곳이 칸 가운데보다 아래라 올려 그린다
   if (s.phase === 'cast' && end) cell(ctx, img, F.bobber_idle.frames[0], end.x, end.y - lift * 0.8, k * 0.8);
-  else if (s.phase === 'wait')
-    cell(ctx, img, s.nibbleT > 0 ? at(F.bobber_nibble, 0.75 - s.nibbleT) : at(F.bobber_idle, t), s.bobX, s.bobY - lift, k);
-  else if (s.phase === 'bite') cell(ctx, img, at(F.bobber_submerge, s.reactT), s.bobX, s.bobY - lift, k);
+  else if (s.phase === 'wait') {
+    if (s.dunkT > 0) {
+      // 헛잠김: 잠기기 시작하는 앞 세 칸을 갔다가 되돌아온다 (반쯤 잠겼다 떠오름)
+      const p = 1 - s.dunkT / 0.36;
+      const sub = F.bobber_submerge.frames;
+      cell(ctx, img, sub[Math.min(2, Math.floor((p < 0.5 ? p : 1 - p) * 2 * 3))], s.bobX, s.bobY - lift, k);
+    } else if (s.nibbleT > 0) {
+      // 톡: 짧은 톡은 빨리, 큰 톡은 천천히 한 번
+      const nb = F.bobber_nibble.frames;
+      cell(ctx, img, nb[Math.min(nb.length - 1, Math.floor((1 - s.nibbleT / s.nibbleLen) * nb.length))], s.bobX, s.bobY - lift, k);
+    } else cell(ctx, img, at(F.bobber_idle, t), s.bobX, s.bobY - lift, k);
+  } else if (s.phase === 'bite') {
+    if (s.biteKind === 'lift') {
+      // 찌올림: 쑥 떠오르면서 옆으로 눕는다
+      const up = liftUp(s);
+      const lie = Math.min(1, Math.max(0, (s.reactT - 0.1) / 0.3)) * 1.2;
+      cell(ctx, img, F.bobber_idle.frames[0], s.bobX, s.bobY - lift - up, k, 1, -lie);
+    } else if (s.biteKind === 'drag') {
+      // 끌려간다: 끌리는 쪽으로 기울어 미끄러진다
+      cell(ctx, img, F.bobber_idle.frames[Math.floor(t * 12) % 6], s.bobX, s.bobY - lift, k, 1, Math.sign(s.dragX || 1) * 0.45);
+    } else cell(ctx, img, at(F.bobber_submerge, s.reactT), s.bobX, s.bobY - lift, k);
+  }
 }
 
 function drawAim(ctx: CanvasRenderingContext2D, s: FishingState, tipX: number, tipY: number) {
@@ -509,7 +589,7 @@ export function fishingHelp(s: FishingState) {
     case 'cast':
     case 'wait':
     case 'bite':
-      return '톡톡 건드릴 땐 기다리고, 찌가 쏙 잠기면 누르세요! · 아무도 안 물 때 누르면 다시 감아요';
+      return '톡톡·연타·헛잠김엔 기다리고 — 찌가 쏙 잠기거나, 쑥 떠오르거나, 옆으로 끌려가면 누르세요! · 아무도 안 물 때 누르면 다시 감아요';
     case 'hook':
     case 'reel':
       return '누르고 있으면 감아요 · 물고기가 날뛰면 손을 떼요 (줄이 끊어져요) · 너무 오래 놓으면 바늘이 빠져요';

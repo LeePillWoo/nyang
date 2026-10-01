@@ -6,8 +6,11 @@ import {
   sfxCast,
   sfxCatch,
   sfxChop,
+  sfxDrag,
+  sfxDunk,
   sfxHit,
   sfxHurt,
+  sfxLift,
   sfxNibble,
   sfxPlop,
   sfxPop,
@@ -311,7 +314,7 @@ if (trace)
         return { x: (fishingView.ox + x * fishingView.sc) / d, y: (fishingView.oy + y * fishingView.sc) / d };
       },
       /** 이 종이 지금 찌를 문다 (검증용) */
-      bite: (kind: string) => debugBite(fishing, kind),
+      bite: (kind: string, biteKind?: 'sink' | 'lift' | 'drag') => debugBite(fishing, kind, biteKind),
       /** 필드 고양이의 화면 위치 (CSS px) */
       get catScreen() {
         const d = Math.min(devicePixelRatio, 2);
@@ -346,11 +349,26 @@ function fishingEvent(e: FishEvent) {
       say('focus', 1.5);
       break;
     case 'nibble':
-      sfxNibble();
+      sfxNibble(e.strength);
+      break;
+    case 'dunk':
+      sfxDunk();
+      break;
+    case 'abandon':
+      say('sweat', 1.4);
       break;
     case 'bite':
-      sfxBite();
+      if (e.kind === 'lift') sfxLift();
+      else if (e.kind === 'drag') sfxDrag();
+      else sfxBite();
       say('surprise', 0.8);
+      break;
+    case 'jump':
+      sfxSplash();
+      say('surprise', 0.7);
+      break;
+    case 'zig':
+      sfxRow();
       break;
     case 'hook':
       sfxSplash();

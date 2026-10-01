@@ -17,7 +17,13 @@
     "runGap": [1.4, 2.8],
     "run": [0.35, 0.7],
     "runSpeed": 110,
-    "legendary": false
+    "legendary": false,
+    "patterns": {
+      "flurry": 5,
+      "peck": 4,
+      "slam": 1
+    },
+    "fight": "dart"
   },
   "golden_crucian": {
     "name": "황금 붕어",
@@ -37,7 +43,13 @@
     "runGap": [2, 3.5],
     "run": [0.5, 0.9],
     "runSpeed": 80,
-    "legendary": false
+    "legendary": false,
+    "patterns": {
+      "lift": 5,
+      "peck": 4,
+      "drag": 1
+    },
+    "fight": "steady"
   },
   "green_perch": {
     "name": "초록 퍼치",
@@ -57,7 +69,13 @@
     "runGap": [1.5, 3],
     "run": [0.6, 1.1],
     "runSpeed": 110,
-    "legendary": false
+    "legendary": false,
+    "patterns": {
+      "slam": 4,
+      "peck": 3,
+      "drag": 3
+    },
+    "fight": "zigzag"
   },
   "rainbow_trout": {
     "name": "무지개 송어",
@@ -77,7 +95,13 @@
     "runGap": [1.1, 2.2],
     "run": [0.7, 1.3],
     "runSpeed": 150,
-    "legendary": false
+    "legendary": false,
+    "patterns": {
+      "slam": 5,
+      "drag": 3,
+      "flurry": 2
+    },
+    "fight": "jump"
   },
   "blue_catfish": {
     "name": "푸른 메기",
@@ -97,7 +121,13 @@
     "runGap": [1.8, 3.2],
     "run": [1, 1.8],
     "runSpeed": 95,
-    "legendary": false
+    "legendary": false,
+    "patterns": {
+      "fake": 5,
+      "drag": 3,
+      "peck": 2
+    },
+    "fight": "heavy"
   },
   "sunset_koi": {
     "name": "노을 비단잉어",
@@ -117,6 +147,12 @@
     "runGap": [1.3, 2.6],
     "run": [0.8, 1.5],
     "runSpeed": 130,
-    "legendary": true
+    "legendary": true,
+    "patterns": {
+      "hesitant": 5,
+      "lift": 3,
+      "peck": 2
+    },
+    "fight": "zigzag"
   }
 }
