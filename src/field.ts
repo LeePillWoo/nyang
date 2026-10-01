@@ -1,6 +1,7 @@
 /**
  * 바깥 필드 — 전투 없이 자유롭게 걷는 곳. 좌표는 조각(src/assets/field/)을 이어 붙인 전체 그림의 픽셀.
  * 워프(던전 입구)에 잠시 머물면 그 던전으로 간다. 입구는 src/data/field.json 의 warps 에 추가한다.
+ * 포탈은 이정표(docs/signposts.json) 기둥 바로 앞에 있다. to 가 빈 값이면 아직 연결 전이다.
  *
  * 지형(조각마다 src/assets/field/mask_rR_cC.png)에 따라 움직임이 바뀐다.
  *   걷기 · 숲 = 도끼 들고 헤치며 전진 · 물 = 배 · 막힘(암석·절벽) = 못 감
@@ -76,7 +77,8 @@ export type FieldState = {
 export const inWarp = (w: Warp, x: number, y: number) =>
   ((x - w.at[0]) / w.r) ** 2 + ((y - w.at[1]) / (w.r * data.vertical)) ** 2 <= 1;
 
-const warpAt = (x: number, y: number) => data.warps.find((w) => inWarp(w, x, y)) ?? null;
+/** 아직 던전이 연결되지 않은 포탈(to 가 빈 값)은 그려지기만 하고 빨아들이지 않는다 */
+const warpAt = (x: number, y: number) => data.warps.find((w) => w.to && inWarp(w, x, y)) ?? null;
 const clampX = (x: number) => Math.min(data.size[0] - EDGE, Math.max(EDGE, x));
 const clampY = (y: number) => Math.min(data.size[1] - EDGE, Math.max(EDGE, y));
 

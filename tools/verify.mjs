@@ -403,6 +403,9 @@ try {
       return warps.filter((w) => !seen[Math.floor(w.at[1] / S) * W + Math.floor(w.at[0] / S)]).map((w) => w.id);
     }, FIELD.start, FIELD.warps);
     check(cut.length === 0, `시작점에서 모든 워프까지 갈 수 있다 (워프 ${FIELD.warps.length}개${cut.length ? ', 막힌 워프: ' + cut.join(', ') : ''})`);
+    // 워프는 뭍(걷기·숲)에서만 작동한다 — 포탈 한가운데가 물·막힘·다리면 연결해도 못 들어간다
+    const wet = await page.evaluate((warps) => warps.filter((w) => __game.terrain(w.at[0], w.at[1]) > 1).map((w) => `${w.id}(지형 ${__game.terrain(w.at[0], w.at[1])})`), FIELD.warps);
+    check(wet.length === 0, `모든 포탈이 뭍 위에 있다${wet.length ? ': ' + wet.join(', ') : ''}`);
 
     // 막힘: 가장 가까운 암벽·바위 덩어리 한가운데를 향해 3초 동안 밀고 들어가 본다
     const wall = await page.evaluate(() => {

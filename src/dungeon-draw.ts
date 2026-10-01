@@ -1,7 +1,7 @@
 // 던전 그리기 — 방 배경, 쥐·고양이·화살·이펙트, 데미지 숫자, HUD, 나가는 곳, 격자(G 키).
 // 로직은 dungeon.ts. 여기는 상태를 읽어서 그리기만 한다 (표시용 배율 dispScale 만 갱신).
-import fxUrl from './assets/fx-hit.webp';
-import roomUrl from './assets/room-alley.webp';
+import fxUrl from './assets/fx/hit.webp';
+import roomUrl from './assets/dungeon/alley/room.webp';
 import { CAT_FPS, CAT_ROW } from './cat.ts';
 import { CELL } from './collide.ts';
 import { PLAYER, POP_LIFE, POP_OUT, type Dungeon } from './dungeon.ts';

@@ -31,6 +31,10 @@
   사용자가 마스크를 직접 고쳐 올린다 — 받으면 `npm run verify`.
   초안 생성기 `tools/terrain.mjs` 는 아직 한 장 지도 기준이라 **지금은 못 쓴다** (마스크 요청 때 조각 기준으로 고친다).
 - 그림은 전부 WebP (Chrome 인코더는 알파를 무손실로 저장해서 시트 칸 자르기가 PNG 와 같다). 지형 마스크만 PNG.
+- **리소스 폴더** — 원본은 `art/` (git 밖, 사용자가 여기에 넣는다), 게임용은 `src/assets/`. 두 곳의 분류를 똑같이 맞춘다:
+  `cat/` 고양이 시트 · `monster/` 몬스터 시트 · `dungeon/<던전 id>/` 던전 방 배경 · `fx/` 이펙트 · `field/` 필드 조각.
+  원본 → 게임용은 `node tools/webp.mjs <원본.png> <src/assets/...webp>` (필드 조각은 `tools/tiles.mjs`).
+  도끼·배 시트는 원본 PNG 가 없어서 `art/cat/` 에도 WebP 로 들어 있다.
 - 캐릭터·적·이펙트: 스프라이트 시트 (src/sheet.ts 가 알파를 훑어 칸을 찾는다).
 - 충돌은 자체 구현 (원·AABB + 그리드), 저장은 IndexedDB (아직 없음).
 - 타격음은 Web Audio 합성 (src/audio.ts). 효과음 에셋이 생기면 Howler 로 교체.
@@ -45,6 +49,10 @@
   node 로 체크된다. 소리는 로직이 `events` 로 내보내고 `main.ts` 가 재생한다. `main.ts` 는 입력·장면 전환·불러오기만.
 - 폴더는 아직 나누지 않는다 (GDD 10장의 레이어별 폴더·ECS 는 따르지 않음). 세 번째 장면(거점·미니게임)이 생길 때 장면별 폴더로.
 - 필드 캐릭터 크기는 `catBody` 한 값으로 정한다. 캐릭터에 딸린 거리·파티클은 전부 이 값의 배수로 쓴다 (픽셀 고정값 금지).
+- **포탈 = 이정표.** 필드 그림의 이정표 34곳 좌표가 `docs/signposts.json` 에 있고(사용자 제공), 포탈은 그 기둥 바로 앞에 있다
+  (`field.json` `warps` 의 `sign` = 기둥 바닥, `at` = 포탈). `to` 가 빈 값이면 **아직 연결 전**이다 — 흐리게 그려지고 빨아들이지 않는다.
+  연결된 건 고양이 항구 → 골목(`alley`) 하나뿐. 던전을 연결할 땐 `to` 에 방 id 를 넣고 `back`(돌아올 자리, 뭍)을 확인한다.
+  포탈은 뭍(걷기·숲) 위에 있어야 한다 — `npm run verify` 가 검사한다.
 - 던전 입구를 늘릴 땐 `field.json` 의 `warps` 에 항목을 추가한다 (좌표는 이어 붙인 전체 지도 픽셀 — 조각 rR_cC 안의 (x, y) 는 (c×836 + x, ⌊r×470.5⌋ + y)).
 - 낚시 미니게임은 추후 추가. `MiniGame` 인터페이스, `fishing_spot` 방 타입, 세이브의
   `rodRestore`·`fishDex` 필드는 v1부터 자리만 유지한다 (GDD 10장). → 저장을 붙이는 M2 에서 만든다.
@@ -97,7 +105,9 @@ src/collide.ts     원-AABB 그리드 충돌
 src/cat.ts         고양이 시트 행 배정 (기본 · 도끼 · 배)
 src/fx.ts          타격 이펙트 시트 규격·그리기 (그림은 dungeon-draw.ts 가 불러온다)
 src/audio.ts       합성 타격음
-src/data/          enemies.json · rooms.json · player.json · field.json
+src/data/          enemies.json · rooms.json · player.json · field.json (필드 + 포탈)
+src/assets/        cat/ · monster/ · dungeon/<id>/ · fx/ · field/ (원본은 art/ 에 같은 분류)
+docs/signposts.json 필드 이정표 34곳 좌표 (사용자 제공 원본)
 src/*.check.ts     npm run check 로 도는 자체 체크
 tools/verify.mjs   실제 브라우저 검증
 tools/tiles.mjs    필드 조각 원본 → WebP + 빈 마스크

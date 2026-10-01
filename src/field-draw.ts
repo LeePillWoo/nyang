@@ -378,6 +378,7 @@ export function drawField(
 /**
  * 워프 임시 그래픽 — 바닥에 숨 쉬는 빛 원 + 빛 기둥 + 이름표.
  * 머무는 동안 바깥 링이 채워진다. 스프라이트 시트가 오면 이 함수만 바꾸면 된다.
+ * 아직 던전이 연결되지 않은 포탈은 흐리게 그린다. 이름표는 포탈 아래 (위쪽엔 이정표 그림이 있다).
  */
 function drawWarp(ctx: CanvasRenderingContext2D, w: Warp, t: number, progress: number) {
   const [x, y] = w.at;
@@ -390,6 +391,7 @@ function drawWarp(ctx: CanvasRenderingContext2D, w: Warp, t: number, progress: n
   };
 
   ctx.save();
+  if (!w.to) ctx.globalAlpha = 0.45;
   const beam = ctx.createLinearGradient(x, y, x, y - 46);
   beam.addColorStop(0, `rgba(190, 240, 255, ${0.35 + 0.2 * pulse})`);
   beam.addColorStop(1, 'rgba(190, 240, 255, 0)');
@@ -420,8 +422,8 @@ function drawWarp(ctx: CanvasRenderingContext2D, w: Warp, t: number, progress: n
   ctx.lineJoin = 'round';
   ctx.lineWidth = 3;
   ctx.strokeStyle = 'rgba(60, 45, 35, 0.8)';
-  ctx.strokeText(w.label, x, y - 50);
+  ctx.strokeText(w.label, x, y + ry + 11);
   ctx.fillStyle = '#fffaf0';
-  ctx.fillText(w.label, x, y - 50);
+  ctx.fillText(w.label, x, y + ry + 11);
   ctx.restore();
 }

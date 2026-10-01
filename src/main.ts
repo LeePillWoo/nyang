@@ -1,8 +1,8 @@
 // 게임 뼈대 — 캔버스·입력·장면 전환(필드 ↔ 던전)·소리·불러오기.
 // 필드는 field.ts(로직) / field-draw.ts(그리기), 던전은 dungeon.ts / dungeon-draw.ts.
-import bowUrl from './assets/rat-bow.webp';
-import fatUrl from './assets/rat-fat.webp';
-import swordUrl from './assets/rat-sword.webp';
+import bowUrl from './assets/monster/rat-bow.webp';
+import fatUrl from './assets/monster/rat-fat.webp';
+import swordUrl from './assets/monster/rat-sword.webp';
 import { sfxChop, sfxHit, sfxHurt, sfxPop, sfxRow, sfxSplash, unlockAudio } from './audio.ts';
 import { loadAxe, loadBoat, loadCat } from './cat.ts';
 import { drawDungeon, dungeonReady } from './dungeon-draw.ts';
