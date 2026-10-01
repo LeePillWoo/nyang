@@ -133,8 +133,9 @@ async function walk(page, getPos, target, keysFor, done, ms = 8000) {
 async function walkField(page, target, done, ms = 20000) {
   const route = await page.evaluate((tx, ty) => {
     const S = 6; // 칸 크기 (px)
-    const W = Math.ceil(1672 / S);
-    const H = Math.ceil(941 / S);
+    const [FW, FH] = __game.size;
+    const W = Math.ceil(FW / S);
+    const H = Math.ceil(FH / S);
     const ok = (cx, cy) => {
       const t = __game.terrain(cx * S + S / 2, cy * S + S / 2);
       return t === 0 || t === 1;
@@ -334,8 +335,9 @@ try {
         return true;
       };
       let best = null;
-      for (let y = 40; y < 900; y += 6)
-        for (let x = 60; x < 1610; x += 6) {
+      const [FW, FH] = __game.size;
+      for (let y = 40; y < FH - 40; y += 6)
+        for (let x = 60; x < FW - 60; x += 6) {
           if (__game.terrain(x, y) !== 1 || !deep(x, y)) continue;
           const d = Math.hypot(x - s.x, y - s.y);
           if (!best || d < best.d) best = { x, y, d };
@@ -368,11 +370,22 @@ try {
       check(chops >= 2, `숲을 걸으면 도끼질을 한다 (${chops}회)`);
     }
 
+    // 조각 이음: 모든 줄·모든 칸이 어느 조각에서든 지형을 돌려줘야 한다 (조각 높이 470·471 이 섞여 경계 계산이 어긋나기 쉽다)
+    const holes = await page.evaluate(() => {
+      const [FW, FH] = __game.size;
+      let n = 0;
+      for (const x of [0, 835, 836, FW - 1]) for (let y = 0; y < FH; y++) if (__game.terrain(x, y) === undefined) n++;
+      for (const y of [0, 469, 470, 471, 940, 941, 1411, FH - 1]) for (let x = 0; x < FW; x++) if (__game.terrain(x, y) === undefined) n++;
+      return n;
+    });
+    check(holes === 0, `조각 경계에서 지형을 못 읽는 픽셀 ${holes}개`);
+
     // 갈 수 있는가: 시작점에서 모든 워프까지 (물은 배로 건너니 검정만 벽이다). 마스크를 고치다 입구를 막으면 여기서 잡힌다
     const cut = await page.evaluate((start, warps) => {
       const S = 4;
-      const W = Math.ceil(1672 / S);
-      const H = Math.ceil(941 / S);
+      const [FW, FH] = __game.size;
+      const W = Math.ceil(FW / S);
+      const H = Math.ceil(FH / S);
       const open = (c) => __game.terrain((c % W) * S + S / 2, ((c / W) | 0) * S + S / 2) !== 3;
       const s0 = Math.floor(start[1] / S) * W + Math.floor(start[0] / S);
       const seen = new Uint8Array(W * H);
@@ -396,8 +409,9 @@ try {
       const s = __game.field;
       const solid = (x, y) => [[0, 0], [10, 0], [-10, 0], [0, 8], [0, -8]].every(([dx, dy]) => __game.terrain(x + dx, y + dy) === 3);
       let best = null;
-      for (let y = 30; y < 910; y += 5)
-        for (let x = 30; x < 1640; x += 5) {
+      const [FW, FH] = __game.size;
+      for (let y = 30; y < FH - 30; y += 5)
+        for (let x = 30; x < FW - 30; x += 5) {
           if (!solid(x, y)) continue;
           const d = Math.hypot(x - s.x, y - s.y);
           if (!best || d < best.d) best = { x, y, d };
@@ -413,12 +427,13 @@ try {
 
     // 다리: 배로 강을 따라가다 다리를 만나도 내리지 않고 지나간다 (필드 그림 픽셀 좌표, 양방향).
     // 마스크를 고치다 다리(노랑)를 끊으면 여기서 잡힌다
+    // 좌표는 한 장 지도 시절에 잰 값 + 그 지도가 들어간 자리(6x6 조각의 가운데 판 = 1672, 941)
     const CROSSINGS = [
       ['서쪽 나무다리: 호수 → 강', [905, 318], ['KeyS']],
       ['서쪽 나무다리: 강 → 호수', [915, 380], ['KeyW']],
       ['돌다리: 위 강 → 아래 강', [1110, 470], ['KeyS', 'KeyD']],
       ['돌다리: 아래 강 → 위 강', [1190, 525], ['KeyW', 'KeyA']],
-    ];
+    ].map(([name, [x, y], keys]) => [name, [x + 1672, y + 941], keys]);
     for (const [name, [x, y], keys] of CROSSINGS) {
       await page.evaluate(([x, y]) => {
         Object.assign(__game.field, { x, y, camX: x, camY: y, mode: 'boat', modeT: 1, chopping: 0 });
@@ -436,7 +451,7 @@ try {
     }
     // 돌다리 연속 촬영
     await page.evaluate(() => {
-      Object.assign(__game.field, { x: 1100, y: 463, camX: 1100, camY: 463, mode: 'boat', modeT: 1 });
+      Object.assign(__game.field, { x: 1100 + 1672, y: 463 + 941, camX: 1100 + 1672, camY: 463 + 941, mode: 'boat', modeT: 1 });
       window.__bridged = false;
     });
     await page.keyboard.down('KeyS');

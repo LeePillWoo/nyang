@@ -88,6 +88,7 @@ if (trace)
       get field() { return field; },
       get cat() { return { x: dungeon.P.x, z: dungeon.P.z }; },
       terrain: terrainAt,
+      size: FIELD.size,
       /** 필드 고양이의 화면 위치 (CSS px) */
       get catScreen() {
         const d = Math.min(devicePixelRatio, 2);

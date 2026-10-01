@@ -1,75 +1,146 @@
-import fieldUrl from './assets/field.webp';
-import terrainUrl from './assets/field-terrain.png';
 import { AXE_FPS, AXE_ROW, BOAT_FPS, BOAT_ROW, CAT_FPS, CAT_ROW } from './cat.ts';
 import { BLOCK, BRIDGE, FIELD, FOREST, WALK, WATER, type FieldEvent, type FieldState, type Terrain, type Warp } from './field.ts';
 import { drawFrame, type Sheet } from './sheet.ts';
 
 export type FieldSheets = { cat: Sheet; axe: Sheet; boat: Sheet };
 
+// ── 필드 조각 (src/assets/field/tile_rR_cC.webp · mask_rR_cC.png, 원본은 art/field/ → node tools/tiles.mjs) ──
+// 필드는 grid 칸으로 자른 조각을 바둑판처럼 이어 붙인 한 장이다. 좌표는 이어 붙인 전체 그림의 픽셀.
+// 그림은 카메라 근처 조각만 불러온다. 마스크는 처음에 전부 읽는다 (고양이가 어디로 가든 지형을 알아야 한다).
 const [W, H] = FIELD.size;
+const [COLS, ROWS] = FIELD.grid;
+const tileX = (c: number) => Math.floor((c * W) / COLS);
+const tileY = (r: number) => Math.floor((r * H) / ROWS);
+const TILE_URL = import.meta.glob<string>('./assets/field/tile_*.webp', { eager: true, query: '?url', import: 'default' });
+const MASK_URL = import.meta.glob<string>('./assets/field/mask_*.png', { eager: true, query: '?url', import: 'default' });
 
-export const fieldImage = new Image();
-export const fieldReady = new Promise<void>((ok) => {
-  fieldImage.onload = () => ok();
-});
-fieldImage.src = fieldUrl;
+type Tile = {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  /** 그림이 없는 칸은 그리지 않고 막힌 곳으로 둔다 */
+  url?: string;
+  mask?: string;
+  img?: HTMLImageElement;
+  load?: Promise<void>;
+  terrain?: Uint8Array;
+  tint?: HTMLCanvasElement;
+};
+const tiles: Tile[] = [];
+for (let r = 0; r < ROWS; r++)
+  for (let c = 0; c < COLS; c++) {
+    const n = `r${r}_c${c}`;
+    tiles.push({
+      x: tileX(c),
+      y: tileY(r),
+      w: tileX(c + 1) - tileX(c),
+      h: tileY(r + 1) - tileY(r),
+      url: TILE_URL[`./assets/field/tile_${n}.webp`],
+      mask: MASK_URL[`./assets/field/mask_${n}.png`],
+    });
+  }
 
-// ── 지형 마스크 (src/assets/field-terrain.png). 반 해상도로 읽어 둔다 ──────────────────────
+function tileAt(x: number, y: number): Tile {
+  let c = Math.min(COLS - 1, Math.floor((x * COLS) / W));
+  let r = Math.min(ROWS - 1, Math.floor((y * ROWS) / H));
+  // 조각 크기가 나눠떨어지지 않으면(470·471) 경계에서 한 칸 어긋날 수 있다
+  if (x < tileX(c)) c--;
+  else if (x >= tileX(c + 1)) c++;
+  if (y < tileY(r)) r--;
+  else if (y >= tileY(r + 1)) r++;
+  return tiles[r * COLS + c];
+}
+
+const tilesIn = (x0: number, y0: number, x1: number, y1: number) =>
+  tiles.filter((t) => t.x < x1 && t.x + t.w > x0 && t.y < y1 && t.y + t.h > y0);
+
+// ponytail: 한 번 불러온 조각은 내리지 않는다 (36장 · 약 56MB). 조각이 크게 늘면 멀어진 조각의 img 를 지운다.
+function want(t: Tile) {
+  if (!t.load && t.url) {
+    const url = t.url;
+    t.load = new Promise<void>((ok) => {
+      const im = new Image();
+      im.onload = () => {
+        t.img = im;
+        ok();
+      };
+      im.onerror = () => ok();
+      im.src = url;
+    });
+  }
+  return t.load;
+}
+
+/** 시작점 주변 조각 (첫 화면이 비어 보이지 않게) */
+const [V0, V1] = FIELD.view;
+export const fieldReady = Promise.all(
+  tilesIn(FIELD.start[0] - V0, FIELD.start[1] - V1, FIELD.start[0] + V0, FIELD.start[1] + V1).map(want),
+);
+
+// ── 지형 마스크. 조각마다 하나, 조각과 같은 크기 ────────────────────────────────────────────
 // 채널 하나에 지형 하나: R 막힘 · G 숲 · B 물 · A 다리(투명 = 다리). 셋 다 검정·불투명이면 걷기.
 // 겹치면 다리 > 막힘 > 물 > 숲. 채널마다 절반(128)을 넘으면 칠한 것으로 본다.
 // A 를 거꾸로 쓰는 건, 편집기·브라우저가 투명한 픽셀의 RGB 를 버리기 때문이다 (다리 몇 곳만 투명하면 잃을 게 없다).
-const TW = Math.ceil(W / 2);
-const TH = Math.ceil(H / 2);
-let terrain: Uint8Array | null = null;
-let terrainTint: HTMLCanvasElement | null = null;
-
-export const terrainReady = new Promise<void>((ok) => {
-  const im = new Image();
-  im.onload = () => {
-    const c = document.createElement('canvas');
-    c.width = TW;
-    c.height = TH;
-    const g = c.getContext('2d', { willReadFrequently: true })!;
-    g.imageSmoothingEnabled = false;
-    g.drawImage(im, 0, 0, TW, TH);
-    const d = g.getImageData(0, 0, TW, TH).data;
-    terrain = new Uint8Array(TW * TH);
-    for (let i = 0; i < terrain.length; i++) {
-      const o = i * 4;
-      terrain[i] =
-        d[o + 3] < 128 ? BRIDGE : d[o] >= 128 ? BLOCK : d[o + 2] >= 128 ? WATER : d[o + 1] >= 128 ? FOREST : WALK;
-    }
-    ok();
-  };
-  im.onerror = () => ok(); // 마스크가 없으면 어디든 걷는다
-  im.src = terrainUrl;
-});
+function loadMask(t: Tile) {
+  return new Promise<void>((ok) => {
+    if (!t.mask) return ok(); // 마스크가 없으면 어디든 걷는다
+    const im = new Image();
+    im.onload = () => {
+      const c = document.createElement('canvas');
+      c.width = t.w;
+      c.height = t.h;
+      const g = c.getContext('2d', { willReadFrequently: true })!;
+      g.imageSmoothingEnabled = false;
+      g.drawImage(im, 0, 0, t.w, t.h);
+      const d = g.getImageData(0, 0, t.w, t.h).data;
+      const a = new Uint8Array(t.w * t.h);
+      for (let i = 0; i < a.length; i++) {
+        const o = i * 4;
+        a[i] = d[o + 3] < 128 ? BRIDGE : d[o] >= 128 ? BLOCK : d[o + 2] >= 128 ? WATER : d[o + 1] >= 128 ? FOREST : WALK;
+      }
+      t.terrain = a;
+      ok();
+    };
+    im.onerror = () => ok();
+    im.src = t.mask;
+  });
+}
+export const terrainReady = Promise.all(tiles.map(loadMask));
 
 export const terrainAt = (x: number, y: number): Terrain => {
-  if (!terrain) return WALK;
-  const tx = Math.min(TW - 1, Math.max(0, (x / 2) | 0));
-  const ty = Math.min(TH - 1, Math.max(0, (y / 2) | 0));
-  return terrain[ty * TW + tx] as Terrain;
+  const px = Math.min(W - 1, Math.max(0, x | 0));
+  const py = Math.min(H - 1, Math.max(0, y | 0));
+  const t = tileAt(px, py);
+  if (!t.url) return BLOCK;
+  if (!t.terrain) return WALK;
+  return t.terrain[(py - t.y) * t.w + (px - t.x)] as Terrain;
 };
 
 /** T 키 지형 보기: 숲 분홍 · 물 하늘색 · 막힘 빨강 · 다리 노랑 */
-function tint(): HTMLCanvasElement | null {
-  if (terrainTint || !terrain) return terrainTint;
+function tint(t: Tile): HTMLCanvasElement | null {
+  if (t.tint || !t.terrain) return t.tint ?? null;
   const c = document.createElement('canvas');
-  c.width = TW;
-  c.height = TH;
+  c.width = t.w;
+  c.height = t.h;
   const g = c.getContext('2d')!;
-  const img = g.createImageData(TW, TH);
+  const img = g.createImageData(t.w, t.h);
   const col: Record<number, number[]> = {
     [FOREST]: [255, 0, 170, 110],
     [WATER]: [0, 210, 255, 100],
     [BLOCK]: [255, 40, 40, 140],
     [BRIDGE]: [255, 230, 0, 160],
   };
-  for (let i = 0; i < terrain.length; i++) if (col[terrain[i]]) img.data.set(col[terrain[i]], i * 4);
+  for (let i = 0; i < t.terrain.length; i++) if (col[t.terrain[i]]) img.data.set(col[t.terrain[i]], i * 4);
   g.putImageData(img, 0, 0);
-  return (terrainTint = c);
+  return (t.tint = c);
 }
+
+// 보이는 범위의 조각을 1:1 로 한 장에 이어 붙인 것. 조각마다 따로 확대해 그리면 경계에 실금이 생긴다
+const view = document.createElement('canvas');
+const vg = view.getContext('2d')!;
+let viewX = 0;
+let viewY = 0;
 
 // ── 연출 파티클 ─────────────────────────────────────────────────────────────────────────
 type Part = {
@@ -177,7 +248,7 @@ function drawFoliage(ctx: CanvasRenderingContext2D, x: number, y: number, body: 
   const sy = Math.round(y - h + 4);
   bush.width = w;
   bush.height = h;
-  bg.drawImage(fieldImage, sx, sy, w, h, 0, 0, w, h);
+  bg.drawImage(view, sx - viewX, sy - viewY, w, h, 0, 0, w, h);
   // 가장자리를 타원으로 부드럽게 잘라 배경에 녹인다
   bg.globalCompositeOperation = 'destination-in';
   bg.save();
@@ -199,7 +270,7 @@ export const fieldView = { sc: 1, ox: 0, oy: 0 };
 let wakeT = 0;
 
 /**
- * 필드 한 장면. 필드 그림은 넓어서 확대해 고양이를 따라가고, 그림 바깥은 보이지 않게 카메라를 가둔다.
+ * 필드 한 장면. 화면에 field.json 의 view 넓이만큼 보이게 확대해 고양이를 따라가고, 지도 바깥은 보이지 않게 카메라를 가둔다.
  * cw, ch 는 캔버스 실제 픽셀.
  */
 export function drawField(
@@ -212,7 +283,7 @@ export function drawField(
   dt: number,
   showTerrain: boolean,
 ) {
-  const sc = Math.max(cw / W, ch / H) * FIELD.zoom;
+  const sc = Math.max(cw / V0, ch / V1);
   const vw = cw / sc;
   const vh = ch / sc;
   const cx = vw >= W ? W / 2 : Math.min(W - vw / 2, Math.max(vw / 2, s.camX));
@@ -221,11 +292,23 @@ export function drawField(
   fieldView.ox = cw / 2 - cx * sc;
   fieldView.oy = ch / 2 - cy * sc;
   ctx.setTransform(sc, 0, 0, sc, fieldView.ox, fieldView.oy);
-  ctx.drawImage(fieldImage, 0, 0, W, H);
-  if (showTerrain) {
-    const tc = tint();
-    if (tc) ctx.drawImage(tc, 0, 0, W, H);
-  }
+  for (const tl of tilesIn(cx - vw * 1.5, cy - vh * 1.5, cx + vw * 1.5, cy + vh * 1.5)) want(tl); // 한 화면 앞까지 미리
+  viewX = Math.floor(cx - vw / 2);
+  viewY = Math.floor(cy - vh / 2);
+  const bw = Math.ceil(vw) + 2;
+  const bh = Math.ceil(vh) + 2;
+  if (view.width !== bw || view.height !== bh) {
+    view.width = bw;
+    view.height = bh;
+  } else vg.clearRect(0, 0, bw, bh);
+  const seen = tilesIn(viewX, viewY, viewX + bw, viewY + bh);
+  for (const tl of seen) if (tl.img) vg.drawImage(tl.img, tl.x - viewX, tl.y - viewY);
+  ctx.drawImage(view, viewX, viewY);
+  if (showTerrain)
+    for (const tl of seen) {
+      const tc = tint(tl);
+      if (tc) ctx.drawImage(tc, tl.x, tl.y);
+    }
 
   for (const w of FIELD.warps) drawWarp(ctx, w, t, w === s.warp && s.armed ? s.dwell / w.dwell : 0);
 
