@@ -10,7 +10,7 @@ import { ENEMY_DEFS, type Kind } from './enemy.ts';
 import { biomeAt, drawField, fieldFx, fieldReady, fieldView, terrainAt, terrainReady } from './field-draw.ts';
 import { backFrom, FIELD, inWarp, makeFieldState, updateField, type FieldEvent, type FieldState, type Warp } from './field.ts';
 import { ROOMS } from './iso.ts';
-import { drawMinimap, inMinimap, minimapPick, minimapRect, toMini } from './minimap.ts';
+import { drawMinimap, fromMini, inMinimap, minimapPick, minimapRect, toMini } from './minimap.ts';
 import { loadSheet, type Sheet } from './sheet.ts';
 
 const canvas = document.createElement('canvas');
@@ -66,21 +66,97 @@ addEventListener('keydown', (e) => {
 });
 addEventListener('keyup', (e) => keys.delete(e.code));
 addEventListener('blur', () => keys.clear());
-const onMap = () => scene === 'field' && showMap;
-canvas.addEventListener('mousemove', (e) => {
-  mapHover = onMap() ? minimapPick(minimapRect(innerWidth), e.offsetX, e.offsetY) : null;
-  canvas.style.cursor = mapHover ? 'pointer' : '';
-});
+// ── 필드 둘러보기 ── 큰 화면을 끌면 지도가 밀리고, 미니맵을 누르거나 끌면 카메라가 그쪽으로 슬라이드한다.
+// 포탈(빛 원)을 누르면(끌지 않고) 고양이가 그 포탈로 워프. 둘러보는 중에 방향키를 누르면 카메라가 고양이에게 돌아온다.
+/** 카메라가 보는 곳 (null = 고양이를 따라감). t = 슬라이드 목표, home = 고양이에게 돌아가는 중 */
+let look: { x: number; y: number; tx: number; ty: number; home: boolean } | null = null;
+let drag: { x: number; y: number; moved: boolean } | null = null;
+let mapDrag = false;
+const DRAG_PX = 5;
+const pxRatio = () => Math.min(devicePixelRatio, 2);
+/** 화면(CSS px) → 필드 월드 좌표 */
+const toWorld = (px: number, py: number) => ({ x: (px * pxRatio() - fieldView.ox) / fieldView.sc, y: (py * pxRatio() - fieldView.oy) / fieldView.sc });
+/** 카메라 중심이 지도 밖을 보지 않게 */
+function clampCam(x: number, y: number) {
+  const hw = canvas.width / fieldView.sc / 2;
+  const hh = canvas.height / fieldView.sc / 2;
+  const [W, H] = FIELD.size;
+  return { x: Math.min(W - hw, Math.max(hw, x)), y: Math.min(H - hh, Math.max(hh, y)) };
+}
+function slideTo(x: number, y: number, instant = false) {
+  const c = clampCam(x, y);
+  if (!look) {
+    const now = toWorld(innerWidth / 2, innerHeight / 2);
+    look = { x: now.x, y: now.y, tx: c.x, ty: c.y, home: false };
+  }
+  Object.assign(look, { tx: c.x, ty: c.y, home: false }, instant ? { x: c.x, y: c.y } : {});
+}
+/** 화면 위치(CSS px)에 있는 포탈 — 빛 원·빛 기둥·이름표 언저리 */
+function portalAt(px: number, py: number) {
+  const p = toWorld(px, py);
+  return (
+    FIELD.warps.find(
+      (w) => Math.abs(p.x - w.at[0]) < w.r * 1.4 && p.y > w.at[1] - 46 && p.y < w.at[1] + w.r * FIELD.vertical + 14,
+    ) ?? null
+  );
+}
+/** 캔버스 기준 마우스 위치 (CSS px). 캔버스 밖에서 버튼을 떼도 맞게 */
+const pos = (e: MouseEvent) => {
+  const r = canvas.getBoundingClientRect();
+  return { x: e.clientX - r.left, y: e.clientY - r.top };
+};
+const onMap = (e: MouseEvent) => scene === 'field' && showMap && inMinimap(minimapRect(innerWidth), pos(e).x, pos(e).y);
+const mapPoint = (e: MouseEvent) => {
+  const [x, y] = fromMini(minimapRect(innerWidth), pos(e).x, pos(e).y);
+  slideTo(x, y);
+};
 canvas.addEventListener('mousedown', (e) => {
   unlockAudio();
-  // 미니맵의 이정표 점을 누르면 그 포탈 위로 워프 (포탈 위에 내려도 한 번 벗어났다 들어와야 빨려 들어간다)
-  if (onMap() && inMinimap(minimapRect(innerWidth), e.offsetX, e.offsetY)) {
-    const w = minimapPick(minimapRect(innerWidth), e.offsetX, e.offsetY);
-    if (w) warpTo(w);
+  if (scene !== 'field') {
+    punchQueued = true;
     return;
   }
-  punchQueued = true;
+  if (onMap(e)) {
+    mapDrag = true;
+    mapPoint(e);
+  } else drag = { x: pos(e).x, y: pos(e).y, moved: false };
 });
+canvas.addEventListener('mousemove', (e) => {
+  if (scene !== 'field') return;
+  if (mapDrag) mapPoint(e);
+  else if (drag) {
+    const dx = pos(e).x - drag.x;
+    const dy = pos(e).y - drag.y;
+    if (!drag.moved && Math.hypot(dx, dy) < DRAG_PX) return;
+    drag.moved = true;
+    drag.x = pos(e).x;
+    drag.y = pos(e).y;
+    const k = pxRatio() / fieldView.sc;
+    const from = look ?? toWorld(innerWidth / 2, innerHeight / 2);
+    slideTo(from.x - dx * k, from.y - dy * k, true);
+  }
+  const overMap = onMap(e);
+  mapHover = overMap ? minimapPick(minimapRect(innerWidth), pos(e).x, pos(e).y) : null;
+  canvas.style.cursor = drag?.moved ? 'grabbing' : overMap || portalAt(pos(e).x, pos(e).y) ? 'pointer' : 'grab';
+});
+addEventListener('mouseup', (e) => {
+  if (drag && !drag.moved && scene === 'field') {
+    const w = portalAt(pos(e).x, pos(e).y);
+    if (w) warpTo(w);
+  }
+  drag = null;
+  mapDrag = false;
+});
+/** 매 프레임: 슬라이드 · 방향키를 누르면 고양이에게 돌아가기 */
+function stepLook(dt: number, moving: boolean) {
+  if (!look) return;
+  if (moving && !drag && !mapDrag) look.home = true;
+  if (look.home) Object.assign(look, ((c) => ({ tx: c.x, ty: c.y }))(clampCam(field.camX, field.camY)));
+  const k = 1 - Math.exp(-10 * dt);
+  look.x += (look.tx - look.x) * k;
+  look.y += (look.ty - look.y) * k;
+  if (look.home && Math.hypot(look.tx - look.x, look.ty - look.y) < 1) look = null;
+}
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
 const held = (...codes: string[]) => codes.some((c) => keys.has(c));
@@ -132,6 +208,13 @@ if (trace)
         return { x, y };
       },
       get showMap() { return showMap; },
+      get look() { return look; },
+      /** 포탈의 화면 위치 (CSS px) */
+      portalScreen: (id: string) => {
+        const w = FIELD.warps.find((v) => v.id === id)!;
+        const d = Math.min(devicePixelRatio, 2);
+        return { x: (fieldView.ox + w.at[0] * fieldView.sc) / d, y: (fieldView.oy + w.at[1] * fieldView.sc) / d };
+      },
       biome: biomeAt,
       size: FIELD.size,
       /** 필드 고양이의 화면 위치 (CSS px) */
@@ -241,15 +324,16 @@ const enterDungeon = (to: string) =>
     await prepareRoom(to);
     scene = 'dungeon';
     roomId = to;
+    canvas.style.cursor = '';
     resetDungeon(dungeon, to);
     enteredRoom();
     sayHelp();
   });
-/** 미니맵 워프 */
+/** 포탈 워프 — 포탈 위에 내린다. 한 번 벗어났다 들어와야 빨려 들어간다 (그 자리에서 바로 던전으로 가지 않음) */
 const warpTo = (w: Warp) =>
   goTo(() => {
     field = makeFieldState(w.at, terrainAt);
-    mapHover = null;
+    look = null;
     quiet();
     say('surprise', 1.2);
   });
@@ -257,6 +341,7 @@ const leaveDungeon = () =>
   goTo(() => {
     scene = 'field';
     field = makeFieldState(backFrom(roomId), terrainAt);
+    look = null;
     quiet();
     sayHelp();
   });
@@ -286,6 +371,7 @@ function frame(now: number) {
   if (!fadeTo) {
     if (scene === 'field') {
       const { mx, my } = input();
+      stepLook(dt, mx !== 0 || my !== 0);
       const w = updateField(field, mx, my, dt, terrainAt);
       field.events.forEach(fieldSound);
       fieldFx(field.events);
@@ -310,7 +396,7 @@ function frame(now: number) {
 function drawFieldScene() {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  drawField(ctx, canvas.width, canvas.height, field, { cat: catSheet, axe: axeSheet, boat: boatSheet, snow: snowSheet }, last / 1000, lastDt, showTerrain);
+  drawField(ctx, canvas.width, canvas.height, field, { cat: catSheet, axe: axeSheet, boat: boatSheet, snow: snowSheet }, last / 1000, lastDt, showTerrain, look);
   const s = Math.min(devicePixelRatio, 2);
   ctx.setTransform(s, 0, 0, s, 0, 0);
   ctx.font = 'bold 15px system-ui, sans-serif';
@@ -339,7 +425,7 @@ function drawFade() {
 
 const help = document.getElementById('help')!;
 const HELP = {
-  field: 'WASD 이동 · 숲은 도끼로, 물은 배로 · 이정표 앞 포탈에 잠시 서 있으면 던전 · 미니맵 점 클릭 = 워프 · M 미니맵 · T 지형 보기',
+  field: 'WASD 이동 · 숲은 도끼로, 물은 배로 · 이정표 앞 포탈에 잠시 서 있으면 던전 · 지도 끌기·미니맵으로 둘러보기, 포탈 클릭 = 워프 · M 미니맵 · T 지형 보기',
   dungeon: 'WASD 이동 · 클릭/J 냥펀치 · Space 구르기 · 빛나는 칸으로 나가기 · G 격자',
 };
 function sayHelp() {

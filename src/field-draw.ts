@@ -321,12 +321,14 @@ export function drawField(
   t: number,
   dt: number,
   showTerrain: boolean,
+  /** 지도를 끌어 둘러보는 중이면 카메라가 고양이 대신 이곳을 본다 */
+  look: { x: number; y: number } | null = null,
 ) {
   const sc = Math.max(cw / V0, ch / V1);
   const vw = cw / sc;
   const vh = ch / sc;
-  const cx = vw >= W ? W / 2 : Math.min(W - vw / 2, Math.max(vw / 2, s.camX));
-  const cy = vh >= H ? H / 2 : Math.min(H - vh / 2, Math.max(vh / 2, s.camY));
+  const cx = vw >= W ? W / 2 : Math.min(W - vw / 2, Math.max(vw / 2, look ? look.x : s.camX));
+  const cy = vh >= H ? H / 2 : Math.min(H - vh / 2, Math.max(vh / 2, look ? look.y : s.camY));
   fieldView.sc = sc;
   fieldView.ox = cw / 2 - cx * sc;
   fieldView.oy = ch / 2 - cy * sc;

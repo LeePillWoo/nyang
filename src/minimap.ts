@@ -1,4 +1,5 @@
-// 필드 미니맵 — 화면 오른쪽 위. 이정표(포탈) 34곳을 점으로 찍고, 점을 누르면 그 이정표로 워프한다.
+// 필드 미니맵 — 화면 오른쪽 위. 이정표(포탈) 34곳을 점으로 찍는다. 누르거나 끌면 큰 화면 카메라가 그쪽으로 간다
+// (워프는 큰 화면에서 포탈을 직접 눌러서 — main.ts).
 // 배경은 조각 36장을 1/8 로 줄인 한 장 (src/assets/world/minimap.webp, tools/assets.mjs 가 만든다).
 // 좌표는 CSS 픽셀 (캔버스 실제 픽셀이 아니라) — 마우스 좌표와 바로 맞댄다.
 import { image } from './assets.ts';
@@ -20,6 +21,8 @@ export function minimapRect(cssW: number): Rect {
 
 /** 월드 좌표 → 미니맵 위 CSS 좌표 */
 export const toMini = (r: Rect, x: number, y: number) => [r.x + (x / W) * r.w, r.y + (y / H) * r.h];
+/** 미니맵 위 CSS 좌표 → 월드 좌표 */
+export const fromMini = (r: Rect, px: number, py: number) => [((px - r.x) / r.w) * W, ((py - r.y) / r.h) * H];
 
 export const inMinimap = (r: Rect, px: number, py: number) => px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h;
 

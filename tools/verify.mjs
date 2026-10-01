@@ -263,22 +263,48 @@ try {
     await page.screenshot({ path: fsPath(new URL(`room-${id}.png`, OUT)) });
     await page.close();
   }
-  // 3-3) 미니맵: 이정표 점을 실제 마우스로 누르면 그 포탈 위로 워프한다 (그 자리에서 던전으로 빨려 들어가지는 않는다)
-  console.log('\n[미니맵]');
+  // 3-3) 미니맵·둘러보기 (실제 마우스·키로):
+  //  미니맵을 누르면 카메라만 그쪽으로 간다(고양이는 그대로) → 큰 화면에서 포탈을 누르면 고양이가 워프 →
+  //  큰 화면을 끌면 지도가 밀린다(워프 아님) → 방향키를 누르면 카메라가 고양이에게 돌아온다
+  console.log('\n[미니맵 · 둘러보기]');
   {
     const { page, errors } = await open('field');
+    const click = async (p) => {
+      await page.mouse.move(p.x, p.y);
+      await page.mouse.down();
+      await page.mouse.up();
+    };
     const target = FIELD.warps.find((w) => w.id === 'pyramid');
-    const pt = await page.evaluate(() => __game.minimapPoint('pyramid'));
-    await page.mouse.move(pt.x, pt.y);
-    await page.mouse.down();
-    await page.mouse.up();
+    const start = await page.evaluate(() => [__game.field.x, __game.field.y]);
+    await click(await page.evaluate(() => __game.minimapPoint('pyramid')));
+    await sleep(1200);
+    const seen = await page.evaluate(() => ({ cat: [__game.field.x, __game.field.y], look: __game.look && [__game.look.x, __game.look.y] }));
+    check(seen.cat[0] === start[0] && seen.cat[1] === start[1], '미니맵을 눌러도 고양이는 그 자리에 있다');
+    const far = seen.look ? Math.hypot(seen.look[0] - target.at[0], seen.look[1] - target.at[1]) : Infinity;
+    check(far < 500, `미니맵을 누르면 카메라가 그쪽으로 간다 (피라미드까지 ${far | 0}px)`);
+
+    await click(await page.evaluate(() => __game.portalScreen('pyramid')));
     const arrived = await page
       .waitForFunction(([x, y]) => Math.hypot(__game.field.x - x, __game.field.y - y) < 4, { timeout: 4000 }, target.at)
       .then(() => true, () => false);
-    const at = await page.evaluate(() => [__game.field.x | 0, __game.field.y | 0]);
-    check(arrived, `미니맵 피라미드 점을 누르면 피라미드 포탈로 워프 (${at.join(', ')})`);
+    check(arrived, '큰 화면에서 피라미드 포탈을 누르면 고양이가 그 포탈로 워프');
     await sleep(1500);
     check((await page.evaluate(() => __game.scene)) === 'field', '워프한 자리에서 바로 던전으로 빨려 들어가지 않는다');
+
+    const cat0 = await page.evaluate(() => [__game.field.x, __game.field.y]);
+    await page.mouse.move(600, 400);
+    await page.mouse.down();
+    for (let i = 1; i <= 10; i++) await page.mouse.move(600 - i * 25, 400 - i * 12);
+    await page.mouse.up();
+    await sleep(300);
+    const dragged = await page.evaluate(() => ({ cat: [__game.field.x, __game.field.y], look: !!__game.look, scene: __game.scene }));
+    check(dragged.look && dragged.cat[0] === cat0[0] && dragged.scene === 'field', '큰 화면을 끌면 지도가 밀린다 (워프 아님)');
+
+    await page.keyboard.down('KeyA');
+    const home = await page.waitForFunction(() => __game.look === null, { timeout: 3000 }).then(() => true, () => false);
+    await page.keyboard.up('KeyA');
+    check(home, '둘러보다가 방향키를 누르면 카메라가 고양이에게 돌아온다');
+
     await page.keyboard.press('KeyM');
     check(!(await page.evaluate(() => __game.showMap)), 'M 키로 미니맵을 끈다');
     check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
