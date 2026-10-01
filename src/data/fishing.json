@@ -21,7 +21,7 @@
   "spots": {
     "lake_island_fishing": {
       "name": "호수섬 정박지",
-      "image": "fishing/lake_island_fishing_bg_v2",
+      "image": "fishing/lake/lake_island_fishing_bg_v2",
       "size": [1672, 941],
       "seat": [735, 482],
       "catScale": 0.9,

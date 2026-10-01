@@ -32,7 +32,7 @@
   진짜 입질 모양은 쏙 · 찌올림 · 끌고가기 셋. 실패 글자가 무엇에 속았는지 / 무엇을 놓쳤는지 알려 줘서 패턴을 배운다.
   **당기기 모양**(fish.json `fight`): 꾸준 · 잔걸음(짧고 잦게) · 지그재그(날뛰다 홱) · 묵직(길고 무겁게) · 점프(펄쩍 — 장력 순간 상승).
   종마다 다른 성격은 `fish.json` (GDD 10장에 예약된 이름), 낚시터·규칙 수치는 `fishing.json`, 시트 좌표는 `fishing-atlas.json`
-  (tools/assets.mjs 가 art/fishing/atlas.json 에서 만든다). 별 1~2 는 계속 감아도 낚이고, 별 3 이상은 날뛸 때 놓아야 낚인다 —
+  (tools/assets.mjs 가 art/fishing/common/atlas.json + 낚시터마다의 atlas.json 에서 만든다 — 물고기는 id 로 한데). 별 1~2 는 계속 감아도 낚이고, 별 3 이상은 날뛸 때 놓아야 낚인다 —
   밸런스를 바꾸면 fishing.check.ts 가 확인한다. 도감은 localStorage `nyang.fishDex.v1` (저장 M2 때 세이브의 fishDex 로).
 - 미니맵(src/minimap.ts): 필드 화면 오른쪽 위. 이정표 34곳 점(연결 금색 · 미연결 회색), 고양이, 지금 화면 범위.
   미니맵을 누르거나 끌면 큰 화면 카메라가 그쪽으로 슬라이드, 큰 화면은 마우스로 끌어 밀 수 있다 (5px 이상 움직이면 끌기).
@@ -60,7 +60,10 @@
 - **리소스 폴더** — 원본은 `art/` (git 밖, **구조는 사용자가 정한다** — `art/README.md`, `art/resource_catalog.json`).
   게임용 `src/assets/` 는 art 와 **같은 경로**에 확장자만 .webp: `node tools/assets.mjs` (바뀐 원본만 다시 변환).
   `world/tiles` 필드 조각 · `backgrounds/arenas` 전투장 · `backgrounds/dungeons` 신규 던전 · `characters/player` 고양이 ·
-  `characters/enemies/{core,field,expansion}` 몬스터 · `emotions` · `effects`. 마스크만 우리가 만든다: `src/assets/world/masks/`.
+  `characters/enemies/{core,field,expansion}` 몬스터 · `emotions` · `effects` ·
+  `fishing/{common,lake,ice,desert,sea}` 낚시 (common = 고양이·그림자·찌, 나머지 = 낚시터마다 배경·물고기·atlas·layout).
+  마스크만 우리가 만든다: `src/assets/world/masks/`. **원본(PNG·JSON·README)은 src/assets 가 아니라 art/ 에** — 사용자가
+  src/assets 에 넣었으면 같은 구조 그대로 art/ 로 옮기고 중복을 지운다 (tools/assets.mjs 가 src/assets 의 원본 파일을 알려 준다).
   코드·데이터는 경로를 확장자 없이 적는다 (`'characters/enemies/core/pirate_rat_v1'`) — `src/assets.ts` 의 `assetUrl`·`image`.
   원본이 v2 로 바뀌면 데이터의 경로만 고친다.
 - 캐릭터·적·이펙트: 스프라이트 시트 (src/sheet.ts 가 알파를 훑어 칸을 찾는다). 효과선 같은 가는 조각은 옆 칸에 붙이고,

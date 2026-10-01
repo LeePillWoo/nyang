@@ -9,11 +9,18 @@ import { fishLen, mouth, RULES, SPOTS, type FailHint, type FailReason, type Fish
 /** 칸마다 [x, y, w, h, 내용 x, y, w, h] — 고양이는 뒤에 [발 x, y, 낚싯대 끝 x, y] (칸 기준) */
 type St = { name: string; fps: number; loop: boolean; frames: number[][] };
 type Sh = { sheet: string; states: Record<string, St> };
-const A = atlas as unknown as { cat: Sh; shadow: Sh; catch: Sh; fx: Sh };
-const IMG = (k: keyof typeof A) => image(A[k].sheet).img;
+/** 공용 시트 셋 (fishing/common) + 낚시터마다의 물고기 시트 — 물고기는 id 로 바로 찾는다 */
+const A = atlas as unknown as { cat: Sh; shadow: Sh; fx: Sh; catch: Record<string, St & { sheet: string }> };
+const IMG = (k: 'cat' | 'shadow' | 'fx') => image(A[k].sheet).img;
 
+/** 낚시터 배경 + 공용 시트 + 그곳 물고기 시트 */
 export const fishingReady = (spotId: string) =>
-  Promise.all([image(SPOTS[spotId].image).ready, ...(['cat', 'shadow', 'catch', 'fx'] as const).map((k) => image(A[k].sheet).ready)]);
+  Promise.all([
+    image(SPOTS[spotId].image).ready,
+    ...(['cat', 'shadow', 'fx'] as const).map((k) => image(A[k].sheet).ready),
+    ...[...new Set(Object.keys(SPOTS[spotId].fish).map((k) => A.catch[k].sheet))].map((p) => image(p).ready),
+  ]);
+const catchImg = (kind: string) => image(A.catch[kind].sheet).img;
 
 /** 캔버스 픽셀 기준 변환 (마우스 → 그림 좌표에 쓴다) */
 export const fishingView = { sc: 1, ox: 0, oy: 0 };
@@ -420,8 +427,8 @@ function drawCatch(ctx: CanvasRenderingContext2D, s: FishingState, v: FishingVie
   const fy = b.y + 138;
   const sp = A.fx.states.catch_sparkle;
   cell(ctx, IMG('fx'), at(sp, s.t % (sp.frames.length / sp.fps)), cx, fy, 1.5, 1, 0, 0.9);
-  const st = A.catch.states[c.kind];
-  cell(ctx, IMG('catch'), at(st, s.t), cx, fy, 220 / st.frames[0][6]);
+  const st = A.catch[c.kind];
+  cell(ctx, catchImg(c.kind), at(st, s.t), cx, fy, 220 / st.frames[0][6]);
 
   ctx.textAlign = 'center';
   ctx.fillStyle = '#5b4a3f';
@@ -488,7 +495,7 @@ function drawUi(ctx: CanvasRenderingContext2D, s: FishingState, v: FishingViewOp
   ctx.font = '22px system-ui, sans-serif';
   ctx.fillText(`도감 ${got}/${kinds.length} · 이번에 ${s.caughtCount}마리`, 46, 98);
   kinds.forEach((k, i) => {
-    const st = A.catch.states[k];
+    const st = A.catch[k];
     const x = 46 + i * 80 + 36;
     const y = 150;
     ctx.fillStyle = 'rgba(120,85,55,0.1)';
@@ -496,7 +503,7 @@ function drawUi(ctx: CanvasRenderingContext2D, s: FishingState, v: FishingViewOp
     ctx.roundRect(x - 36, y - 34, 72, 68, 14);
     ctx.fill();
     if (!s.dex[k]) ctx.filter = 'brightness(0)';
-    cell(ctx, IMG('catch'), st.frames[0], x, y, 64 / st.frames[0][6], 1, 0, s.dex[k] ? 1 : 0.3);
+    cell(ctx, catchImg(k), st.frames[0], x, y, 64 / st.frames[0][6], 1, 0, s.dex[k] ? 1 : 0.3);
     ctx.filter = 'none';
     if (s.dex[k]) {
       ctx.fillStyle = '#5b4a3f';

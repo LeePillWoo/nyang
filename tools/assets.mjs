@@ -7,7 +7,8 @@
 // - 월드 조각은 src/data/field.json 의 size · grid 와 크기가 맞는지 본다 (어긋나면 실패).
 // - 지형 마스크 src/assets/world/masks/mask_rR_cC.png 가 없는 조각에만 빈 마스크(검정 = 전부 걷기)를 만든다.
 //   **이미 있는 마스크는 건드리지 않는다** (손으로 칠한 마스크 보호).
-// - 낚시 시트 좌표 art/fishing/atlas.json → src/data/fishing-atlas.json (원본이 바뀌었을 때만).
+// - 낚시 시트 좌표 art/fishing/common/atlas.json + art/fishing/<낚시터>/atlas.json → src/data/fishing-atlas.json (원본이 바뀌었을 때만).
+// - src/assets 에 원본(PNG·JSON·MD)이 들어와 있으면 art/ 로 옮기라고 알려 준다 (지형 마스크 빼고).
 // - 미니맵 src/assets/world/minimap.webp 를 조각 36장을 1/8 로 줄여 만든다 (조각이 바뀌었을 때만).
 // - art/temp/, art/metadata/ 와 PNG 가 아닌 파일은 건너뛴다.
 import fs from 'node:fs';
@@ -129,32 +130,49 @@ if (all || !fs.existsSync(MINI) || tiles.some((p) => fs.statSync(path.join(ART, 
 }
 await browser.close();
 
-// 낚시 시트 좌표: art/fishing/atlas.json → src/data/fishing-atlas.json (게임이 쓰는 값만, art 는 git 밖이라 옮겨 둔다)
+// 낚시 시트 좌표 → src/data/fishing-atlas.json (게임이 쓰는 값만, art 는 git 밖이라 옮겨 둔다)
+//   art/fishing/common/atlas.json — 공용: 고양이(cat) · 그림자(shadow) · 찌·효과(fx)
+//   art/fishing/<낚시터>/atlas.json — 그곳 물고기 시트. 물고기 id 는 낚시터를 가리지 않고 하나뿐이라 catch 에 한데 모은다
 // 칸마다 [x, y, w, h, 내용 x, y, w, h] — 고양이는 뒤에 [발 x, y, 낚싯대 끝 x, y] (칸 기준)
-const ATLAS = path.join(ART, 'fishing/atlas.json');
+const FISHING = path.join(ART, 'fishing');
 const ATLAS_OUT = path.join(ROOT, 'src/data/fishing-atlas.json');
-if (fs.existsSync(ATLAS) && (all || !fs.existsSync(ATLAS_OUT) || fs.statSync(ATLAS).mtimeMs > fs.statSync(ATLAS_OUT).mtimeMs)) {
-  const src = JSON.parse(fs.readFileSync(ATLAS, 'utf8'));
-  const NAME = { fishing_cat: 'cat', fishing_shadows: 'shadow', fishing_catches: 'catch', fishing_effects: 'fx' };
-  const out = {};
-  for (const sh of src.sheets) {
-    const states = {};
-    for (const st of sh.states)
-      states[st.id] = {
-        name: st.name,
-        fps: st.suggestedFps,
-        loop: st.loop,
-        frames: st.frames.map((i) => {
-          const f = sh.frames[i];
-          const v = [...f.rect, ...f.contentBounds];
-          if (f.suggestedFootPivot) v.push(...f.suggestedFootPivot, ...f.suggestedRodTip);
-          return v.map((n) => Math.round(n * 10) / 10);
-        }),
-      };
-    out[NAME[sh.id] ?? sh.id] = { sheet: sh.file.replace(/\.png$/, ''), states };
-  }
+const atlases = fs.existsSync(FISHING)
+  ? fs.readdirSync(FISHING, { withFileTypes: true }).filter((e) => e.isDirectory() && fs.existsSync(path.join(FISHING, e.name, 'atlas.json'))).map((e) => path.join(FISHING, e.name, 'atlas.json'))
+  : [];
+if (atlases.length && (all || !fs.existsSync(ATLAS_OUT) || atlases.some((a) => fs.statSync(a).mtimeMs > fs.statSync(ATLAS_OUT).mtimeMs))) {
+  const NAME = { fishing_cat: 'cat', fishing_shadows: 'shadow', fishing_effects: 'fx' };
+  const state = (sh, st) => ({
+    name: st.name,
+    fps: st.suggestedFps,
+    loop: st.loop,
+    frames: st.frames.map((i) => {
+      const f = sh.frames[i];
+      const v = [...f.rect, ...f.contentBounds];
+      if (f.suggestedFootPivot) v.push(...f.suggestedFootPivot, ...f.suggestedRodTip);
+      return v.map((n) => Math.round(n * 10) / 10);
+    }),
+  });
+  const out = { catch: {} };
+  for (const a of atlases.sort())
+    for (const sh of JSON.parse(fs.readFileSync(a, 'utf8')).sheets) {
+      const sheet = sh.file.replace(/\.png$/, '');
+      if (NAME[sh.id]) out[NAME[sh.id]] = { sheet, states: Object.fromEntries(sh.states.map((st) => [st.id, state(sh, st)])) };
+      else for (const st of sh.states) out.catch[st.id] = { sheet, ...state(sh, st) }; // 물고기 시트
+    }
   fs.writeFileSync(ATLAS_OUT, JSON.stringify(out).replace(/\],\[/g, '],\n[') + '\n');
-  console.log('  낚시 좌표  src/data/fishing-atlas.json');
+  console.log(`  낚시 좌표  src/data/fishing-atlas.json (물고기 ${Object.keys(out.catch).length}종)`);
 }
+
+// 원본 PNG 는 art/ 에 둔다 — src/assets 는 git 에 올라가는 게임용(WebP)이라 원본이 들어오면 알려 준다 (지형 마스크는 예외)
+const stray = [];
+(function find(dir) {
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, e.name);
+    const rel = path.relative(OUT, p).split(path.sep).join('/');
+    if (e.isDirectory()) find(p);
+    else if (/\.(png|json|md)$/i.test(e.name) && !rel.startsWith('world/masks/')) stray.push(rel);
+  }
+})(OUT);
+if (stray.length) console.log(`  알림: src/assets 에 원본처럼 보이는 파일 ${stray.length}개 — art/ 의 같은 자리로 옮기세요: ${stray.slice(0, 5).join(', ')}${stray.length > 5 ? ' …' : ''}`);
 console.log(`원본 ${pngs.length}장 · 변환 ${made} · 그대로 ${skipped}${bad ? ` · 크기 안 맞음 ${bad}` : ''}`);
 process.exit(bad ? 1 : 0);

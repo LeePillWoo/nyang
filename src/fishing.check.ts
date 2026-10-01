@@ -1,5 +1,7 @@
 // node src/fishing.check.ts  (npm run check)
 import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
+import atlas from './data/fishing-atlas.json' with { type: 'json' };
 import {
   commitBite,
   debugBite,
@@ -8,6 +10,7 @@ import {
   record,
   RULES,
   spawnFish,
+  SPOTS,
   updateFishing,
   type BiteKind,
   type BitePattern,
@@ -331,6 +334,22 @@ function hooked(kind: string, seed: number) {
   s.t = 0;
   tap(s);
   assert.equal(s.phase, 'ready');
+}
+
+// 데이터가 서로 맞는지: 낚시터의 물고기는 fish.json · 시트 좌표(fishing-atlas.json)에 있고, 배경·시트 WebP 가 실제로 있다
+// (리소스 폴더를 옮기거나 이름을 바꾸면 여기서 잡힌다)
+{
+  const has = (p: string) => existsSync(new URL(`./assets/${p}.webp`, import.meta.url));
+  const A = atlas as unknown as { cat: { sheet: string }; shadow: { sheet: string; states: Record<string, unknown> }; fx: { sheet: string }; catch: Record<string, { sheet: string }> };
+  for (const k of ['cat', 'shadow', 'fx'] as const) assert.ok(has(A[k].sheet), `공용 시트 없음: ${A[k].sheet}`);
+  for (const [id, spot] of Object.entries(SPOTS)) {
+    assert.ok(has(spot.image), `${id}: 배경 없음 ${spot.image}`);
+    for (const k of Object.keys(spot.fish)) {
+      assert.ok(FISH[k], `${id}: fish.json 에 없는 물고기 ${k}`);
+      assert.ok(A.catch[k] && has(A.catch[k].sheet), `${id}: ${k} 의 잡은 물고기 시트가 없다`);
+      assert.ok(A.shadow.states[FISH[k].shadow], `${k}: 없는 그림자 모양 ${FISH[k].shadow}`);
+    }
+  }
 }
 
 console.log('fishing.check: ok');
