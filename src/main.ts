@@ -16,7 +16,6 @@ import {
   sfxFull,
   sfxHit,
   sfxHurt,
-  sfxLift,
   sfxNibble,
   sfxPlop,
   sfxPickup,
@@ -45,7 +44,7 @@ import {
   resetFishingFx,
   type FishingButton,
 } from './fishing-draw.ts';
-import { again, debugBite, makeFishing, SPOTS, updateFishing, type Dex, type FishEvent, type FishingState } from './fishing.ts';
+import { again, debugBite, makeFishing, normalizeDex, SPOTS, updateFishing, type Dex, type FishEvent, type FishingState } from './fishing.ts';
 import { ROOMS } from './iso.ts';
 import { drawMinimap, fromMini, inMinimap, minimapPick, minimapRect, toMini } from './minimap.ts';
 import { loadSheet, type Sheet } from './sheet.ts';
@@ -403,7 +402,7 @@ let roomId = scene === 'fishing' ? startSpot : startRoom; // 지금 들어가 �
 const DEX_KEY = 'nyang.fishDex.v1';
 function loadDex(): Dex {
   try {
-    return JSON.parse(localStorage.getItem(DEX_KEY) ?? '{}') as Dex;
+    return normalizeDex(JSON.parse(localStorage.getItem(DEX_KEY) ?? '{}') as Dex);
   } catch {
     return {};
   }
@@ -530,8 +529,8 @@ if (trace)
         const d = Math.min(devicePixelRatio, 2);
         return { x: (fishingView.ox + x * fishingView.sc) / d, y: (fishingView.oy + y * fishingView.sc) / d };
       },
-      /** 이 종이 지금 찌를 문다 (검증용) */
-      bite: (kind: string, biteKind?: 'sink' | 'lift' | 'drag') => debugBite(fishing, kind, biteKind),
+      /** 이 종(또는 아이템 = 가라앉은 물건)이 지금 찌를 문다 — 찌가 팍 잠기는 순간 (검증용) */
+      bite: (kind: string) => debugBite(fishing, kind),
       /** 필드 고양이의 화면 위치 (CSS px) */
       get catScreen() {
         const d = Math.min(devicePixelRatio, 2);
@@ -587,10 +586,11 @@ function fishingEvent(e: FishEvent) {
     case 'abandon':
       say('sweat', 1.4);
       break;
+    case 'nudge':
+      sfxDrag();
+      break;
     case 'bite':
-      if (e.kind === 'lift') sfxLift();
-      else if (e.kind === 'drag') sfxDrag();
-      else sfxBite();
+      sfxBite();
       say('surprise', 0.8);
       break;
     case 'jump':

@@ -160,8 +160,6 @@ export const sfxNibble = (strength = 1) => {
 };
 /** 퐁 — 헛잠김 (반쯤 잠겼다 떠오름) */
 export const sfxDunk = () => tone('sine', 560, 300, 0.12, 0.1);
-/** 뾰옹 — 찌가 쑥 떠오를 때 (찌올림) */
-export const sfxLift = () => tone('sine', 320, 980, 0.16, 0.28);
 /** 스르륵 — 찌가 옆으로 끌려갈 때 */
 export const sfxDrag = () => burst('bandpass', 1400, 1.4, 0.12, 0.45, 500);
 /** 퐁! — 찌가 쏙 잠길 때 */

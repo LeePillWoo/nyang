@@ -4,7 +4,7 @@
 import { image } from './assets.ts';
 import atlas from './data/fishing-atlas.json' with { type: 'json' };
 import { drawEmote } from './emote.ts';
-import { FISH, fishLen, mouth, RULES, SPOTS, type Dex, type FailHint, type FailReason, type Fish, type FishEvent, type FishingState } from './fishing.ts';
+import { BIG, FISH, fishLen, mouth, RULES, SPOTS, strength, type Dex, type FailHint, type FailReason, type Fish, type FishEvent, type FishingState } from './fishing.ts';
 import { drawIcon, RARE } from './bag-draw.ts';
 import { ITEMS, TYPE_NAME } from './bag.ts';
 import { fitText } from './touch.ts';
@@ -76,6 +76,9 @@ let banner: { text: string; color: string; t: number } | null = null;
 let rippleT = 0;
 /** 물 위에 떠올랐다 사라지는 짧은 말 (펄쩍! 휙!) */
 let words: { text: string; x: number; y: number; t: number; color: string }[] = [];
+/** 찌가 팍 잠길 때 번쩍 (고리 + 느낌표) */
+let flashes: { x: number; y: number; t: number }[] = [];
+const FLASH = 0.45;
 
 const shot = (id: string, x: number, y: number, scale: number) => shots.push({ st: A.fx.states[id], x, y, t: 0, scale });
 const ripple = (x: number, y: number, r: number, life = 0.9) => ripples.push({ x, y, t: 0, life, r });
@@ -91,9 +94,10 @@ function failText(reason: FailReason, hint: FailHint) {
         ? '헛잠김이었어요! 쏙 잠겨서 안 올라올 때 채요'
         : hint === 'flurry'
           ? '따다닥 연타는 맛보기예요, 조금 더!'
-          : '톡톡은 맛보기예요, 조금 더 기다려요';
-  if (reason === 'late')
-    return hint === 'lift' ? '찌가 쑥 떠오른 게 입질이었어요!' : hint === 'drag' ? '찌를 끌고 갈 때 채야 해요!' : '미끼만 먹고 도망갔어요…';
+          : hint === 'nudge'
+            ? '살살 끄는 건 간 보는 거예요, 조금 더!'
+            : '톡톡은 맛보기예요, 조금 더 기다려요';
+  if (reason === 'late') return '찌가 팍 잠기며 번쩍한 그때였어요!';
   return reason === 'snap' ? '줄이 끊어졌어요!' : '바늘이 빠졌어요…';
 }
 const word = (text: string, x: number, y: number, color = '#fff6d8') => words.push({ text, x, y, t: 0, color });
@@ -103,6 +107,7 @@ export function resetFishingFx() {
   shots = [];
   ripples = [];
   words = [];
+  flashes = [];
   banner = null;
 }
 
@@ -125,10 +130,21 @@ export function fishingFx(s: FishingState, events: FishEvent[]) {
       case 'abandon':
         say('그냥 가 버렸어요… 망설이는 녀석이었네', '#fff6d8');
         break;
-      case 'bite':
-        ripple(s.bobX, s.bobY, 26, 0.9);
-        if (e.kind === 'sink') shot('cast_splash', s.bobX, s.bobY - 8, 0.3);
+      case 'nudge':
+        ripple(s.bobX, s.bobY, 13, 0.6);
         break;
+      case 'bite':
+        // 찌가 팍! — 물보라 · 번쩍 고리 · 느낌표 (지금이다)
+        ripple(s.bobX, s.bobY, 30, 0.8);
+        shot('cast_splash', s.bobX, s.bobY - 10, 0.5);
+        flashes.push({ x: s.bobX, y: s.bobY, t: 0 });
+        break;
+      case 'hook': {
+        const f = s.hooked;
+        if (e.perfect) say('완벽한 챔질!', '#ffd84a');
+        else if (f && f.k >= BIG && !f.item) say('월척이다!', '#ffd84a');
+        break;
+      }
       case 'jump':
         shot('cast_splash', e.x, e.y - 14, 0.95);
         ripple(e.x, e.y, 40, 1);
@@ -137,9 +153,6 @@ export function fishingFx(s: FishingState, events: FishEvent[]) {
       case 'zig':
         shot('cast_splash', e.x, e.y - 8, 0.3);
         word('휙!', e.x, e.y - 34);
-        break;
-      case 'hook':
-        if (e.perfect) say('완벽한 챔질!', '#ffd84a');
         break;
       case 'run':
         shot('cast_splash', e.x, e.y - 8, 0.42);
@@ -280,6 +293,7 @@ export function drawFishing(ctx: CanvasRenderingContext2D, cw: number, ch: numbe
   if (s.phase !== 'cast') clip(true);
   drawBobber(ctx, s, end, v.t);
   if (s.phase !== 'cast') clip(false);
+  drawFlashes(ctx);
   drawAim(ctx, s, tipX, tipY);
   drawEmote(ctx, cox + (cbx + cbw * 0.42) * k, coy + cby * k - 2, 72);
 
@@ -320,11 +334,8 @@ function stepFx(s: FishingState, dt: number) {
     const m = mouth(f);
     ripple(m.x, m.y, s.run > 0 ? 26 : 16, 0.7);
   }
-  // 끌려가는 찌 뒤로 물결 꼬리
-  if (s.phase === 'bite' && s.biteKind === 'drag' && rippleT > 0.12) {
-    rippleT = 0;
-    ripple(s.bobX, s.bobY, 12, 0.7);
-  }
+  for (const v of flashes) v.t += dt;
+  flashes = flashes.filter((v) => v.t < FLASH);
   // 가라앉은 물건 위로 가끔 뽀글 — 물고기가 아니라는 표시
   bubbleT += dt;
   if (bubbleT > 1.6) {
@@ -387,7 +398,7 @@ function lineEnd(s: FishingState, tipX: number, tipY: number) {
     }
     case 'wait':
     case 'bite':
-      return { x: s.bobX, y: s.bobY - 4 - liftUp(s), flying: false };
+      return { x: s.bobX, y: s.bobY - 4, flying: false };
     case 'hook':
     case 'reel':
       return s.hooked ? { ...mouth(s.hooked), flying: false } : null;
@@ -410,9 +421,6 @@ function drawLine(ctx: CanvasRenderingContext2D, s: FishingState, x0: number, y0
   ctx.stroke();
 }
 
-/** 찌올림: 찌가 쑥 떠오른 높이 (줄 끝도 따라 올라간다) */
-const liftUp = (s: FishingState) => (s.phase === 'bite' && s.biteKind === 'lift' ? Math.min(1, s.reactT / 0.3) * 20 : 0);
-
 function drawBobber(ctx: CanvasRenderingContext2D, s: FishingState, end: { x: number; y: number; flying: boolean } | null, t: number) {
   const F = A.fx.states;
   const img = IMG('fx');
@@ -429,17 +437,39 @@ function drawBobber(ctx: CanvasRenderingContext2D, s: FishingState, end: { x: nu
       // 톡: 짧은 톡은 빨리, 큰 톡은 천천히 한 번
       const nb = F.bobber_nibble.frames;
       cell(ctx, img, nb[Math.min(nb.length - 1, Math.floor((1 - s.nibbleT / s.nibbleLen) * nb.length))], s.bobX, s.bobY - lift, k);
+    } else if (s.nudgeT > 0) {
+      // 살살 끌기: 밀리는 쪽으로 살짝 기운다
+      cell(ctx, img, F.bobber_idle.frames[0], s.bobX, s.bobY - lift, k, 1, Math.sign(s.nudgeX || 1) * 0.35 * Math.sin((s.nudgeT / 0.45) * Math.PI));
     } else cell(ctx, img, at(F.bobber_idle, t), s.bobX, s.bobY - lift, k);
   } else if (s.phase === 'bite') {
-    if (s.biteKind === 'lift') {
-      // 찌올림: 쑥 떠오르면서 옆으로 눕는다
-      const up = liftUp(s);
-      const lie = Math.min(1, Math.max(0, (s.reactT - 0.1) / 0.3)) * 1.2;
-      cell(ctx, img, F.bobber_idle.frames[0], s.bobX, s.bobY - lift - up, k, 1, -lie);
-    } else if (s.biteKind === 'drag') {
-      // 끌려간다: 끌리는 쪽으로 기울어 미끄러진다
-      cell(ctx, img, F.bobber_idle.frames[Math.floor(t * 12) % 6], s.bobX, s.bobY - lift, k, 1, Math.sign(s.dragX || 1) * 0.45);
-    } else cell(ctx, img, at(F.bobber_submerge, s.reactT), s.bobX, s.bobY - lift, k);
+    // 팍 — 빠르게 잠긴다
+    cell(ctx, img, at(F.bobber_submerge, s.reactT * 1.8), s.bobX, s.bobY - lift, k);
+  }
+}
+
+/** 찌가 팍 잠길 때: 하얀 고리가 확 퍼지고, 노란 느낌표가 톡 튀어나왔다 사라진다 (가볍게, 0.45초) */
+function drawFlashes(ctx: CanvasRenderingContext2D) {
+  for (const v of flashes) {
+    const p = v.t / FLASH;
+    ctx.save();
+    ctx.globalAlpha = 1 - p;
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 6 * (1 - p) + 1;
+    ctx.beginPath();
+    ctx.ellipse(v.x, v.y - 6, 14 + p * 52, (14 + p * 52) * 0.5, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    const pop = p < 0.2 ? 0.6 + p * 3 : 1.2 - (p - 0.2) * 0.4;
+    ctx.translate(v.x, v.y - 58 - p * 18);
+    ctx.scale(pop, pop);
+    ctx.font = 'bold 46px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 8;
+    ctx.strokeStyle = 'rgba(70,52,42,0.85)';
+    ctx.strokeText('!', 0, 0);
+    ctx.fillStyle = '#ffd84a';
+    ctx.fillText('!', 0, 0);
+    ctx.restore();
   }
 }
 
@@ -523,19 +553,23 @@ function drawCatch(ctx: CanvasRenderingContext2D, s: FishingState, v: FishingVie
     ctx.fillText('★'.repeat(c.stars) + '☆'.repeat(5 - c.stars), cx, b.y + 293);
     ctx.fillStyle = '#5b4a3f';
     ctx.font = 'bold 32px system-ui, sans-serif';
-    ctx.fillText(`${c.cm.toFixed(1)} cm`, cx, b.y + 330);
+    fitText(ctx, `${c.cm.toFixed(1)} cm · ${grams(c.g)}`, cx, b.y + 330, b.w - 40, 32, 'bold ');
   }
-  const badge = c.isNew ? ['NEW!', '#ef6b5e'] : c.record ? ['최고 기록!', '#f0b429'] : null;
-  if (badge) {
+  const pill = (text: string, color: string, right: boolean) => {
     ctx.font = 'bold 26px system-ui, sans-serif';
-    const w = ctx.measureText(badge[0]).width + 30;
-    ctx.fillStyle = badge[1];
+    const w = ctx.measureText(text).width + 30;
+    const x = right ? b.x + b.w - 22 - w : b.x + 22;
+    ctx.fillStyle = color;
     ctx.beginPath();
-    ctx.roundRect(b.x + 22, b.y + 20, w, 44, 22);
+    ctx.roundRect(x, b.y + 20, w, 44, 22);
     ctx.fill();
     ctx.fillStyle = '#fff';
-    ctx.fillText(badge[0], b.x + 22 + w / 2, b.y + 52);
-  }
+    ctx.textAlign = 'center';
+    ctx.fillText(text, x + w / 2, b.y + 52);
+  };
+  const badge = c.isNew ? ['NEW!', '#ef6b5e'] : c.record ? ['최고 기록!', '#f0b429'] : null;
+  if (badge) pill(badge[0], badge[1], false);
+  if (c.big) pill('월척!', '#3f95dd', true);
   const btn = popupButtons(s);
   button(ctx, btn.again, '다시 낚시', v.hover === 'again', 'main');
   button(ctx, btn.leave, '돌아가기', v.hover === 'leave', 'soft');
@@ -657,6 +691,14 @@ function drawTension(ctx: CanvasRenderingContext2D, s: FishingState, t: number) 
   ctx.fillText('장력', x - 96, y + 23);
   ctx.font = '18px system-ui, sans-serif';
   ctx.fillText('물고기 힘', x - 96, y + 56);
+  // 이 녀석의 힘: 사나움 × 크기 (●●●○○) — 가벼운 녀석은 쭉 감고, 센 녀석은 날뛸 때 놓는다
+  if (s.hooked && !s.hooked.item) {
+    const e = strength(s.hooked);
+    const lv = e < 0.35 ? 1 : e < 0.5 ? 2 : e < 0.65 ? 3 : e < 0.85 ? 4 : 5;
+    ctx.font = 'bold 19px system-ui, sans-serif';
+    ctx.fillStyle = lv >= 4 ? '#d4574a' : lv >= 3 ? '#c98a1c' : '#3e9a45';
+    ctx.fillText(`${'●'.repeat(lv)}${'○'.repeat(5 - lv)} ${['', '가벼워요', '제법 당겨요', '힘이 세요', '아주 세요!', '엄청난 힘!'][lv]}`, x - 100, y - 26);
+  }
   // 느슨 · 좋음 · 위험 구간
   const z = (a: number, b: number, c: string) => {
     ctx.fillStyle = c;
@@ -698,7 +740,7 @@ export function fishingHelp(s: FishingState, touch = false) {
     case 'cast':
     case 'wait':
     case 'bite':
-      return '톡톡·연타·헛잠김엔 기다리고 — 찌가 쏙 잠기거나, 쑥 떠오르거나, 옆으로 끌려가면 누르세요! · 아무도 안 물 때 누르면 다시 감아요';
+      return '톡톡·연타·헛잠김·살살 끌기는 간 보는 거예요 — 찌가 팍 잠기며 번쩍하면 바로 누르세요! · 아무도 안 물 때 누르면 다시 감아요';
     case 'hook':
     case 'reel':
       return touch ? '' : '누르고 있으면 감아요 · 물고기가 날뛰면 손을 떼요 (줄이 끊어져요) · 너무 오래 놓으면 바늘이 빠져요';
@@ -710,7 +752,9 @@ export function fishingHelp(s: FishingState, touch = false) {
 }
 
 // ── 물고기 도감 카드 ── 전체 도감 화면(book-draw.ts)의 물고기 쪽이 쓴다. 좌표는 도감의 디자인 좌표.
-const PATTERN_NAME: Record<string, string> = { peck: '톡톡', flurry: '연타', lift: '찌올림', drag: '끌고가기', slam: '한방', fake: '헛잠김', hesitant: '망설임' };
+const PATTERN_NAME: Record<string, string> = { peck: '톡톡', flurry: '연타', nudge: '살살 끌기', slam: '한방', fake: '헛잠김', hesitant: '망설임' };
+/** 무게: 1kg 밑은 g, 넘으면 kg */
+export const grams = (g: number) => (g < 1000 ? `${Math.round(g)} g` : `${(g / 1000).toFixed(g < 10000 ? 2 : 1)} kg`);
 const FIGHT_NAME: Record<string, string> = { steady: '꾸준', dart: '잔걸음', zigzag: '지그재그', heavy: '묵직', jump: '점프' };
 
 /** 시트 칸을 첫 칸의 내용 크기로 box 안에 맞춰 (x, y) 가운데에 — 칸마다 같은 배율·같은 자리라 꿈틀대는 게 자연스럽다 */
@@ -756,16 +800,17 @@ export function fishCard(ctx: CanvasRenderingContext2D, id: string, rec: Dex[str
   ctx.fillStyle = '#f0b429';
   fitText(ctx, '★'.repeat(def.stars) + '☆'.repeat(5 - def.stars), x, y + 28, mw, 20);
   if (rec) {
+    // 잡은 수 · 길이 (가장 짧은 ~ 가장 긴) · 무게 (가장 가벼운 ~ 가장 무거운) · 버릇
     ctx.fillStyle = '#5b4a3f';
-    fitText(ctx, `최고 ${rec.best.toFixed(1)}cm · ${rec.count}마리`, x, y + 56, mw, 19);
+    fitText(ctx, `${rec.count}마리 · ${rec.min.toFixed(1)} ~ ${rec.best.toFixed(1)} cm`, x, y + 54, mw, 18, 'bold ');
+    fitText(ctx, `무게 ${grams(rec.wMin)} ~ ${grams(rec.wMax)}`, x, y + 77, mw, 17);
     const top = Object.entries(def.patterns)
       .sort((a, b) => b[1] - a[1])
       .slice(0, 2)
       .map(([p]) => PATTERN_NAME[p] ?? p)
       .join('·');
     ctx.fillStyle = '#9a7b62';
-    fitText(ctx, `입질 ${top}`, x, y + 81, mw, 17);
-    fitText(ctx, `당기기 ${FIGHT_NAME[def.fight] ?? def.fight}`, x, y + 103, mw, 17);
+    fitText(ctx, `${top} · ${FIGHT_NAME[def.fight] ?? def.fight}`, x, y + 100, mw, 16);
   } else {
     ctx.fillStyle = '#9a7b62';
     fitText(ctx, '아직 못 낚았어요', x, y + 56, mw, 19);

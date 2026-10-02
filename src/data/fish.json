@@ -45,9 +45,8 @@
     "runSpeed": 80,
     "legendary": false,
     "patterns": {
-      "lift": 5,
-      "peck": 4,
-      "drag": 1
+      "peck": 9,
+      "nudge": 1
     },
     "fight": "steady"
   },
@@ -73,7 +72,7 @@
     "patterns": {
       "slam": 4,
       "peck": 3,
-      "drag": 3
+      "nudge": 3
     },
     "fight": "zigzag"
   },
@@ -98,7 +97,7 @@
     "legendary": false,
     "patterns": {
       "slam": 5,
-      "drag": 3,
+      "nudge": 3,
       "flurry": 2
     },
     "fight": "jump"
@@ -124,7 +123,7 @@
     "legendary": false,
     "patterns": {
       "fake": 5,
-      "drag": 3,
+      "nudge": 3,
       "peck": 2
     },
     "fight": "heavy"
@@ -150,8 +149,7 @@
     "legendary": true,
     "patterns": {
       "hesitant": 5,
-      "lift": 3,
-      "peck": 2
+      "peck": 5
     },
     "fight": "zigzag"
   },
@@ -201,9 +199,8 @@
     "runSpeed": 80,
     "legendary": false,
     "patterns": {
-      "lift": 5,
-      "peck": 4,
-      "drag": 1
+      "peck": 9,
+      "nudge": 1
     },
     "fight": "steady"
   },
@@ -229,7 +226,7 @@
     "patterns": {
       "slam": 4,
       "peck": 3,
-      "drag": 3
+      "nudge": 3
     },
     "fight": "zigzag"
   },
@@ -255,7 +252,7 @@
     "patterns": {
       "slam": 4,
       "flurry": 3,
-      "drag": 3
+      "nudge": 3
     },
     "fight": "jump"
   },
@@ -280,7 +277,7 @@
     "legendary": false,
     "patterns": {
       "fake": 5,
-      "drag": 3,
+      "nudge": 3,
       "peck": 2
     },
     "fight": "heavy"
@@ -306,8 +303,7 @@
     "legendary": true,
     "patterns": {
       "hesitant": 5,
-      "lift": 3,
-      "peck": 2
+      "peck": 5
     },
     "fight": "zigzag"
   },
@@ -357,9 +353,8 @@
     "runSpeed": 80,
     "legendary": false,
     "patterns": {
-      "peck": 5,
-      "lift": 4,
-      "drag": 1
+      "peck": 9,
+      "nudge": 1
     },
     "fight": "steady"
   },
@@ -409,7 +404,7 @@
     "runSpeed": 150,
     "legendary": false,
     "patterns": {
-      "drag": 4,
+      "nudge": 4,
       "fake": 4,
       "peck": 2
     },
@@ -436,8 +431,7 @@
     "legendary": false,
     "patterns": {
       "hesitant": 3,
-      "lift": 4,
-      "peck": 3
+      "peck": 7
     },
     "fight": "heavy"
   },
@@ -463,7 +457,7 @@
     "patterns": {
       "slam": 3,
       "hesitant": 4,
-      "drag": 3
+      "nudge": 3
     },
     "fight": "jump"
   },
@@ -513,8 +507,7 @@
     "runSpeed": 80,
     "legendary": false,
     "patterns": {
-      "peck": 5,
-      "lift": 3,
+      "peck": 8,
       "flurry": 2
     },
     "fight": "steady"
@@ -541,7 +534,7 @@
     "patterns": {
       "peck": 4,
       "slam": 3,
-      "drag": 3
+      "nudge": 3
     },
     "fight": "zigzag"
   },
@@ -591,9 +584,9 @@
     "runSpeed": 95,
     "legendary": false,
     "patterns": {
-      "drag": 4,
+      "nudge": 4,
       "fake": 3,
-      "lift": 3
+      "peck": 3
     },
     "fight": "steady"
   },
@@ -618,7 +611,7 @@
     "legendary": true,
     "patterns": {
       "slam": 5,
-      "drag": 3,
+      "nudge": 3,
       "hesitant": 2
     },
     "fight": "heavy"
@@ -669,8 +662,7 @@
     "runSpeed": 80,
     "legendary": false,
     "patterns": {
-      "lift": 4,
-      "peck": 4,
+      "peck": 8,
       "hesitant": 2
     },
     "fight": "steady"
@@ -721,7 +713,7 @@
     "runSpeed": 150,
     "legendary": false,
     "patterns": {
-      "drag": 4,
+      "nudge": 4,
       "fake": 4,
       "peck": 2
     },
@@ -748,7 +740,7 @@
     "legendary": false,
     "patterns": {
       "hesitant": 4,
-      "lift": 3,
+      "peck": 3,
       "fake": 3
     },
     "fight": "heavy"
@@ -825,8 +817,7 @@
     "runSpeed": 80,
     "legendary": false,
     "patterns": {
-      "peck": 6,
-      "lift": 3,
+      "peck": 9,
       "flurry": 1
     },
     "fight": "steady"
@@ -851,9 +842,8 @@
     "runSpeed": 110,
     "legendary": false,
     "patterns": {
-      "lift": 5,
-      "peck": 3,
-      "drag": 2
+      "peck": 8,
+      "nudge": 2
     },
     "fight": "zigzag"
   },
@@ -878,8 +868,7 @@
     "legendary": false,
     "patterns": {
       "hesitant": 4,
-      "peck": 3,
-      "lift": 3
+      "peck": 6
     },
     "fight": "zigzag"
   },
@@ -930,8 +919,7 @@
     "legendary": true,
     "patterns": {
       "hesitant": 5,
-      "lift": 3,
-      "peck": 2
+      "peck": 5
     },
     "fight": "zigzag"
   },
@@ -1008,8 +996,7 @@
     "legendary": false,
     "patterns": {
       "flurry": 3,
-      "lift": 4,
-      "peck": 3
+      "peck": 7
     },
     "fight": "zigzag"
   },
@@ -1035,7 +1022,7 @@
     "patterns": {
       "peck": 3,
       "fake": 4,
-      "drag": 3
+      "nudge": 3
     },
     "fight": "zigzag"
   },
@@ -1060,7 +1047,7 @@
     "legendary": false,
     "patterns": {
       "slam": 5,
-      "drag": 3,
+      "nudge": 3,
       "fake": 2
     },
     "fight": "heavy"
@@ -1086,7 +1073,7 @@
     "legendary": true,
     "patterns": {
       "hesitant": 5,
-      "lift": 2,
+      "peck": 2,
       "fake": 3
     },
     "fight": "zigzag"

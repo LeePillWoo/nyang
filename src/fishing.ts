@@ -105,21 +105,23 @@ export const SALVAGE: FishDef = {
 export type Phase = 'ready' | 'aim' | 'cast' | 'wait' | 'bite' | 'hook' | 'reel' | 'caught' | 'fail';
 export type FailReason = 'early' | 'late' | 'snap' | 'slack';
 /**
- * 입질 패턴 — 진짜 입질 전에 어떤 가짜 신호를 주고, 진짜 입질이 어떤 모양인지.
- *   peck 톡톡(들쭉날쭉) → 쏙 · flurry 따다닥 연타 → 쏙 · lift 찌올림 · drag 끌고 가기 · slam 다가오자마자 쏙 ·
- *   fake 헛잠김(반쯤 잠겼다 떠오름) 섞고 → 쏙 · hesitant 톡 하고 물러났다 다시 옴 (가끔 그냥 감) → 쏙
+ * 입질 패턴 — 진짜 입질 전에 찌를 어떻게 건드리며 애태우는지. 진짜 입질은 언제나 하나: 찌가 팍 잠긴다 (번쩍).
+ *   peck 톡톡(들쭉날쭉) · flurry 따다닥 연타 · nudge 살살 끌기(찌가 옆으로 조금 밀렸다 멈춤) · slam 다가오자마자 팍 ·
+ *   fake 헛잠김(반쯤 잠겼다 떠오름) · hesitant 톡 하고 물러났다 다시 옴 (가끔 그냥 감)
+ * 애태우는 시간은 매번 다르다 — 짧게(1초 안) · 보통(1.5~4초) · 길게(4.5~9초).
  */
-export type BitePattern = 'peck' | 'flurry' | 'lift' | 'drag' | 'slam' | 'fake' | 'hesitant';
-/** 진짜 입질의 모양: 쏙 잠김 · 쑥 떠올라 눕기(찌올림) · 옆으로 끌려감 */
-export type BiteKind = 'sink' | 'lift' | 'drag';
+export type BitePattern = 'peck' | 'flurry' | 'nudge' | 'slam' | 'fake' | 'hesitant';
 /** 진짜 입질 전 신호. at = 물고기가 찌에 붙어 있던 시간 기준 */
-export type Cue = { at: number; kind: 'tap' | 'big' | 'dunk' | 'away' | 'abandon' };
+export type Cue = { at: number; kind: 'tap' | 'big' | 'dunk' | 'nudge' | 'away' | 'abandon' };
 /** 당길 때: steady 꾸준 · dart 짧고 잦게 · zigzag 날뛰다 방향을 홱 · heavy 길고 묵직하게 · jump 펄쩍 (그 순간 장력이 확) */
 export type FightStyle = 'steady' | 'dart' | 'zigzag' | 'heavy' | 'jump';
-/** 너무 일찍 / 늦게 챘을 때 무엇 때문이었는지 (알려 주는 글자) */
-export type FailHint = 'approach' | 'tap' | 'flurry' | 'dunk' | 'sink' | 'lift' | 'drag' | null;
-/** 낚은 것. item 이면 kind 는 아이템 id (건진 물건) — isNew·full 은 가방에 넣으면서 main 이 채운다 */
-export type Catch = { kind: string; name: string; stars: number; cm: number; isNew: boolean; record: boolean; item?: boolean; full?: boolean };
+/** 너무 일찍 챘을 때 무엇에 속았는지 (알려 주는 글자) */
+export type FailHint = 'approach' | 'tap' | 'flurry' | 'dunk' | 'nudge' | null;
+/**
+ * 낚은 것. cm · g(무게), big = 월척(그 종의 큰 쪽 20%). record = 가장 긴 기록을 깼다.
+ * item 이면 kind 는 아이템 id (건진 물건) — isNew·full 은 가방에 넣으면서 main 이 채운다
+ */
+export type Catch = { kind: string; name: string; stars: number; cm: number; g: number; big: boolean; isNew: boolean; record: boolean; item?: boolean; full?: boolean };
 /** 소리·감정·이펙트용 사건. 한 프레임 동안만 남는다 */
 export type FishEvent =
   | { type: 'cast' }
@@ -128,7 +130,8 @@ export type FishEvent =
   | { type: 'dunk' }
   | { type: 'hesitate'; x: number; y: number }
   | { type: 'abandon' }
-  | { type: 'bite'; kind: BiteKind }
+  | { type: 'nudge' }
+  | { type: 'bite' }
   | { type: 'hook'; perfect: boolean }
   | { type: 'run'; x: number; y: number }
   | { type: 'jump'; x: number; y: number }
@@ -160,6 +163,10 @@ export type Fish = {
   life: number;
   alpha: number;
   cm: number;
+  /** 무게 (g) — 길이와 몸매(그림자 모양)로, 개체마다 ±8% */
+  g: number;
+  /** 그 종 안에서 얼마나 큰가 0..1 (월척 = 0.8 이상). 힘겨루기 세기에도 쓴다 */
+  k: number;
   /** 그림자 배율 0.8..1.2 (같은 종이라도 큰 개체는 크게 보인다) */
   size: number;
   scared: number;
@@ -167,8 +174,31 @@ export type Fish = {
   /** 가라앉은 물건이면 그 아이템 id */
   item?: string;
 };
-/** 도감: 종마다 잡은 수와 가장 큰 크기 (세이브의 fishDex 자리, GDD 10장) */
-export type Dex = Record<string, { count: number; best: number }>;
+/** 도감: 종마다 잡은 수 · 가장 긴/짧은 길이(cm) · 가장 무거운/가벼운 무게(g) (세이브의 fishDex 자리, GDD 10장) */
+export type Dex = Record<string, { count: number; best: number; min: number; wMax: number; wMin: number }>;
+/** 월척: 그 종의 큰 쪽 20% */
+export const BIG = 0.8;
+/** 몸매에 따른 무게 계수 — g = 계수 × cm³ (가늘수록 가볍고 둥글수록 무겁다) */
+const SHAPE_K: Record<string, number> = { slender: 0.0065, ribbon: 0.005, torpedo: 0.012, oval: 0.014, broadhead: 0.015, round: 0.02 };
+/** 이 길이의 보통 무게 (g) */
+export const weightOf = (kind: string, cm: number) => (SHAPE_K[FISH[kind]?.shadow] ?? 0.012) * cm ** 3;
+/** 힘겨루기 무게감: 작은 개체 0.7 ~ 월척 1.3 */
+export const heft = (f: Fish) => 0.7 + 0.6 * f.k;
+/** 힘: 어종의 사나움(pull) × 무게감 — 0.35 밑은 가볍게 끌려오고, 0.75 넘으면 날뛸 때 놓아야 한다 */
+export const strength = (f: Fish) => f.def.pull * heft(f);
+/** 예전 도감(최고 길이만 있던)을 채운다 */
+export function normalizeDex(dex: Dex): Dex {
+  for (const [k, v] of Object.entries(dex)) {
+    if (!FISH[k] || !(v?.count > 0)) {
+      delete dex[k];
+      continue;
+    }
+    v.min ??= v.best;
+    v.wMax ??= Math.round(weightOf(k, v.best));
+    v.wMin ??= Math.round(weightOf(k, v.min));
+  }
+  return dex;
+}
 /** 화면 기준 입력. (x, y) 는 배경 그림 좌표, down = 누르고 있음, pressed/released = 이번 프레임에 누름/뗌 */
 export type FishInput = { x: number; y: number; down: boolean; pressed: boolean; released: boolean };
 
@@ -192,22 +222,22 @@ export type FishingState = {
   bored: boolean;
   /** 찌를 노리는 물고기 (다가오는 중 · 톡톡 · 입질) */
   bite: Fish | null;
-  /** 이번 물고기의 입질 패턴과 남은 신호, 찌에 붙어 있던 시간, 진짜 입질 시각과 모양 */
+  /** 이번 물고기의 입질 패턴과 남은 신호, 찌에 붙어 있던 시간, 진짜 입질(찌가 팍 잠김) 시각 */
   pattern: BitePattern | null;
   cues: Cue[];
   cueT: number;
   biteAt: number;
-  biteKind: BiteKind;
-  /** 이번 입질에서 챔질할 수 있는 시간 (종 · 입질 모양에 따라) */
+  /** 이번 입질에서 챔질할 수 있는 시간 (종마다) */
   biteWindow: number;
   lastCue: Cue['kind'] | null;
   /** 톡톡 애니메이션 남은 시간과 길이 (짧은 톡 · 큰 톡), 헛잠김 남은 시간 */
   nibbleT: number;
   nibbleLen: number;
   dunkT: number;
-  /** 끌고 가는 방향 */
-  dragX: number;
-  dragY: number;
+  /** 살살 끌기: 남은 시간과 방향 (찌가 옆으로 조금 밀린다) */
+  nudgeT: number;
+  nudgeX: number;
+  nudgeY: number;
   reactT: number;
   hooked: Fish | null;
   tension: number;
@@ -240,7 +270,6 @@ export type FishingState = {
 export type Gear = { reel: number; line: number; luck: number };
 
 const between =(s: FishingState, [a, b]: number[]) => a + (b - a) * s.rng();
-const randInt = (s: FishingState, [a, b]: number[]) => a + Math.floor(s.rng() * (b - a + 1));
 
 // ── 물 ── 물 영역은 네 꼭짓점 다각형 (fishing.json water)
 export function inWater(spot: SpotDef, x: number, y: number) {
@@ -334,15 +363,26 @@ export function spawnFish(s: FishingState, kind = pick(s), at?: [number, number]
     modeT: 0,
     life: 25 + s.rng() * 30,
     alpha,
-    cm: Math.round((def.cm[0] + (def.cm[1] - def.cm[0]) * k) * 10) / 10,
+    cm: 0,
+    g: 0,
+    k,
     size: 0.8 + 0.4 * k,
     scared: 0,
     anim: s.rng() * 10,
     item,
   };
+  sizeTo(f, k, 0.92 + s.rng() * 0.16);
   s.fishes.push(f);
   if (def.legendary) s.events.push({ type: 'legend' });
   return f;
+}
+
+/** 크기를 정한다: k = 그 종 안에서 0(가장 작게)..1(가장 크게), plump = 통통함 (무게 배율) */
+export function sizeTo(f: Fish, k: number, plump = 1) {
+  f.k = k;
+  f.size = 0.8 + 0.4 * k;
+  f.cm = Math.round((f.def.cm[0] + (f.def.cm[1] - f.def.cm[0]) * k) * 10) / 10;
+  f.g = f.item ? 0 : Math.max(1, Math.round(weightOf(f.kind, f.cm) * plump));
 }
 
 /** 그림자 몸길이 (px) */
@@ -444,14 +484,14 @@ export function makeFishing(spotId: string, dex: Dex = {}, rng: () => number = M
     cues: [],
     cueT: 0,
     biteAt: 0,
-    biteKind: 'sink',
     biteWindow: 0.6,
     lastCue: null,
     nibbleT: 0,
     nibbleLen: 0.75,
     dunkT: 0,
-    dragX: 1,
-    dragY: 0,
+    nudgeT: 0,
+    nudgeX: 1,
+    nudgeY: 0,
     reactT: 0,
     hooked: null,
     tension: 0,
@@ -503,19 +543,21 @@ function failWith(s: FishingState, reason: FailReason, hint: FailHint = null) {
   enter(s, 'fail');
 }
 
-/** 도감에 적는다. 처음 잡은 종인지, 기록을 깼는지 돌려준다 */
-export function record(dex: Dex, kind: string, cm: number) {
+/** 도감에 적는다 (잡은 수 · 가장 긴/짧은 길이 · 가장 무거운/가벼운 무게). 처음 잡은 종인지, 가장 긴 기록을 깼는지 돌려준다 */
+export function record(dex: Dex, kind: string, cm: number, g = Math.round(weightOf(kind, cm))) {
   const had = dex[kind];
-  dex[kind] = { count: (had?.count ?? 0) + 1, best: Math.max(had?.best ?? 0, cm) };
+  dex[kind] = had
+    ? { count: had.count + 1, best: Math.max(had.best, cm), min: Math.min(had.min ?? had.best, cm), wMax: Math.max(had.wMax ?? 0, g), wMin: Math.min(had.wMin ?? g, g) }
+    : { count: 1, best: cm, min: cm, wMax: g, wMin: g };
   return { isNew: !had, record: !!had && cm > had.best };
 }
 
 function land(s: FishingState) {
   const f = s.hooked!;
   s.fishes = s.fishes.filter((v) => v !== f);
-  if (f.item) s.catch = { kind: f.item, name: ITEMS[f.item].name, stars: 0, cm: 0, isNew: false, record: false, item: true }; // 물고기 도감엔 안 센다
+  if (f.item) s.catch = { kind: f.item, name: ITEMS[f.item].name, stars: 0, cm: 0, g: 0, big: false, isNew: false, record: false, item: true }; // 물고기 도감엔 안 센다
   else {
-    s.catch = { kind: f.kind, name: f.def.name, stars: f.def.stars, cm: f.cm, ...record(s.dex, f.kind, f.cm) };
+    s.catch = { kind: f.kind, name: f.def.name, stars: f.def.stars, cm: f.cm, g: f.g, big: f.k >= BIG, ...record(s.dex, f.kind, f.cm, f.g) };
     s.caughtCount++;
   }
   s.hooked = null;
@@ -529,8 +571,8 @@ export function again(s: FishingState) {
   enter(s, 'ready');
 }
 
-/** 검증용: 이 종이 지금 찌를 물게 한다 (입질 단계로, 입질 모양은 고를 수 있다) */
-export function debugBite(s: FishingState, kind: string, biteKind: BiteKind = 'sink') {
+/** 검증용: 이 종(또는 아이템 = 가라앉은 물건)이 지금 찌를 문다 — 찌가 팍 잠기는 순간으로 */
+export function debugBite(s: FishingState, kind: string) {
   if (s.phase !== 'wait') {
     [s.bobX, s.bobY] = s.spot.defaultCast;
     enter(s, 'wait');
@@ -540,7 +582,7 @@ export function debugBite(s: FishingState, kind: string, biteKind: BiteKind = 's
   s.bite = f;
   s.pattern = 'peck';
   s.cues = [];
-  startBite(s, f, biteKind);
+  startBite(s, f);
   s.events.length = 0;
 }
 
@@ -548,40 +590,57 @@ export function debugBite(s: FishingState, kind: string, biteKind: BiteKind = 's
 export const mouth = (f: Fish) => ({ x: f.x + f.hx * fishLen(f) * 0.42, y: f.y + f.hy * fishLen(f) * 0.42 * 0.6 });
 
 /**
- * 이 물고기가 찌를 노린다: 패턴을 하나 골라(가중치) 신호 순서를 미리 짠다.
+ * 얼마나 애태울지 (초) — 짧게 25% (0.3~1.1초) · 보통 45% (1.5~4초) · 길게 30% (4.5~9초).
+ * 톡톡이 많은 종(nibbles 가 큰 메기·버봇)은 더 길게, 성미 급한 종(송어)은 조금 짧게.
+ */
+export function teaseTime(s: FishingState, f: Fish) {
+  const r = s.rng();
+  const t = r < 0.25 ? 0.3 + s.rng() * 0.8 : r < 0.7 ? 1.5 + s.rng() * 2.5 : 4.5 + s.rng() * 4.5;
+  return t * (0.7 + 0.12 * f.def.nibbles[1]);
+}
+
+/**
+ * 이 물고기가 찌를 노린다: 패턴을 하나 골라(가중치) 애태우는 신호 순서를 미리 짠다. 마지막엔 언제나 찌가 팍 잠긴다.
  * 시간은 물고기가 찌에 붙어 있는 동안만 흐른다 (물러났다 돌아오는 동안은 멈춤).
  */
 export function commitBite(s: FishingState, f: Fish, forced?: BitePattern) {
   const p = forced ?? (pickWeighted(s, f.def.patterns) as BitePattern);
   const cues: Cue[] = [];
-  let t = 0.3 + s.rng() * 0.6;
+  let t = 0.25 + s.rng() * 0.5;
+  let last = 0; // 마지막 신호 시각
   const push = (kind: Cue['kind'], gap: number) => {
     cues.push({ at: t, kind });
+    last = t;
     t += gap;
   };
-  const gap = () => 0.45 + s.rng() * 1.25; // 들쭉날쭉 — 박자를 외울 수 없게
-  let bite: BiteKind = 'sink';
+  const gap = () => 0.35 + s.rng() * 1.3; // 들쭉날쭉 — 박자를 외울 수 없게
+  const end = teaseTime(s, f);
+  /** 이 패턴다운 신호가 하나는 있게 (없으면 마지막 신호를 바꾼다) */
+  const sign = (kind: Cue['kind']) => {
+    if (cues.length && !cues.some((c) => c.kind === kind)) cues[cues.length - 1].kind = kind;
+  };
   switch (p) {
+    case 'slam':
+      t = 0.08 + s.rng() * 0.35;
+      break;
     case 'peck':
-      for (let i = randInt(s, f.def.nibbles); i > 0; i--) push(s.rng() < 0.35 ? 'big' : 'tap', gap());
+      while (t < end) push(s.rng() < 0.35 ? 'big' : 'tap', gap()); // 짧은 판은 톡 없이 또는 한 번만
       break;
     case 'flurry':
-      for (let b = s.rng() < 0.5 ? 1 : 2; b > 0; b--) {
+      do {
         for (let i = 3 + Math.floor(s.rng() * 3); i > 0; i--) push('tap', 0.12 + s.rng() * 0.1);
-        t += 0.6 + s.rng() * 0.9;
-      }
+        t += 0.5 + s.rng() * 1;
+      } while (t < end);
       break;
-    case 'lift':
-    case 'drag':
-      for (let i = randInt(s, [0, 2]); i > 0; i--) push('tap', gap());
-      bite = p;
-      break;
-    case 'slam':
-      t = 0.08 + s.rng() * 0.3;
+    case 'nudge':
+      do push(s.rng() < 0.45 ? 'nudge' : s.rng() < 0.4 ? 'big' : 'tap', gap() + 0.2);
+      while (t < end);
+      sign('nudge');
       break;
     case 'fake':
-      for (let i = 1 + randInt(s, [0, 2]); i > 0; i--) push(s.rng() < 0.5 ? 'tap' : 'big', gap());
-      for (let i = s.rng() < 0.4 ? 2 : 1; i > 0; i--) push('dunk', 0.9 + s.rng() * 0.9);
+      do push(s.rng() < 0.3 ? 'dunk' : s.rng() < 0.4 ? 'big' : 'tap', gap() + 0.2);
+      while (t < end);
+      sign('dunk');
       break;
     case 'hesitant':
       push('tap', gap());
@@ -590,31 +649,26 @@ export function commitBite(s: FishingState, f: Fish, forced?: BitePattern) {
         push('abandon', 0);
         break;
       }
-      if (s.rng() < 0.5) push('tap', gap());
+      while (t < end) push('tap', gap());
       break;
   }
+  // 마지막 신호 뒤 숨 고르기 (0.2~1.1초) — 가끔은 한참 조용하다가 팍 (숨죽이고 보게)
+  const pause = 0.2 + s.rng() * 0.9 + (s.rng() < 0.3 ? 0.8 + s.rng() * 1.4 : 0);
   s.bite = f;
   s.pattern = p;
   s.cues = cues;
   s.cueT = 0;
-  s.biteAt = t;
-  s.biteKind = bite;
+  s.biteAt = cues.length ? last + pause : t;
   s.lastCue = null;
   f.mode = 'approach';
   f.modeT = 0;
 }
 
-function startBite(s: FishingState, f: Fish, kind: BiteKind) {
-  s.biteKind = kind;
+/** 진짜 입질: 찌가 팍 잠긴다 (그리는 쪽이 번쩍 이펙트) — 이 종의 챔질 시간 안에 눌러야 걸린다. 한방은 조금 빡빡하게 */
+function startBite(s: FishingState, f: Fish) {
   s.reactT = 0;
-  // 떠오르거나 끌려가는 건 눈에 잘 보이는 대신 조금 느긋하게, 한방은 조금 빡빡하게
-  s.biteWindow = f.def.window * (kind === 'drag' ? 1.35 : kind === 'lift' ? 1.15 : s.pattern === 'slam' ? 0.9 : 1);
-  if (kind === 'drag') {
-    // 미끼를 문 채 돌아서서 옆으로 끌고 간다
-    const a = Math.atan2(f.hy, f.hx) + Math.PI + (s.rng() < 0.5 ? -1 : 1) * (0.5 + s.rng() * 0.5);
-    [s.dragX, s.dragY] = [Math.cos(a), Math.sin(a)];
-  }
-  s.events.push({ type: 'bite', kind });
+  s.biteWindow = f.def.window * (s.pattern === 'slam' ? 0.9 : 1);
+  s.events.push({ type: 'bite' });
   enter(s, 'bite');
 }
 
@@ -672,6 +726,7 @@ export function updateFishing(s: FishingState, input: FishInput, dt: number) {
         s.bored = false;
         s.nibbleT = 0;
         s.dunkT = 0;
+        s.nudgeT = 0;
         enter(s, 'wait');
       }
       break;
@@ -680,11 +735,16 @@ export function updateFishing(s: FishingState, input: FishInput, dt: number) {
       s.waitT += dt;
       s.nibbleT = Math.max(0, s.nibbleT - dt);
       s.dunkT = Math.max(0, s.dunkT - dt);
+      if (s.nudgeT > 0) {
+        // 살살 끌기: 찌가 옆으로 조금 밀렸다 멈춘다
+        s.nudgeT = Math.max(0, s.nudgeT - dt);
+        [s.bobX, s.bobY] = clampWater(s.spot, s.bobX + s.nudgeX * 34 * dt, s.bobY + s.nudgeY * 34 * dt * 0.6, 25);
+      }
       const f = s.bite;
       if (input.pressed) {
         if (f) {
-          // 무엇에 속았는지: 다가오는 중 · 연타 · 헛잠김 · 톡톡
-          const hint: FailHint = !s.lastCue ? 'approach' : s.lastCue === 'dunk' ? 'dunk' : s.pattern === 'flurry' ? 'flurry' : 'tap';
+          // 무엇에 속았는지: 다가오는 중 · 연타 · 헛잠김 · 살살 끌기 · 톡톡
+          const hint: FailHint = !s.lastCue ? 'approach' : s.lastCue === 'dunk' ? 'dunk' : s.lastCue === 'nudge' ? 'nudge' : s.pattern === 'flurry' ? 'flurry' : 'tap';
           failWith(s, 'early', hint);
         } else {
           // 아무도 안 물었으면 그냥 다시 감는다 (근처 물고기는 조금 놀란다)
@@ -735,6 +795,11 @@ export function updateFishing(s: FishingState, input: FishInput, dt: number) {
           } else if (c.kind === 'dunk') {
             s.dunkT = 0.36;
             s.events.push({ type: 'dunk' });
+          } else if (c.kind === 'nudge') {
+            s.nudgeT = 0.45;
+            const a = Math.atan2(f.hy, f.hx) + (s.rng() < 0.5 ? -1 : 1) * (1 + s.rng() * 0.6);
+            [s.nudgeX, s.nudgeY] = [Math.cos(a), Math.sin(a)];
+            s.events.push({ type: 'nudge' });
           } else if (c.kind === 'away') {
             f.mode = 'hesitate';
             f.modeT = 0;
@@ -750,7 +815,7 @@ export function updateFishing(s: FishingState, input: FishInput, dt: number) {
             s.events.push({ type: 'abandon' });
           }
         }
-        if (s.bite === f && f.mode === 'nibble' && !s.cues.length && s.cueT >= s.biteAt) startBite(s, f, s.biteKind);
+        if (s.bite === f && f.mode === 'nibble' && !s.cues.length && s.cueT >= s.biteAt) startBite(s, f);
       } else if (!f && s.waitT > R.settle) {
         // 가까이 있는 물고기일수록, 대담한 종일수록 잘 다가온다
         for (const c of s.fishes) {
@@ -772,16 +837,6 @@ export function updateFishing(s: FishingState, input: FishInput, dt: number) {
     case 'bite': {
       s.reactT += dt;
       const f = s.bite!;
-      if (s.biteKind === 'drag') {
-        // 미끼를 문 채 끌고 간다 — 찌도 따라 미끄러진다
-        const sp = 34 + f.def.swim * 0.3;
-        [f.x, f.y] = clampWater(s.spot, f.x + s.dragX * sp * dt, f.y + s.dragY * sp * dt * 0.7, 25);
-        [f.hx, f.hy] = [s.dragX, s.dragY];
-        f.anim += dt * 1.5;
-        const m = mouth(f);
-        s.bobX = m.x;
-        s.bobY = m.y;
-      }
       if (input.pressed) {
         s.perfect = s.reactT <= s.biteWindow * R.perfect;
         s.hooked = f;
@@ -798,7 +853,7 @@ export function updateFishing(s: FishingState, input: FishInput, dt: number) {
         s.jumpT = 0;
         s.events.push({ type: 'hook', perfect: s.perfect });
         enter(s, 'hook');
-      } else if (s.reactT > s.biteWindow) failWith(s, 'late', s.biteKind);
+      } else if (s.reactT > s.biteWindow) failWith(s, 'late');
       break;
     }
 
@@ -827,6 +882,8 @@ export function updateFishing(s: FishingState, input: FishInput, dt: number) {
  * 당기기. 장력 = 감는 힘 + 물고기가 날뛰는 힘. 장력이 1을 넘은 채로 snapGrace 초가 지나면 줄이 끊어지고,
  * 너무 느슨한(slackBelow 밑) 채로 slackTime 초가 지나면 바늘이 빠진다. 장력이 걸려 있는 동안 물고기 기운이 빠지고,
  * 기운이 다하면(tired) 날뛰지 않고 빨리 감긴다. 물고기가 선착장 끝(landing)에 닿으면 낚는다.
+ * 세기는 어종의 사나움(pull) × 무게감(heft — 작은 개체 0.7 ~ 월척 1.3): 작고 순한 녀석은 가볍게 끌려오고,
+ * 크고 사나운 녀석은 자주 오래 날뛰고 천천히 감기며 오래 버틴다.
  */
 function reel(s: FishingState, input: FishInput, dt: number) {
   const R = RULES;
@@ -835,6 +892,7 @@ function reel(s: FishingState, input: FishInput, dt: number) {
   const reeling = input.down;
   s.reeling = reeling;
   const [Lx, Ly] = s.spot.landing;
+  const h = heft(f);
   // 날뛰는 모양: 간격 · 길이 · 속도 배율
   const style = d.fight;
   const gapK = style === 'dart' ? 0.55 : style === 'heavy' ? 1.25 : 1;
@@ -843,7 +901,7 @@ function reel(s: FishingState, input: FishInput, dt: number) {
 
   if (s.run > 0) {
     s.run -= dt;
-    if (s.run <= 0) s.runIn = between(s, d.runGap) * (0.5 + s.stamina) * gapK;
+    if (s.run <= 0) s.runIn = (between(s, d.runGap) * (0.5 + s.stamina) * gapK) / h;
     // 지그재그: 날뛰는 중에 방향을 홱 튼다 (선착장 쪽으로는 안 튼다)
     if (style === 'zigzag' && s.run > 0 && (s.zigT -= dt) <= 0) {
       let a = Math.atan2(s.runY, s.runX) + (s.rng() < 0.5 ? -1 : 1) * (0.9 + s.rng() * 0.4);
@@ -856,8 +914,8 @@ function reel(s: FishingState, input: FishInput, dt: number) {
   } else if (!s.tired) {
     s.runIn -= dt;
     if (s.runIn <= 0) {
-      // 챔질 직후 첫 날뜀은 길다 — 확 달아나며 거리를 벌린다
-      s.run = between(s, d.run) * (0.5 + s.stamina * 0.8) * (s.firstRun ? 1.6 : 1) * lenK;
+      // 챔질 직후 첫 날뜀은 길다 — 확 달아나며 거리를 벌린다 (큰 녀석일수록)
+      s.run = between(s, d.run) * (0.5 + s.stamina * 0.8) * (s.firstRun ? 1.2 + 0.4 * f.k : 1) * lenK * h;
       s.firstRun = false;
       // 선착장 반대쪽으로, 좌우로 조금 비켜서
       const a = Math.atan2(f.y - Ly, f.x - Lx) + (s.rng() - 0.5) * 2.4;
@@ -872,7 +930,7 @@ function reel(s: FishingState, input: FishInput, dt: number) {
   }
   s.jumpT = Math.max(0, s.jumpT - dt);
   const running = s.run > 0;
-  const power = d.pull * (0.45 + 0.55 * s.stamina);
+  const power = d.pull * h * (0.45 + 0.55 * s.stamina);
   // 펄쩍 뛰는 순간엔 줄이 확 당겨진다 — 감고 있었으면 더
   const spike = s.jumpT > 0 ? (reeling ? 0.3 : 0.1) : 0;
   const target =
@@ -886,7 +944,7 @@ function reel(s: FishingState, input: FishInput, dt: number) {
   let vy = 0;
   if (reeling) {
     // 힘센(무거운) 물고기일수록 천천히 감긴다
-    const sp = R.reelSpeed * (1.15 - 0.5 * d.pull) * (running ? 0.2 : 1) * (s.tired ? 1.5 : 1) * (1 + s.gear.reel / 100);
+    const sp = R.reelSpeed * (1.15 - 0.5 * Math.min(1.2, d.pull * h)) * (running ? 0.2 : 1) * (s.tired ? 1.5 : 1) * (1 + s.gear.reel / 100);
     vx += (lx / ld) * sp;
     vy += (ly / ld) * sp;
   }
@@ -907,7 +965,7 @@ function reel(s: FishingState, input: FishInput, dt: number) {
   s.bobX = f.x;
   s.bobY = f.y;
 
-  s.stamina = Math.max(0, s.stamina - dt * (s.tension > 0.25 ? 1 : 0.25) * (R.drain / d.stamina));
+  s.stamina = Math.max(0, s.stamina - dt * (s.tension > 0.25 ? 1 : 0.25) * (R.drain / (d.stamina * h)));
   if (!s.tired && s.stamina < R.tired) {
     s.tired = true;
     s.run = 0;

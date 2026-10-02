@@ -368,11 +368,13 @@ try {
     check(bit, '물고기 앞쪽에 던지면 저절로 입질이 온다');
     if (bit) {
       await page.mouse.down();
+      await page.screenshot({ path: fsPath(new URL('fishing-bite.png', OUT)) }); // 찌가 팍 — 번쩍 고리·느낌표가 아직 남아 있을 때
       await page.waitForFunction(() => __game.fishing.phase === 'reel', { timeout: 3000 });
       let isDown = true;
       for (let i = 0; i < 1500; i++) {
         const s = await st();
         if (s.phase !== 'reel') break;
+        if (i === 25) await page.screenshot({ path: fsPath(new URL('fishing-reel.png', OUT)) }); // 힘 ●●○○○
         if (s.run && isDown) {
           await page.mouse.up();
           isDown = false;

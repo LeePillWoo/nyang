@@ -9,12 +9,15 @@ import {
   FISH,
   inWaterBy,
   makeFishing,
+  normalizeDex,
   record,
   RULES,
   spawnFish,
   SPOTS,
   updateFishing,
-  type BiteKind,
+  sizeTo,
+  strength,
+  weightOf,
   type BitePattern,
   type FishInput,
   type FishingState,
@@ -110,29 +113,49 @@ function luring(kind: string, pattern: BitePattern, seed: number) {
   commitBite(s, f, pattern);
   return { s, f };
 }
-/** 진짜 입질(또는 그냥 가 버림)까지 기다리며 나온 신호를 모은다 */
-function untilBite(s: FishingState, seconds = 20) {
+/** 진짜 입질(또는 그냥 가 버림)까지 기다리며 나온 신호와, 물고기가 찌에 닿은 뒤 입질까지 애태운 시간을 모은다 */
+function untilBite(s: FishingState, seconds = 30) {
   const cues: { t: number; type: string }[] = [];
   let t = 0;
+  let arrive = -1;
   for (let k = 0; k < Math.round(seconds / DT) && s.phase === 'wait' && s.bite; k++) {
     updateFishing(s, at(0, 0), DT);
     t += DT;
-    for (const e of s.events) if (e.type === 'nibble' || e.type === 'dunk' || e.type === 'hesitate') cues.push({ t, type: e.type });
+    if (arrive < 0 && s.bite?.mode === 'nibble') arrive = t;
+    for (const e of s.events) if (e.type === 'nibble' || e.type === 'dunk' || e.type === 'nudge' || e.type === 'hesitate') cues.push({ t, type: e.type });
   }
-  return cues;
+  return Object.assign(cues, { t, tease: t - Math.max(0, arrive) });
 }
 
-// 패턴마다 진짜 입질 모양이 정해져 있다: 찌올림 → 떠오름, 끌고 가기 → 끌려감, 나머지 → 쏙
+// 진짜 입질은 언제나 하나 — 찌가 팍 잠긴다 (bite). 어느 패턴으로 애태우든 끝은 입질 (망설이다 가 버린 판 빼고)
 {
-  const want: Record<BitePattern, BiteKind> = { peck: 'sink', flurry: 'sink', slam: 'sink', fake: 'sink', hesitant: 'sink', lift: 'lift', drag: 'drag' };
-  for (const [p, kind] of Object.entries(want) as [BitePattern, BiteKind][])
+  for (const p of ['peck', 'flurry', 'nudge', 'slam', 'fake', 'hesitant'] as BitePattern[])
     for (let seed = 1; seed <= 6; seed++) {
       const { s } = luring('golden_crucian', p, seed * 13);
-      untilBite(s);
+      const ev: string[] = [];
+      for (let k = 0; k < 60 * 30 && s.phase === 'wait' && s.bite; k++) {
+        updateFishing(s, at(0, 0), DT);
+        ev.push(...s.events.map((e) => e.type));
+      }
       if (p === 'hesitant' && !s.bite) continue; // 망설이다 가 버린 판
-      assert.equal(s.phase, 'bite', `${p}: 결국 입질 (seed ${seed})`);
-      assert.equal(s.biteKind, kind, `${p}: 입질 모양 ${kind}`);
+      assert.equal(s.phase, 'bite', `${p}: 결국 찌가 팍 (seed ${seed})`);
+      assert.equal(ev.filter((e) => e === 'bite').length, 1, `${p}: 입질 사건은 한 번`);
     }
+}
+
+// 애태우는 시간은 매번 다르다: 같은 종 40번 — 1.2초 안에 무는 판도, 5초 넘게 애태우는 판도 있다
+{
+  const times: number[] = [];
+  for (let seed = 1; seed <= 40; seed++) times.push(untilBite(luring('blue_catfish', 'peck', seed).s).tease);
+  const short = times.filter((t) => t < 1.2).length;
+  const long = times.filter((t) => t > 5).length;
+  assert.ok(short > 0 && long > 0, `짧게 ${short}번 · 길게 ${long}번 (${Math.min(...times).toFixed(1)}~${Math.max(...times).toFixed(1)}초)`);
+  console.log(`  애태우는 시간 (메기 40번): ${Math.min(...times).toFixed(1)} ~ ${Math.max(...times).toFixed(1)}초 · 1.2초 안 ${short}번 · 5초 넘게 ${long}번`);
+  // 성미 급한 종(송어, 톡톡이 적다)은 메기보다 평균이 짧다
+  const quick: number[] = [];
+  for (let seed = 1; seed <= 40; seed++) quick.push(untilBite(luring('rainbow_trout', 'peck', seed).s).tease);
+  const avg = (v: number[]) => v.reduce((a, b) => a + b, 0) / v.length;
+  assert.ok(avg(quick) < avg(times), `송어 ${avg(quick).toFixed(1)}초 < 메기 ${avg(times).toFixed(1)}초`);
 }
 
 // 박자가 다르다: 연타는 따다닥(0.25초 안), 톡톡은 들쭉날쭉 (간격이 고르지 않다), 한방은 신호 없이 바로
@@ -154,23 +177,23 @@ function untilBite(s: FishingState, seconds = 20) {
   assert.equal(sl.phase, 'bite');
 }
 
-// 같은 종도 매번 다른 패턴으로 문다 (가중치대로)
+// 같은 종도 매번 다른 패턴으로 문다 (가중치대로) — 퍼치: 한방 4 · 톡톡 3 · 살살 3
 {
   const seen = new Set<string>();
   const s = makeFishing(SPOT, {}, seeded(77));
   empty(s);
   for (let i = 0; i < 40; i++) {
-    commitBite(s, spawnFish(s, 'golden_crucian', [1200, 500], 1));
+    commitBite(s, spawnFish(s, 'green_perch', [1200, 500], 1));
     seen.add(s.pattern!);
   }
-  assert.deepEqual([...seen].sort(), ['drag', 'lift', 'peck'], `붕어 패턴: ${[...seen].join(', ')}`);
+  assert.deepEqual([...seen].sort(), ['nudge', 'peck', 'slam'], `퍼치 패턴: ${[...seen].join(', ')}`);
 }
 
 // 속임수: 헛잠김(반쯤 잠겼다 떠오름)에 채면 너무 빠르다 — 무엇에 속았는지 알려 준다
 {
   const { s } = luring('blue_catfish', 'fake', 9);
   let dunked = false;
-  for (let k = 0; k < 60 * 20 && s.phase === 'wait' && !dunked; k++) {
+  for (let k = 0; k < 60 * 30 && s.phase === 'wait' && !dunked; k++) {
     updateFishing(s, at(0, 0), DT);
     dunked = s.events.some((e) => e.type === 'dunk');
   }
@@ -185,24 +208,24 @@ function untilBite(s: FishingState, seconds = 20) {
   assert.equal(t.failHint, 'approach', '다가오는 중에 채면 그렇다고 알려 준다');
 }
 
-// 끌고 가기: 입질 동안 찌가 옆으로 끌려간다. 늦으면 "끌고 갈 때 채야 해요"
+// 살살 끌기: 찌가 옆으로 조금 밀렸다 멈춘다 (입질 아님) — 이때 채면 "간 보는 거예요"
 {
-  const { s } = luring('green_perch', 'drag', 4);
-  untilBite(s);
-  assert.equal(s.biteKind, 'drag');
-  const [x0, y0] = [s.bobX, s.bobY];
-  hold(s, s.biteWindow * 0.9, at(0, 0));
-  assert.ok(Math.hypot(s.bobX - x0, s.bobY - y0) > 15, `찌가 끌려간다 (${Math.hypot(s.bobX - x0, s.bobY - y0).toFixed(0)}px)`);
-  hold(s, 1, at(0, 0));
-  assert.equal(s.fail, 'late');
-  assert.equal(s.failHint, 'drag');
-
-  const l = luring('golden_crucian', 'lift', 6).s;
-  untilBite(l);
-  assert.equal(l.biteKind, 'lift');
-  hold(l, 0.15, at(0, 0));
-  tap(l);
-  assert.equal(l.phase, 'hook', '찌가 떠오를 때 채면 걸린다');
+  const { s } = luring('green_perch', 'nudge', 4);
+  let moved = 0;
+  for (let k = 0; k < 60 * 30 && s.phase === 'wait'; k++) {
+    const [x0, y0] = [s.bobX, s.bobY];
+    updateFishing(s, at(0, 0), DT);
+    if (s.events.some((e) => e.type === 'nudge')) {
+      hold(s, 0.5, at(0, 0), () => s.phase !== 'wait');
+      moved = Math.hypot(s.bobX - x0, s.bobY - y0);
+      break;
+    }
+  }
+  assert.ok(moved > 8 && moved < 40, `찌가 조금 밀린다 (${moved.toFixed(0)}px)`);
+  if (s.phase === 'wait') {
+    tap(s);
+    assert.equal(s.failHint, 'nudge');
+  }
 }
 
 // 망설임: 물러났다 다시 오고, 가끔은 그냥 가 버린다 (실패는 아니다)
@@ -219,7 +242,7 @@ function untilBite(s: FishingState, seconds = 20) {
   assert.ok(left > 0 && bit > left, `망설이다 가 버림 ${left} · 문다 ${bit}`);
 }
 
-// 챔질: 톡톡일 때 누르면 너무 빠르다, 입질 뒤 시간 안이면 걸린다, 늦으면 미끼만 먹고 간다
+// 챔질: 톡톡일 때 누르면 너무 빠르다, 찌가 팍 잠긴 뒤 시간 안이면 걸린다, 늦으면 미끼만 먹고 간다
 {
   const { s } = luring('golden_crucian', 'peck', 3);
   for (let k = 0; k < 60 * 10 && !s.events.some((e) => e.type === 'nibble'); k++) updateFishing(s, at(0, 0), DT);
@@ -246,11 +269,12 @@ function untilBite(s: FishingState, seconds = 20) {
   assert.equal(h.fail, 'late');
 }
 
-/** 입질에서 바로 채고 당기기로. 이후 hold 로 당긴다 */
-function hooked(kind: string, seed: number, gear = { reel: 0, line: 0 }) {
+/** 입질에서 바로 채고 당기기로. k = 그 종 안에서 크기 0(작게)..1(월척), 안 주면 그대로. 이후 hold 로 당긴다 */
+function hooked(kind: string, seed: number, gear = { reel: 0, line: 0, luck: 0 }, k?: number) {
   const s = makeFishing(SPOT, {}, seeded(seed), gear);
   empty(s);
   debugBite(s, kind);
+  if (k !== undefined) sizeTo(s.bite!, k);
   // 실제처럼 찌에서 멀리 떨어진 곳에서 끌어오게 물고기를 옮긴다
   [s.bite!.x, s.bite!.y] = [1400, 450];
   tap(s);
@@ -259,27 +283,32 @@ function hooked(kind: string, seed: number, gear = { reel: 0, line: 0 }) {
   return s;
 }
 
-// 피라미: 그냥 계속 감아도 낚인다
+// 피라미: 그냥 계속 감아도 낚인다 · 도감에 수 · 길이 · 무게
 {
   const s = hooked('silver_minnow', 11);
   const done = hold(s, 30, at(0, 0, true), () => s.phase !== 'reel');
   assert.ok(done && s.phase === 'caught', `피라미는 계속 감으면 낚인다 (결과 ${s.phase} ${s.fail ?? ''})`);
   assert.equal(s.catch?.kind, 'silver_minnow');
   assert.ok(s.catch?.isNew);
-  assert.equal(s.dex.silver_minnow.count, 1);
+  const d = s.dex.silver_minnow;
+  assert.deepEqual([d.count, d.best, d.min, d.wMax, d.wMin], [1, s.catch!.cm, s.catch!.cm, s.catch!.g, s.catch!.g]);
+  assert.ok(s.catch!.g > 5 && s.catch!.g < 40, `피라미 ${s.catch!.cm}cm 는 ${s.catch!.g}g`);
 }
 
-// 밸런스 (종마다 10판, 사람 반응을 흉내 낸다 — 날뛰기 0.3초 뒤에 떼고, 끝나고 0.2초 뒤에 다시 감는다):
-//  모든 종은 날뛸 때 놓으면 낚인다 · 별 1~2 는 계속 감아도 낚인다 · 별 3 이상은 계속 감으면 끊어진다.
-//  당기는 모양(잔걸음·지그재그·묵직함·점프)을 바꿔도 이 약속이 지켜져야 한다
+// 밸런스 (사람 반응을 흉내 낸다 — 날뛰기 0.3초 뒤에 떼고, 끝나고 0.2초 뒤에 다시 감는다). 크기마다 (작은 · 보통 · 월척):
+//  모든 종·크기는 날뛸 때 놓으면 낚인다 · 힘(사나움 × 무게감)이 0.6 이하면 계속 감아도 낚인다 · 0.75 넘으면 계속 감으면 끊어진다.
+//  같은 종도 월척은 작은 녀석보다 오래 버틴다
 {
-  const fight = (kind: string, seed: number, smart: boolean) => {
-    const s = hooked(kind, seed);
+  const fight = (kind: string, seed: number, smart: boolean, k: number) => {
+    const s = hooked(kind, seed, undefined, k);
+    const e = strength(s.hooked!);
     let runAge = 0;
     let endAge = 9;
     let t = 0;
+    let runs = 0;
     while (s.phase === 'reel' && t < 90) {
       if (s.run > 0) {
+        if (runAge === 0) runs++;
         runAge += DT;
         endAge = 0;
       } else {
@@ -290,28 +319,48 @@ function hooked(kind: string, seed: number, gear = { reel: 0, line: 0 }) {
       updateFishing(s, at(0, 0, down), DT);
       t += DT;
     }
-    return { s, t };
+    return { s, t, e, runs };
   };
-  // 별 3 이상의 "계속 감기"는 드물게 이기는 게 정상이라(실제로 약 6%) 10판으로는 운에 흔들린다 — 40판에서 15% 이하로 본다
-  for (const [kind, def] of Object.entries(FISH)) {
-    let smartWin = 0;
-    let holdWin = 0;
-    let time = 0;
-    const holdN = def.stars <= 2 ? 10 : 40;
-    for (let seed = 1; seed <= 10; seed++) {
-      const a = fight(kind, seed, true);
-      if (a.s.phase === 'caught') {
-        smartWin++;
-        time += a.t;
+  let bigT = 0;
+  let smallT = 0;
+  for (const [kind, def] of Object.entries(FISH))
+    for (const k of [0, 0.5, 1]) {
+      let smartWin = 0;
+      let holdWin = 0;
+      let time = 0;
+      let e = 0;
+      for (let seed = 1; seed <= 10; seed++) {
+        const a = fight(kind, seed, true, k);
+        e = a.e;
+        if (a.s.phase === 'caught') {
+          smartWin++;
+          time += a.t;
+        }
       }
+      const holdN = e <= 0.6 ? 10 : 40;
+      if (e <= 0.6 || e >= 0.75) for (let seed = 1; seed <= holdN; seed++) if (fight(kind, seed, false, k).s.phase === 'caught') holdWin++;
+      const tag = `${def.name}(${def.fight}) ${['작은', '보통', '월척'][k * 2]} 힘 ${e.toFixed(2)}: 놓을 줄 알면 ${smartWin}/10 (평균 ${(time / Math.max(1, smartWin)).toFixed(1)}초) · 계속 감기 ${e <= 0.6 || e >= 0.75 ? `${holdWin}/${holdN}` : '(0.6~0.75 는 정하지 않음)'}`;
+      assert.ok(smartWin >= 9, tag);
+      if (e <= 0.6) assert.ok(holdWin >= 9, tag);
+      else if (e >= 0.75) assert.ok(holdWin <= holdN * 0.15, tag);
+      if (k === 1) bigT += time / Math.max(1, smartWin);
+      if (k === 0) smallT += time / Math.max(1, smartWin);
+      if (k !== 0.5) console.log('  ' + tag);
     }
-    for (let seed = 1; seed <= holdN; seed++) if (fight(kind, seed, false).s.phase === 'caught') holdWin++;
-    const tag = `${def.name}(${def.fight}): 놓을 줄 알면 ${smartWin}/10 (평균 ${(time / Math.max(1, smartWin)).toFixed(1)}초) · 계속 감기 ${holdWin}/${holdN}`;
-    assert.ok(smartWin >= 9, tag);
-    if (def.stars <= 2) assert.ok(holdWin >= 9, tag);
-    else assert.ok(holdWin <= holdN * 0.15, tag);
-    console.log('  ' + tag);
-  }
+  assert.ok(bigT > smallT * 1.3, `월척은 오래 버틴다: 평균 ${(smallT / 42).toFixed(1)}초 → ${(bigT / 42).toFixed(1)}초`);
+  console.log(`  힘겨루기 평균: 작은 녀석 ${(smallT / 42).toFixed(1)}초 · 월척 ${(bigT / 42).toFixed(1)}초`);
+}
+
+// 무게: 길이 세제곱 × 몸매 — 같은 길이면 둥근 붕어가 가는 피라미보다 무겁다. 월척 표시는 큰 쪽 20%
+{
+  assert.ok(weightOf('golden_crucian', 20) > weightOf('silver_minnow', 20) * 2);
+  assert.ok(Math.abs(weightOf('golden_crucian', 28) - 439) < 20, `붕어 28cm ${weightOf('golden_crucian', 28).toFixed(0)}g`);
+  const s = hooked('golden_crucian', 3, undefined, 0.9);
+  hold(s, 40, at(0, 0, true), () => s.phase !== 'reel');
+  assert.ok(s.catch?.big, '큰 쪽이면 월척');
+  const t = hooked('golden_crucian', 3, undefined, 0.3);
+  hold(t, 40, at(0, 0, true), () => t.phase !== 'reel');
+  assert.ok(t.catch && !t.catch.big);
 }
 
 // 낚시 장비(가방의 낚싯대·릴): 감기 % 만큼 빨리 감기고, 줄 강도 % 만큼 끊어지기까지 오래 버틴다
@@ -383,13 +432,17 @@ function hooked(kind: string, seed: number, gear = { reel: 0, line: 0 }) {
   assert.equal(s.fail, 'slack');
 }
 
-// 도감: 처음은 NEW, 더 큰 걸 잡으면 기록
+// 도감: 처음은 NEW, 더 긴 걸 잡으면 기록 — 잡은 수 · 가장 긴/짧은 길이 · 가장 무거운/가벼운 무게
 {
   const dex = {};
-  assert.deepEqual(record(dex, 'green_perch', 20), { isNew: true, record: false });
-  assert.deepEqual(record(dex, 'green_perch', 18), { isNew: false, record: false });
-  assert.deepEqual(record(dex, 'green_perch', 25.5), { isNew: false, record: true });
-  assert.deepEqual(dex, { green_perch: { count: 3, best: 25.5 } });
+  assert.deepEqual(record(dex, 'green_perch', 20, 110), { isNew: true, record: false });
+  assert.deepEqual(record(dex, 'green_perch', 18, 95), { isNew: false, record: false });
+  assert.deepEqual(record(dex, 'green_perch', 25.5, 240), { isNew: false, record: true });
+  assert.deepEqual(dex, { green_perch: { count: 3, best: 25.5, min: 18, wMax: 240, wMin: 95 } });
+  // 예전 도감(최고 길이만)은 채워지고, 모르는 종·잘못된 값은 빠진다
+  const old = normalizeDex({ green_perch: { count: 2, best: 30 }, nope: { count: 1, best: 3 }, golden_crucian: { count: 0, best: 1 } } as never);
+  assert.deepEqual(Object.keys(old), ['green_perch']);
+  assert.deepEqual(old.green_perch, { count: 2, best: 30, min: 30, wMax: Math.round(weightOf('green_perch', 30)), wMin: Math.round(weightOf('green_perch', 30)) });
 }
 
 // 아무도 안 물었을 때 누르면 그냥 다시 감는다 (실패 아님)
