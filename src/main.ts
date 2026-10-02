@@ -448,9 +448,16 @@ if (trace)
         return { x: (fieldView.ox + field.x * fieldView.sc) / d, y: (fieldView.oy + field.y * fieldView.sc) / d };
       },
     },
-    /** 모든 몬스터 시트를 불러와 행별 칸 수를 돌려준다 (검증용) */
+    /** 모든 몬스터 시트를 불러와 행별 칸 수 · 그림이 옆 컷과 맞붙은 칸을 돌려준다 (검증용) */
     __allEnemySheets: async () =>
-      Object.fromEntries(await Promise.all(Object.keys(ENEMY_DEFS).map(async (k) => [k, (await enemySheet(k)).frames.map((r) => r.length)]))),
+      Object.fromEntries(
+        await Promise.all(
+          Object.keys(ENEMY_DEFS).map(async (k) => {
+            const s = await enemySheet(k);
+            return [k, { rows: s.frames.map((r) => r.length), joined: s.joined }];
+          }),
+        ),
+      ),
   });
 
 /** 필드 연출 사건 → 소리 */

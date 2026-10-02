@@ -248,8 +248,17 @@ try {
   {
     const { page } = await open('dungeon');
     const all = await page.evaluate(() => window.__allEnemySheets());
-    const bad = Object.entries(all).filter(([, rows]) => rows.length !== 5 || rows.some((n) => n !== 6));
-    check(bad.length === 0, `몬스터 ${Object.keys(all).length}종 모두 5행 x 6칸${bad.length ? ': ' + bad.map(([k, r]) => `${k}(${r.join('/')})`).join(', ') : ''}`);
+    const bad = Object.entries(all).filter(([, s]) => s.rows.length !== 5 || s.rows.some((n) => n !== 6));
+    check(bad.length === 0, `몬스터 ${Object.keys(all).length}종 모두 5행 x 6칸${bad.length ? ': ' + bad.map(([k, s]) => `${k}(${s.rows.join('/')})`).join(', ') : ''}`);
+    // 그림이 옆 컷과 실제로 맞붙은 칸 — 직선으로 갈라서 붙은 끝이 잘린다. 실패로 치지 않고, 고칠 그림을 알린다
+    const enemies = readJson('../src/data/enemies.json');
+    const sheets = await page.evaluate(() => Object.fromEntries(Object.entries(window.__sheets).map(([k, s]) => [k, s.joined])));
+    const joined = [...Object.entries(sheets), ...Object.entries(all).map(([k, s]) => [k, s.joined])].filter(([, j]) => j.length);
+    for (const [k, j] of joined) {
+      const rows = [...new Set(j.map(([r]) => r))].map((r) => `${r + 1}행 ${j.filter(([v]) => v === r).map(([, c]) => c + 1).sort().join('·')}번째 컷`);
+      console.log(`  주의  ${enemies[k]?.sheet?.split('/').pop() ?? k}: 그림이 옆 컷과 붙어 있음 (${rows.join(', ')}) — 몇 px 띄우면 깨끗해진다`);
+    }
+    if (!joined.length) console.log('  ok   그림이 옆 컷과 붙은 시트 없음');
     await page.close();
   }
 
