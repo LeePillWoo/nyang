@@ -8,8 +8,10 @@
  *   → 낚음 / 놓침
  *
  * 물고기는 그림자로 보인다 (클수록 크거나 귀하다). 찌를 물고기 바로 위에 떨어뜨리면 놀라 도망간다 — 앞쪽 가까이에 던진다.
+ * 가끔 물고기 대신 가라앉은 물건(낚시터마다 salvage — 잡동사니·재료·보물·장비)이 둥근 그림자로 떠 있다. 바로 물고 버티지 않는다 (건지기).
  * 그림을 불러오지 않는 순수 로직이라 node 에서 체크된다 (그리기는 fishing-draw.ts). 무작위는 rng 로 주입한다.
  */
+import { ITEMS } from './bag.ts';
 import fishDefs from './data/fish.json' with { type: 'json' };
 import data from './data/fishing.json' with { type: 'json' };
 
@@ -71,9 +73,34 @@ export type SpotDef = {
   shadowAlpha?: number;
   /** 들어갈 때 고양이 감정 (emotions.json) */
   mood?: string;
+  /** 건질 수 있는 것 → 비율 (items.json id) */
+  salvage?: [string, number][];
 };
-export const SPOTS = data.spots as Record<string, SpotDef>;
+export const SPOTS = data.spots as unknown as Record<string, SpotDef>;
 export const RULES = data.rules;
+/** 가라앉은 물건 — 물고기 AI 를 그대로 쓰되 천천히 떠다니고, 다가오면 바로 물고(한방), 날뛰지 않고 금방 지친다 */
+export const SALVAGE: FishDef = {
+  name: '가라앉은 물건',
+  stars: 0,
+  biome: '',
+  shadow: 'round',
+  shadowW: 42,
+  cm: [0, 0],
+  swim: 30,
+  notice: 160,
+  scare: 18,
+  bold: 1,
+  nibbles: [0, 0],
+  patterns: { slam: 1 },
+  fight: 'steady',
+  window: 1.2,
+  pull: 0.1,
+  stamina: 0.2,
+  runGap: [99, 99],
+  run: [0, 0],
+  runSpeed: 0,
+  legendary: false,
+};
 
 export type Phase = 'ready' | 'aim' | 'cast' | 'wait' | 'bite' | 'hook' | 'reel' | 'caught' | 'fail';
 export type FailReason = 'early' | 'late' | 'snap' | 'slack';
@@ -91,7 +118,8 @@ export type Cue = { at: number; kind: 'tap' | 'big' | 'dunk' | 'away' | 'abandon
 export type FightStyle = 'steady' | 'dart' | 'zigzag' | 'heavy' | 'jump';
 /** 너무 일찍 / 늦게 챘을 때 무엇 때문이었는지 (알려 주는 글자) */
 export type FailHint = 'approach' | 'tap' | 'flurry' | 'dunk' | 'sink' | 'lift' | 'drag' | null;
-export type Catch = { kind: string; name: string; stars: number; cm: number; isNew: boolean; record: boolean };
+/** 낚은 것. item 이면 kind 는 아이템 id (건진 물건) — isNew·full 은 가방에 넣으면서 main 이 채운다 */
+export type Catch = { kind: string; name: string; stars: number; cm: number; isNew: boolean; record: boolean; item?: boolean; full?: boolean };
 /** 소리·감정·이펙트용 사건. 한 프레임 동안만 남는다 */
 export type FishEvent =
   | { type: 'cast' }
@@ -136,6 +164,8 @@ export type Fish = {
   size: number;
   scared: number;
   anim: number;
+  /** 가라앉은 물건이면 그 아이템 id */
+  item?: string;
 };
 /** 도감: 종마다 잡은 수와 가장 큰 크기 (세이브의 fishDex 자리, GDD 10장) */
 export type Dex = Record<string, { count: number; best: number }>;
@@ -206,7 +236,8 @@ export type FishingState = {
   /** 낚시 장비 (가방 장비의 %) — reel: 감는 속도, line: 줄이 끊어지기까지 버티는 시간 */
   gear: Gear;
 };
-export type Gear = { reel: number; line: number };
+/** luck: 행운 % — 가라앉은 물건이 더 자주 보인다 (보물 자석) */
+export type Gear = { reel: number; line: number; luck: number };
 
 const between =(s: FishingState, [a, b]: number[]) => a + (b - a) * s.rng();
 const randInt = (s: FishingState, [a, b]: number[]) => a + Math.floor(s.rng() * (b - a + 1));
@@ -273,10 +304,17 @@ function randomWater(s: FishingState, m = 40): [number, number] {
 }
 
 // ── 물고기 ──
-const pick = (s: FishingState) => pickWeighted(s, s.spot.fish);
+/** 새로 올 것: 가끔(salvage 확률 × 행운, 한 번에 하나만) 가라앉은 물건, 아니면 물고기 */
+function pick(s: FishingState) {
+  const list = s.spot.salvage;
+  if (list && !s.fishes.some((f) => f.item) && s.rng() < RULES.salvage * (1 + s.gear.luck / 100)) return pickWeighted(s, Object.fromEntries(list));
+  return pickWeighted(s, s.spot.fish);
+}
 
+/** kind = 물고기 종 또는 아이템 id (가라앉은 물건) */
 export function spawnFish(s: FishingState, kind = pick(s), at?: [number, number], alpha = 0): Fish {
-  const def = FISH[kind];
+  const item = !FISH[kind] && ITEMS[kind] ? kind : undefined;
+  const def = item ? SALVAGE : FISH[kind];
   const [x, y] = at ?? randomWater(s);
   const k = (s.rng() + s.rng()) / 2; // 가운데로 몰린 0..1 — 아주 크거나 작은 건 드물다
   const f: Fish = {
@@ -300,6 +338,7 @@ export function spawnFish(s: FishingState, kind = pick(s), at?: [number, number]
     size: 0.8 + 0.4 * k,
     scared: 0,
     anim: s.rng() * 10,
+    item,
   };
   s.fishes.push(f);
   if (def.legendary) s.events.push({ type: 'legend' });
@@ -380,7 +419,7 @@ function swimFish(s: FishingState, f: Fish, dt: number) {
 }
 
 // ── 상태 ──
-export function makeFishing(spotId: string, dex: Dex = {}, rng: () => number = Math.random, gear: Gear = { reel: 0, line: 0 }): FishingState {
+export function makeFishing(spotId: string, dex: Dex = {}, rng: () => number = Math.random, gear: Gear = { reel: 0, line: 0, luck: 0 }): FishingState {
   const spot = SPOTS[spotId];
   if (!spot) throw new Error('낚시터 없음: ' + spotId);
   const s: FishingState = {
@@ -474,9 +513,11 @@ export function record(dex: Dex, kind: string, cm: number) {
 function land(s: FishingState) {
   const f = s.hooked!;
   s.fishes = s.fishes.filter((v) => v !== f);
-  const r = record(s.dex, f.kind, f.cm);
-  s.catch = { kind: f.kind, name: f.def.name, stars: f.def.stars, cm: f.cm, ...r };
-  s.caughtCount++;
+  if (f.item) s.catch = { kind: f.item, name: ITEMS[f.item].name, stars: 0, cm: 0, isNew: false, record: false, item: true }; // 물고기 도감엔 안 센다
+  else {
+    s.catch = { kind: f.kind, name: f.def.name, stars: f.def.stars, cm: f.cm, ...record(s.dex, f.kind, f.cm) };
+    s.caughtCount++;
+  }
   s.hooked = null;
   s.events.push({ type: 'caught', catch: s.catch, x: f.x, y: f.y });
   enter(s, 'caught');

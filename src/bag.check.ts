@@ -14,6 +14,11 @@ import {
   ITEMS,
   makeBag,
   MAX_STACK,
+  obtain,
+  room,
+  buy,
+  sellAt,
+  sellPrice,
   removeAt,
   rollDrops,
   SLOTS,
@@ -23,6 +28,8 @@ import {
   useAt,
 } from './bag.ts';
 import drops from './data/drops.json' with { type: 'json' };
+import fishing from './data/fishing.json' with { type: 'json' };
+import shop from './data/shop.json' with { type: 'json' };
 
 const seeded = (seed: number) => () => {
   seed |= 0;
@@ -163,6 +170,32 @@ const seeded = (seed: number) => () => {
   assert.deepEqual(fromSave('garbage'), makeBag());
 }
 
+// 7-2) 얻기·상점: 얻으면 도감에 센다(팔아도 줄지 않는다) · 자리만큼만 · 냥코인이 모자라면 못 산다 · 팔면 절반
+{
+  const b = makeBag();
+  assert.equal(obtain(b, 'materials_05', 3), 0);
+  assert.equal(b.found.materials_05, 3);
+  assert.equal(room(b, 'materials_05'), MAX_STACK - 3 + (BAG_SIZE - 1) * MAX_STACK);
+  assert.equal(room(b, 'equipment_13'), BAG_SIZE - 1);
+  assert.equal(buy(b, 'curios_01'), '냥코인이 모자라요');
+  b.coins = 100;
+  assert.equal(buy(b, 'curios_01', 5), null, '있는 만큼만 산다');
+  assert.equal(count(b, 'curios_01'), 3, '30냥 × 3개');
+  assert.equal(b.coins, 10);
+  assert.equal(b.found.curios_01, 3);
+  const i = b.slots.findIndex((s) => s?.id === 'curios_01');
+  assert.equal(sellAt(b, i, 2), 2);
+  assert.equal(b.coins, 10 + 2 * sellPrice('curios_01'));
+  assert.equal(sellPrice('curios_01'), 15);
+  assert.equal(b.found.curios_01, 3, '팔아도 도감은 그대로');
+  for (let k = 0; k < 40; k++) addItem(b, 'equipment_02');
+  b.coins = 9999;
+  assert.equal(buy(b, 'equipment_13'), '가방에 자리가 없어요');
+  // 도감 전 저장(found 없음)은 가진 것으로 채운다
+  const old = fromSave({ coins: 1, equip: { weapon: 'equipment_12' }, slots: [{ id: 'materials_05', n: 4 }] });
+  assert.deepEqual(old.found, { materials_05: 4, equipment_12: 1 });
+}
+
 // 8) 데이터: 아이템마다 아이콘 · 그림 파일 · 종류별 필수 값, 드롭 표의 아이템이 있고, 몬스터마다 드롭 표, 장비는 다 얻을 길이 있다
 {
   const ids = Object.keys(ITEMS);
@@ -183,6 +216,15 @@ const seeded = (seed: number) => () => {
   ]);
   for (const id of ids.filter(isEquip)) assert.ok(sources.has(id), `${id} ${ITEMS[id].name} 얻을 길`);
   assert.equal(new Set(ids.filter(isEquip).map((id) => ITEMS[id].type)).size, SLOTS.length, '칸마다 장비가 있다');
+  for (const [id, d] of Object.entries(ITEMS)) assert.ok(Number.isInteger(d.price) && d.price > 0, `${id} 값`);
+  for (const id of shop.stock) assert.ok(ITEMS[id], `상점 ${id}`);
+  // 상자·주머니를 팔면 여는 것보다 비싸지 않다 (열어서 나오는 냥코인 ≥ 판 값)
+  for (const [id, d] of Object.entries(ITEMS)) if (d.use?.coins && !d.use.open) assert.ok(d.use.coins >= sellPrice(id), `${id} 팔기 ${sellPrice(id)} > 열기 ${d.use.coins}`);
+  // 낚시터마다 건질 것
+  for (const [k, s] of Object.entries(fishing.spots)) {
+    assert.ok(s.salvage?.length, `${k} 건질 것`);
+    for (const [id] of s.salvage as [string, number][]) assert.ok(ITEMS[id], `${k} 건질 것 ${id}`);
+  }
 }
 
 console.log('bag.check: ok');

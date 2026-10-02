@@ -1,0 +1,9 @@
+{
+  "_comment": "고등어 상점 — 필드 포탈 to: \"shop\" (강아지마을). 파는 물건(stock)은 items.json 의 price 에 사고, 가방의 물건은 그 절반에 판다",
+  "name": "고등어 상점",
+  "greet": "어서 오라냥! 쓸 만한 건 사고, 필요 없는 건 팔고 가라냥.",
+  "stock": [
+    "curios_01", "curios_05", "curios_08", "curios_07", "curios_06", "curios_02", "curios_10", "curios_03", "curios_09", "curios_18",
+    "equipment_34", "equipment_13", "equipment_19", "equipment_22", "equipment_14", "equipment_20", "equipment_26", "equipment_29", "equipment_35", "equipment_31"
+  ]
+}

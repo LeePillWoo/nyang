@@ -95,7 +95,7 @@ function run(d: Dungeon, input: typeof still, seconds: number) {
   rat.hp = PLAYER.punch.damage;
   const fin = run(d, { ...still, punch: true }, 0.15);
   assert.equal(rat.state, 'pop');
-  assert.deepEqual(fin.events, [{ type: 'pop' }, { type: 'hit', finish: true }]);
+  assert.deepEqual(fin.events, [{ type: 'pop', kind: 'sword' }, { type: 'hit', finish: true }]);
   assert.ok(d.shake > 0);
   run(d, still, 0.7);
   assert.equal(d.enemies.length, 0, '뿅 연출이 끝나면 목록에서 빠진다');
@@ -226,7 +226,7 @@ for (const id of Object.keys(ROOMS)) {
       }
   assert.ok(r.exits.some(([x, z]) => seen.has(z * r.gridW + x)), `${id}: 시작점에서 나가는 곳까지 못 간다`);
 }
-// 연결된 포탈은 있는 방이나 낚시터를 가리킨다
-for (const w of data.warps) if (w.to) assert.ok(ROOMS[w.to] || SPOTS[w.to], `포탈 ${w.id}: 없는 방 ${w.to}`);
+// 연결된 포탈은 있는 방이나 낚시터, 또는 상점('shop')을 가리킨다
+for (const w of data.warps) if (w.to) assert.ok(ROOMS[w.to] || SPOTS[w.to] || w.to === 'shop', `포탈 ${w.id}: 없는 방 ${w.to}`);
 
 console.log('dungeon.check: ok');

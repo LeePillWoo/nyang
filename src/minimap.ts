@@ -47,7 +47,7 @@ export function minimapPick(r: Rect, px: number, py: number): Warp | null {
 
 /**
  * ctx 는 CSS px 좌표계로 맞춘 상태로 넘긴다. view = 지금 화면에 보이는 월드 범위.
- * 던전 포탈은 금색, 낚시터는 하늘색, 아직 연결 전은 회색. 고양이는 주황 점.
+ * 던전 포탈은 금색, 낚시터는 하늘색, 상점은 분홍, 아직 연결 전은 회색. 고양이는 주황 점.
  */
 export function drawMinimap(ctx: CanvasRenderingContext2D, r: Rect, s: FieldState, view: Rect, hover: Warp | null, t: number) {
   ctx.save();
@@ -75,7 +75,7 @@ export function drawMinimap(ctx: CanvasRenderingContext2D, r: Rect, s: FieldStat
     const big = w === hover;
     ctx.beginPath();
     ctx.arc(mx, my, big ? 5 : w.to ? 3.2 : 2.4, 0, Math.PI * 2);
-    ctx.fillStyle = SPOTS[w.to] ? '#6fd3ff' : w.to ? '#ffd84a' : 'rgba(225,225,225,0.9)';
+    ctx.fillStyle = SPOTS[w.to] ? '#6fd3ff' : w.to === 'shop' ? '#ff8fc8' : w.to ? '#ffd84a' : 'rgba(225,225,225,0.9)';
     ctx.fill();
     ctx.lineWidth = 1.2;
     ctx.strokeStyle = 'rgba(70,52,42,0.9)';

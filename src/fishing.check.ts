@@ -292,22 +292,24 @@ function hooked(kind: string, seed: number, gear = { reel: 0, line: 0 }) {
     }
     return { s, t };
   };
+  // 별 3 이상의 "계속 감기"는 드물게 이기는 게 정상이라(실제로 약 6%) 10판으로는 운에 흔들린다 — 40판에서 15% 이하로 본다
   for (const [kind, def] of Object.entries(FISH)) {
     let smartWin = 0;
     let holdWin = 0;
     let time = 0;
+    const holdN = def.stars <= 2 ? 10 : 40;
     for (let seed = 1; seed <= 10; seed++) {
       const a = fight(kind, seed, true);
       if (a.s.phase === 'caught') {
         smartWin++;
         time += a.t;
       }
-      if (fight(kind, seed, false).s.phase === 'caught') holdWin++;
     }
-    const tag = `${def.name}(${def.fight}): 놓을 줄 알면 ${smartWin}/10 (평균 ${(time / Math.max(1, smartWin)).toFixed(1)}초) · 계속 감기 ${holdWin}/10`;
+    for (let seed = 1; seed <= holdN; seed++) if (fight(kind, seed, false).s.phase === 'caught') holdWin++;
+    const tag = `${def.name}(${def.fight}): 놓을 줄 알면 ${smartWin}/10 (평균 ${(time / Math.max(1, smartWin)).toFixed(1)}초) · 계속 감기 ${holdWin}/${holdN}`;
     assert.ok(smartWin >= 9, tag);
     if (def.stars <= 2) assert.ok(holdWin >= 9, tag);
-    else assert.ok(holdWin <= 1, tag);
+    else assert.ok(holdWin <= holdN * 0.15, tag);
     console.log('  ' + tag);
   }
 }
@@ -331,6 +333,47 @@ function hooked(kind: string, seed: number, gear = { reel: 0, line: 0 }) {
   const tough = until(strong, { reel: 0, line: 200 });
   assert.equal(snap.fail, 'snap');
   assert.ok(tough.t > snap.t, `줄 강도 +200%: ${FISH[strong].name} 끊어지기까지 ${snap.t.toFixed(2)}초 → ${tough.t.toFixed(2)}초 (${tough.phase} ${tough.fail ?? ''})`);
+}
+
+// 건지기: 가끔 물고기 대신 가라앉은 물건(낚시터 salvage)이 한 번에 하나까지 떠 있다 — 행운이 높으면 더 자주.
+//  물면 날뛰지 않고 금방 올라오며, 낚으면 catch.item (물고기 도감엔 안 센다)
+{
+  /** 30판 × 2분 동안 나타난 가라앉은 물건 수, 한 번에 가장 많았던 수 */
+  const seen = (luck: number) => {
+    const ids = new Set<string>();
+    let most = 0;
+    for (let seed = 1; seed <= 30; seed++) {
+      const s = makeFishing(SPOT, {}, seeded(seed), { reel: 0, line: 0, luck });
+      for (let t = 0; t < 120; t += DT) {
+        updateFishing(s, at(0, 0, false), DT);
+        const items = s.fishes.filter((f) => f.item);
+        for (const f of items) ids.add(`${seed}:${f.id}`);
+        most = Math.max(most, items.length);
+      }
+    }
+    return { items: ids.size, most };
+  };
+  const plain = seen(0);
+  const lucky = seen(200);
+  assert.ok(plain.most <= 1 && lucky.most <= 1, '가라앉은 물건은 한 번에 하나까지');
+  assert.ok(plain.items > 0 && lucky.items > plain.items * 1.5, `행운이 높으면 더 자주: ${plain.items} → ${lucky.items}`);
+  console.log(`  가라앉은 물건 (30판 × 2분): 행운 0 → ${plain.items}개, 행운 200% → ${lucky.items}개`);
+  for (const [id] of SPOTS[SPOT].salvage!) {
+    const s = hooked(id, 5);
+    assert.ok(s.hooked?.item === id);
+    let t = 0;
+    let runs = 0;
+    while (s.phase === 'reel' && t < 30) {
+      updateFishing(s, at(0, 0, true), DT);
+      if (s.run > 0) runs++;
+      t += DT;
+    }
+    assert.equal(s.phase, 'caught', `${id} 계속 감으면 올라온다 (${s.phase} ${s.fail ?? ''})`);
+    assert.equal(runs, 0, '날뛰지 않는다');
+    assert.ok(s.catch?.item && s.catch.kind === id && t < 8, `${id} ${t.toFixed(1)}초`);
+    assert.deepEqual(s.dex, {}, '물고기 도감엔 안 센다');
+    assert.equal(s.caughtCount, 0);
+  }
 }
 
 // 너무 오래 놓고 있으면 바늘이 빠진다

@@ -4,10 +4,14 @@
 //  세로: 위 장비 한 줄 + 능력치 · 가운데 가방 · 아래 설명과 버튼
 import { image } from './assets.ts';
 import {
+  buy,
+  count,
   equipAt,
   isEquip,
   ITEMS,
   removeAt,
+  sellAt,
+  sellPrice,
   SLOT_NAME,
   SLOTS,
   STAT_KEYS,
@@ -29,14 +33,33 @@ import { fitText, safe, wrapText } from './touch.ts';
 const ICON = icons as unknown as Record<string, [string, number, number, number, number]>;
 /** 아이템 시트 3장 */
 export const itemIconsReady = Promise.all([...new Set(Object.values(ICON).map((v) => v[0]))].map((p) => image(p).ready));
-/** 아이콘을 (cx, cy) 가운데, box 안에 맞춰 */
-export function drawIcon(ctx: CanvasRenderingContext2D, id: string, cx: number, cy: number, box: number) {
+/** 아이콘을 (cx, cy) 가운데, box 안에 맞춰. dark = 검은 실루엣 (도감에서 아직 못 얻은 것) */
+export function drawIcon(ctx: CanvasRenderingContext2D, id: string, cx: number, cy: number, box: number, dark = false) {
   const v = ICON[id];
   const img = v && image(v[0]).img;
   if (!img || !img.complete || !img.naturalWidth) return;
   const [, x, y, w, h] = v;
   const k = box / Math.max(w, h);
-  ctx.drawImage(img, x, y, w, h, cx - (w * k) / 2, cy - (h * k) / 2, w * k, h * k);
+  const a = ctx.globalAlpha;
+  if (dark) ctx.globalAlpha = a * 0.3; // 물고기·몬스터 실루엣처럼 옅게
+  ctx.drawImage(dark ? darkOf(img) : img, x, y, w, h, cx - (w * k) / 2, cy - (h * k) / 2, w * k, h * k);
+  ctx.globalAlpha = a;
+}
+/** 검은 실루엣판 — 그림마다 한 번 만든다 (ctx.filter 는 iOS 사파리 17 이하에서 무시된다) */
+const darks = new Map<object, HTMLCanvasElement>();
+export function darkOf(img: HTMLImageElement | HTMLCanvasElement): HTMLCanvasElement {
+  let c = darks.get(img);
+  if (!c) {
+    c = document.createElement('canvas');
+    c.width = img instanceof HTMLImageElement ? img.naturalWidth : img.width;
+    c.height = img instanceof HTMLImageElement ? img.naturalHeight : img.height;
+    const g = c.getContext('2d')!;
+    g.drawImage(img, 0, 0);
+    g.globalCompositeOperation = 'source-in';
+    g.fillRect(0, 0, c.width, c.height);
+    darks.set(img, c);
+  }
+  return c;
 }
 /** 냥코인 (그림이 없어 그린다) */
 export function drawCoin(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number) {
@@ -190,7 +213,7 @@ export function bagTap(w: number, h: number, x: number, y: number, b: Bag, env: 
 }
 
 /** 칸 하나: 바탕(희귀도 테두리) · 아이콘 · 개수 */
-function itemCell(ctx: CanvasRenderingContext2D, r: R, id: string | null, n: number, on: boolean, label = '') {
+function itemCell(ctx: CanvasRenderingContext2D, r: R, id: string | null, n: number, on: boolean, label = '', labelColor = '#9a7b62') {
   const d = id ? ITEMS[id] : null;
   ctx.fillStyle = d ? '#ffffff' : 'rgba(120,85,55,0.08)';
   ctx.beginPath();
@@ -208,13 +231,14 @@ function itemCell(ctx: CanvasRenderingContext2D, r: R, id: string | null, n: num
     ctx.textAlign = 'right';
     ctx.lineWidth = 4;
     ctx.strokeStyle = 'rgba(255,255,255,0.95)';
-    ctx.strokeText(String(n), r.x + r.w - 6, r.y + r.h - 6);
+    const ny = label ? r.y + 22 : r.y + r.h - 6; // 아래에 글(값·칸 이름)이 있으면 개수는 위로
+    ctx.strokeText(String(n), r.x + r.w - 6, ny);
     ctx.fillStyle = '#5b4a3f';
-    ctx.fillText(String(n), r.x + r.w - 6, r.y + r.h - 6);
+    ctx.fillText(String(n), r.x + r.w - 6, ny);
   }
   if (label) {
     ctx.textAlign = 'center';
-    ctx.fillStyle = id ? '#9a7b62' : 'rgba(120,85,55,0.45)';
+    ctx.fillStyle = id ? labelColor : 'rgba(120,85,55,0.45)';
     fitText(ctx, label, r.x + r.w / 2, id ? r.y + r.h - 6 : r.y + r.h / 2 + 6, r.w - 8, id ? 14 : 17, id ? '' : 'bold ');
   }
   if (on) {
@@ -238,7 +262,7 @@ function button(ctx: CanvasRenderingContext2D, r: R, text: string, style: 'main'
 }
 
 /** 쓰기 효과 설명 줄 */
-function useLines(d: ItemDef): string[] {
+export function useLines(d: ItemDef): string[] {
   const u = d.use;
   if (!u) return [];
   const out: string[] = [];
@@ -263,25 +287,7 @@ export function drawBag(ctx: CanvasRenderingContext2D, w: number, h: number, b: 
   ctx.roundRect(0, 0, L.DW, L.DH, 28);
   ctx.fill();
 
-  // 제목 · 냥코인 · 닫기
-  ctx.textAlign = 'left';
-  ctx.fillStyle = '#5b4a3f';
-  ctx.font = 'bold 34px system-ui, sans-serif';
-  ctx.fillText('🎒 가방', 28, 58);
-  const tw = ctx.measureText('🎒 가방').width;
-  drawCoin(ctx, 28 + tw + 34, 46, 15);
-  ctx.fillStyle = '#c98a1c';
-  ctx.font = 'bold 26px system-ui, sans-serif';
-  ctx.fillText(`${b.coins.toLocaleString()} 냥코인`, 28 + tw + 56, 56);
-  const c = L.close;
-  ctx.fillStyle = 'rgba(120,85,55,0.14)';
-  ctx.beginPath();
-  ctx.arc(c.x + c.w / 2, c.y + c.h / 2, 28, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = '#5b4a3f';
-  ctx.font = 'bold 30px system-ui, sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillText('✕', c.x + c.w / 2, c.y + c.h / 2 + 11);
+  header(ctx, L, '🎒 가방', b.coins);
 
   const pick = bagView.pick;
   // 장비 칸
@@ -317,43 +323,32 @@ export function drawBag(ctx: CanvasRenderingContext2D, w: number, h: number, b: 
   // 고른 것
   drawDetail(ctx, L, b);
 
-  // 알림 (버튼 위)
-  if (bagView.msgT > 0) {
-    ctx.globalAlpha = Math.min(1, bagView.msgT / 0.3);
-    ctx.font = 'bold 20px system-ui, sans-serif';
-    const mw = Math.min(L.DW - 60, ctx.measureText(bagView.msg).width + 40);
-    const my = L.wide ? L.DH - 70 : L.detail.y - 54;
-    ctx.fillStyle = 'rgba(70,52,42,0.9)';
-    ctx.beginPath();
-    ctx.roundRect(L.DW / 2 - mw / 2, my, mw, 42, 21);
-    ctx.fill();
-    ctx.fillStyle = '#fff6d8';
-    ctx.textAlign = 'center';
-    fitText(ctx, bagView.msg, L.DW / 2, my + 28, mw - 24, 20, 'bold ');
-    ctx.globalAlpha = 1;
-  }
+  toast(ctx, L, bagView.msg, bagView.msgT);
   ctx.restore();
 }
 
-function drawDetail(ctx: CanvasRenderingContext2D, L: ReturnType<typeof bagLayout>, b: Bag) {
-  const D = L.detail;
+/** 설명 칸 바탕 + 아무것도 안 골랐을 때 안내 */
+function detailBox(ctx: CanvasRenderingContext2D, D: R, empty: string | null) {
   ctx.fillStyle = 'rgba(120,85,55,0.07)';
   ctx.beginPath();
   ctx.roundRect(D.x, D.y, D.w, D.h, 18);
   ctx.fill();
-  const id = picked(b);
+  if (empty === null) return;
   ctx.textAlign = 'center';
-  if (!id) {
-    ctx.fillStyle = '#b09a85';
-    ctx.font = '18px system-ui, sans-serif';
-    const lines = wrapText(ctx, '물건이나 장비를 누르면 여기에 설명이 나와요', D.w - 40);
-    lines.forEach((l, i) => ctx.fillText(l, D.x + D.w / 2, D.y + D.h / 2 - (lines.length - 1) * 12 + i * 24));
-    return;
-  }
+  ctx.fillStyle = '#b09a85';
+  ctx.font = '18px system-ui, sans-serif';
+  const lines = wrapText(ctx, empty, D.w - 40);
+  lines.forEach((l, i) => ctx.fillText(l, D.x + D.w / 2, D.y + D.h / 2 - (lines.length - 1) * 12 + i * 24));
+}
+
+/**
+ * 아이템 설명: 아이콘 · 이름 · 종류 · 능력치·효과 + extra 줄 · 설명 (bottom 위까지).
+ * 가로 화면(좁은 칸)은 위에서 아래로 쌓고, 세로 화면은 아이콘 오른쪽에 글
+ */
+function itemInfo(ctx: CanvasRenderingContext2D, D: R, wide: boolean, id: string, extra: [string, string][], bottom: number) {
   const d = ITEMS[id];
   const r = rareOf(d);
-  // 아이콘 · 이름 · 종류 — 가로 화면은 위에 쌓고, 세로 화면은 아이콘 오른쪽에
-  const icon = L.wide ? { x: D.x + D.w / 2, y: D.y + 54, s: 84 } : { x: D.x + 64, y: D.y + 64, s: 96 };
+  const icon = wide ? { x: D.x + D.w / 2, y: D.y + 54, s: 84 } : { x: D.x + 64, y: D.y + 64, s: 96 };
   ctx.fillStyle = '#ffffff';
   ctx.beginPath();
   ctx.arc(icon.x, icon.y, icon.s * 0.6, 0, Math.PI * 2);
@@ -362,29 +357,20 @@ function drawDetail(ctx: CanvasRenderingContext2D, L: ReturnType<typeof bagLayou
   ctx.lineWidth = 3;
   ctx.stroke();
   drawIcon(ctx, id, icon.x, icon.y, icon.s);
-  const tx = L.wide ? D.x + D.w / 2 : D.x + 134;
-  const tw = L.wide ? D.w - 16 : D.w - 146;
-  let y = L.wide ? D.y + 136 : D.y + 44;
-  ctx.textAlign = L.wide ? 'center' : 'left';
+  const tx = wide ? D.x + D.w / 2 : D.x + 134;
+  const tw = wide ? D.w - 16 : D.w - 146;
+  let y = wide ? D.y + 136 : D.y + 44;
+  ctx.textAlign = wide ? 'center' : 'left';
   ctx.fillStyle = '#5b4a3f';
   fitText(ctx, d.name, tx, y, tw, 24, 'bold ');
   y += 26;
   ctx.fillStyle = r.color;
   fitText(ctx, `${TYPE_NAME[d.type]}${d.rare && d.rare > 1 ? ' · ' + r.name : ''}`, tx, y, tw, 16, 'bold ');
   y += 28;
-
-  // 능력치 · 쓰기 효과 · 갈아 끼우면 바뀌는 것
   const lines: [string, string][] = [];
   if (d.stats) for (const k of STAT_KEYS) if (d.stats[k]) lines.push([statText(k, d.stats[k]!), d.stats[k]! > 0 ? '#3e9a45' : '#d4574a']);
   for (const l of useLines(d)) lines.push([l, '#3f7fbf']);
-  if (isEquip(id) && bagView.pick?.at === 'bag') {
-    const now = b.equip[d.type as Slot];
-    if (now) {
-      const diff = STAT_KEYS.map((k) => [k, (d.stats?.[k] ?? 0) - (ITEMS[now].stats?.[k] ?? 0)] as const).filter(([, v]) => v);
-      lines.push([`지금 ${ITEMS[now].name}보다 ` + (diff.length ? diff.map(([k, v]) => statText(k, v)).join(' · ') : '같아요'), '#9a7b62']);
-    }
-  }
-  for (const [text, color] of lines) {
+  for (const [text, color] of [...lines, ...extra]) {
     ctx.fillStyle = color;
     ctx.font = 'bold 17px system-ui, sans-serif';
     for (const l of wrapText(ctx, text, tw)) {
@@ -393,20 +379,190 @@ function drawDetail(ctx: CanvasRenderingContext2D, L: ReturnType<typeof bagLayou
     }
   }
   // 설명 — 세로 화면은 아이콘 밑에서부터 넓게
-  const dx = L.wide ? tx : D.x + 16;
-  const dw = L.wide ? tw : D.w - 32;
-  y = L.wide ? y + 6 : Math.max(y, D.y + 136) + 4;
-  ctx.textAlign = L.wide ? 'center' : 'left';
+  const dx = wide ? tx : D.x + 16;
+  const dw = wide ? tw : D.w - 32;
+  y = wide ? y + 6 : Math.max(y, D.y + 136) + 4;
+  ctx.textAlign = wide ? 'center' : 'left';
   ctx.fillStyle = '#7a6656';
   ctx.font = '16px system-ui, sans-serif';
-  const bottom = L.main.y - 8;
   for (const l of wrapText(ctx, d.desc, dw)) {
     if (y > bottom) break;
     ctx.fillText(l, dx, y);
     y += 21;
   }
+}
 
+function drawDetail(ctx: CanvasRenderingContext2D, L: ReturnType<typeof bagLayout>, b: Bag) {
+  const id = picked(b);
+  detailBox(ctx, L.detail, id ? null : '물건이나 장비를 누르면 여기에 설명이 나와요');
+  if (!id) return;
+  // 장비를 고르면 지금 낀 것과 비교
+  const extra: [string, string][] = [];
+  const d = ITEMS[id];
+  const now = isEquip(id) && bagView.pick?.at === 'bag' ? b.equip[d.type as Slot] : undefined;
+  if (now) {
+    const diff = STAT_KEYS.map((k) => [k, (d.stats?.[k] ?? 0) - (ITEMS[now].stats?.[k] ?? 0)] as const).filter(([, v]) => v);
+    extra.push([`지금 ${ITEMS[now].name}보다 ` + (diff.length ? diff.map(([k, v]) => statText(k, v)).join(' · ') : '같아요'), '#9a7b62']);
+  }
+  itemInfo(ctx, L.detail, L.wide, id, extra, L.main.y - 8);
   const label = mainLabel(b);
   if (label) button(ctx, L.main, label, 'main');
   if (bagView.pick?.at === 'bag') button(ctx, L.drop, bagView.sure ? '정말 버릴까요?' : '버리기', bagView.sure ? 'warn' : 'soft');
+}
+
+/** 창 위의 알림 한 줄 (가방 · 상점) */
+function toast(ctx: CanvasRenderingContext2D, L: { wide: boolean; DW: number; DH: number; detail: R }, msg: string, msgT: number) {
+  if (msgT <= 0) return;
+  ctx.globalAlpha = Math.min(1, msgT / 0.3);
+  ctx.font = 'bold 20px system-ui, sans-serif';
+  const mw = Math.min(L.DW - 60, ctx.measureText(msg).width + 40);
+  const my = L.wide ? L.DH - 70 : L.detail.y - 54;
+  ctx.fillStyle = 'rgba(70,52,42,0.9)';
+  ctx.beginPath();
+  ctx.roundRect(L.DW / 2 - mw / 2, my, mw, 42, 21);
+  ctx.fill();
+  ctx.fillStyle = '#fff6d8';
+  ctx.textAlign = 'center';
+  fitText(ctx, msg, L.DW / 2, my + 28, mw - 24, 20, 'bold ');
+  ctx.globalAlpha = 1;
+}
+
+/** 창 머리: 제목 · 냥코인 · ✕ */
+function header(ctx: CanvasRenderingContext2D, L: { DW: number; close: R }, title: string, coins: number) {
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#5b4a3f';
+  ctx.font = 'bold 34px system-ui, sans-serif';
+  ctx.fillText(title, 28, 58);
+  const tw = ctx.measureText(title).width;
+  drawCoin(ctx, 28 + tw + 34, 46, 15);
+  ctx.fillStyle = '#c98a1c';
+  ctx.font = 'bold 26px system-ui, sans-serif';
+  ctx.fillText(`${coins.toLocaleString()} 냥코인`, 28 + tw + 56, 56);
+  const c = L.close;
+  ctx.fillStyle = 'rgba(120,85,55,0.14)';
+  ctx.beginPath();
+  ctx.arc(c.x + c.w / 2, c.y + c.h / 2, 28, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#5b4a3f';
+  ctx.font = 'bold 30px system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('✕', c.x + c.w / 2, c.y + c.h / 2 + 11);
+}
+
+// ── 고등어 상점 ── 필드 강아지마을 포탈(to: "shop"). 사기 = 상점 물건(data/shop.json stock)을 값에, 팔기 = 가방 물건을 절반 값에.
+// 화면은 가방 창과 같은 틀: 제목·냥코인·✕ · 사기/팔기 탭 · 칸 (값 표시) · 고른 것 설명과 버튼
+export const shopView = { mode: 'buy' as 'buy' | 'sell', pick: null as number | null, sure: false, msg: '', msgT: 0 };
+export function resetShopView() {
+  Object.assign(shopView, { mode: 'buy', pick: null, sure: false, msg: '', msgT: 0 });
+}
+const shopSay = (msg: string) => Object.assign(shopView, { msg, msgT: 2.2 });
+
+export function shopLayout(w: number, h: number, size: number) {
+  const L = bagLayout(w, h, 0);
+  const cols = L.wide ? 9 : 6;
+  const cw = 76;
+  const ch = 90;
+  const gap = 7;
+  const gx = L.wide ? 20 : 22;
+  const cells = Array.from({ length: size }, (_, i): R => ({ x: gx + (i % cols) * (cw + gap), y: 160 + Math.floor(i / cols) * (ch + gap), w: cw, h: ch }));
+  const modes = [0, 1].map((i): R => ({ x: 20 + i * 146, y: 100, w: 138, h: 48 }));
+  return { ...L, cells, modes };
+}
+
+/** 지금 칸에 보이는 것: 사기 = 상점 물건, 팔기 = 가방 칸 */
+const shopItems = (b: Bag, stock: string[]): (string | null)[] => (shopView.mode === 'buy' ? stock : b.slots.map((s) => s?.id ?? null));
+
+/** 상점을 눌렀다. 'close' = 닫기, 'changed' = 가방이 바뀜(저장) */
+export function shopTap(w: number, h: number, x: number, y: number, b: Bag, stock: string[]): 'close' | 'changed' | null {
+  const items = shopItems(b, stock);
+  const L = shopLayout(w, h, items.length);
+  const px = (x - L.ox) / L.k;
+  const py = (y - L.oy) / L.k;
+  if (px < 0 || py < 0 || px > L.DW || py > L.DH || inR(L.close, px, py)) return 'close';
+  const m = L.modes.findIndex((r) => inR(r, px, py));
+  if (m >= 0) {
+    Object.assign(shopView, { mode: m ? 'sell' : 'buy', pick: null, sure: false });
+    return null;
+  }
+  const i = shopView.pick;
+  const id = i === null ? null : items[i];
+  const many = !!id && !isEquip(id);
+  const main = inR(L.main, px, py);
+  if (id && i !== null && (main || (many && inR(L.drop, px, py)))) {
+    if (shopView.mode === 'buy') {
+      const before = count(b, id);
+      const err = buy(b, id, main ? 1 : 5);
+      if (err) return shopSay(err), null;
+      shopSay(`${ITEMS[id].name} ${count(b, id) - before}개를 샀어요`);
+      return 'changed';
+    }
+    // 귀한 장비는 한 번 더 눌러야 판다
+    if ((ITEMS[id].rare ?? 1) >= 3 && !shopView.sure) {
+      shopView.sure = true;
+      return null;
+    }
+    const before = b.coins;
+    const k = sellAt(b, i, main ? 1 : b.slots[i]!.n);
+    shopSay(`${ITEMS[id].name} ${k}개를 팔아 냥코인 +${b.coins - before}`);
+    Object.assign(shopView, { sure: false, pick: b.slots[i] ? i : null });
+    return 'changed';
+  }
+  const c = L.cells.findIndex((r) => inR(r, px, py));
+  Object.assign(shopView, { pick: c >= 0 && items[c] ? c : null, sure: false });
+  return null;
+}
+
+export function drawShop(ctx: CanvasRenderingContext2D, w: number, h: number, b: Bag, shop: { name: string; greet: string; stock: string[] }, dt: number) {
+  const items = shopItems(b, shop.stock);
+  const L = shopLayout(w, h, items.length);
+  shopView.msgT = Math.max(0, shopView.msgT - dt);
+  ctx.save();
+  ctx.fillStyle = 'rgba(40,28,20,0.55)';
+  ctx.fillRect(0, 0, w, h);
+  ctx.translate(L.ox, L.oy);
+  ctx.scale(L.k, L.k);
+  ctx.fillStyle = '#fffaf0';
+  ctx.beginPath();
+  ctx.roundRect(0, 0, L.DW, L.DH, 28);
+  ctx.fill();
+  header(ctx, L, `🐟 ${shop.name}`, b.coins);
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#9a7b62';
+  fitText(ctx, shop.greet, 28, 88, L.DW - 140, 16);
+  // 사기 / 팔기
+  (['사기', '팔기'] as const).forEach((t, i) => {
+    const r = L.modes[i];
+    const on = (i === 0) === (shopView.mode === 'buy');
+    ctx.fillStyle = on ? '#f5a05a' : 'rgba(120,85,55,0.1)';
+    ctx.beginPath();
+    ctx.roundRect(r.x, r.y, r.w, r.h, r.h / 2);
+    ctx.fill();
+    ctx.fillStyle = on ? '#fff' : '#5b4a3f';
+    ctx.textAlign = 'center';
+    fitText(ctx, t, r.x + r.w / 2, r.y + 31, r.w - 16, 20, 'bold ');
+  });
+  // 칸: 아이콘 + 값 (사기 = 값, 팔기 = 받을 값)
+  const buyMode = shopView.mode === 'buy';
+  items.forEach((id, i) => {
+    const n = buyMode ? 0 : (b.slots[i]?.n ?? 0);
+    itemCell(ctx, L.cells[i], id, n, shopView.pick === i, id ? `${buyMode ? ITEMS[id].price : sellPrice(id)}냥` : '', '#c98a1c');
+  });
+  // 고른 것
+  const i = shopView.pick;
+  const id = i === null ? null : items[i];
+  detailBox(ctx, L.detail, id ? null : buyMode ? '사고 싶은 물건을 누르세요' : '팔 물건을 누르세요');
+  if (id && i !== null) {
+    const n = b.slots[i]?.n ?? 0;
+    const extra: [string, string][] = [[buyMode ? `값 ${ITEMS[id].price}냥 · 가진 것 ${count(b, id)}개` : `팔면 ${sellPrice(id)}냥 · 도감엔 남아요`, '#c98a1c']];
+    itemInfo(ctx, L.detail, L.wide, id, extra, L.main.y - 8);
+    if (buyMode) {
+      button(ctx, L.main, `사기 ${ITEMS[id].price}냥`, 'main');
+      if (!isEquip(id)) button(ctx, L.drop, `5개 사기 ${ITEMS[id].price * 5}냥`, 'soft');
+    } else {
+      button(ctx, L.main, shopView.sure ? '정말 팔까요?' : `1개 팔기 +${sellPrice(id)}냥`, shopView.sure ? 'warn' : 'main');
+      if (!isEquip(id) && n > 1) button(ctx, L.drop, `모두 팔기 +${sellPrice(id) * n}냥`, 'soft');
+    }
+  }
+  toast(ctx, L, shopView.msg, shopView.msgT);
+  ctx.restore();
 }

@@ -5,7 +5,9 @@ import { image } from './assets.ts';
 import atlas from './data/fishing-atlas.json' with { type: 'json' };
 import { drawEmote } from './emote.ts';
 import { FISH, fishLen, mouth, RULES, SPOTS, type Dex, type FailHint, type FailReason, type Fish, type FishEvent, type FishingState } from './fishing.ts';
-import { fitText, safe } from './touch.ts';
+import { drawIcon, RARE } from './bag-draw.ts';
+import { ITEMS, TYPE_NAME } from './bag.ts';
+import { fitText } from './touch.ts';
 
 /** 칸마다 [x, y, w, h, 내용 x, y, w, h] — 고양이는 뒤에 [발 x, y, 낚싯대 끝 x, y] (칸 기준) */
 type St = { name: string; fps: number; loop: boolean; frames: number[][] };
@@ -323,15 +325,23 @@ function stepFx(s: FishingState, dt: number) {
     rippleT = 0;
     ripple(s.bobX, s.bobY, 12, 0.7);
   }
+  // 가라앉은 물건 위로 가끔 뽀글 — 물고기가 아니라는 표시
+  bubbleT += dt;
+  if (bubbleT > 1.6) {
+    bubbleT = 0;
+    for (const f of s.fishes) if (f.item && f !== s.hooked) ripple(f.x + (Math.random() - 0.5) * 16, f.y - 4, 7, 0.6);
+  }
 }
+let bubbleT = 0;
 
 function drawShadow(ctx: CanvasRenderingContext2D, s: FishingState, f: Fish, t: number) {
   const st = A.shadow.states[f.def.shadow];
   const hooked = f === s.hooked;
-  const fr = at(st, f.anim * (hooked && s.run > 0 ? 2.2 : 1));
+  // 가라앉은 물건은 꼬리를 흔들지 않고 기울지도 않는다
+  const fr = f.item ? st.frames[0] : at(st, f.anim * (hooked && s.run > 0 ? 2.2 : 1));
   const scale = fishLen(f) / st.frames[0][6]; // 내용 폭을 몸길이로
   const flip = f.hx < 0 ? -1 : 1;
-  let rot = (flip > 0 ? Math.atan2(f.hy, f.hx) : -Math.atan2(f.hy, -f.hx)) * 0.6;
+  let rot = f.item ? 0 : (flip > 0 ? Math.atan2(f.hy, f.hx) : -Math.atan2(f.hy, -f.hx)) * 0.6;
   if (hooked && s.run > 0) rot += Math.sin(t * 32) * 0.16; // 날뛸 땐 몸부림
   // 펄쩍 뛰어 물 밖에 있는 동안은 그림자가 옅다
   const air = hooked && s.jumpT > 0 ? 0.3 : 1;
@@ -489,19 +499,32 @@ function drawCatch(ctx: CanvasRenderingContext2D, s: FishingState, v: FishingVie
   const fy = b.y + 138;
   const sp = A.fx.states.catch_sparkle;
   cell(ctx, IMG('fx'), at(sp, s.t % (sp.frames.length / sp.fps)), cx, fy, 1.5, 1, 0, 0.9);
-  const st = A.catch[c.kind];
-  cell(ctx, catchImg(c.kind), at(st, s.t), cx, fy, 220 / st.frames[0][6]);
-
   ctx.textAlign = 'center';
-  ctx.fillStyle = '#5b4a3f';
-  ctx.font = 'bold 38px system-ui, sans-serif';
-  ctx.fillText(c.name, cx, b.y + 255);
-  ctx.font = '30px system-ui, sans-serif';
-  ctx.fillStyle = '#f0b429';
-  ctx.fillText('★'.repeat(c.stars) + '☆'.repeat(5 - c.stars), cx, b.y + 293);
-  ctx.fillStyle = '#5b4a3f';
-  ctx.font = 'bold 32px system-ui, sans-serif';
-  ctx.fillText(`${c.cm.toFixed(1)} cm`, cx, b.y + 330);
+  if (c.item) {
+    // 건진 물건: 아이콘 · 이름 · 종류(희귀도) · 가방에 못 넣었으면 알림
+    const d = ITEMS[c.kind];
+    const r = RARE[d.rare ?? 1];
+    drawIcon(ctx, c.kind, cx, fy + Math.sin(s.t * 3) * 4, 170);
+    ctx.fillStyle = '#5b4a3f';
+    fitText(ctx, c.name, cx, b.y + 255, b.w - 40, 38, 'bold ');
+    ctx.fillStyle = r.color;
+    ctx.font = 'bold 26px system-ui, sans-serif';
+    ctx.fillText(`${TYPE_NAME[d.type]}${d.rare && d.rare > 1 ? ' · ' + r.name : ''}`, cx, b.y + 293);
+    ctx.fillStyle = c.full ? '#ef6b5e' : '#5b4a3f';
+    fitText(ctx, c.full ? '가방이 가득 차서 놓아줬어요' : '건졌다!', cx, b.y + 330, b.w - 40, c.full ? 26 : 32, 'bold ');
+  } else {
+    const st = A.catch[c.kind];
+    cell(ctx, catchImg(c.kind), at(st, s.t), cx, fy, 220 / st.frames[0][6]);
+    ctx.fillStyle = '#5b4a3f';
+    ctx.font = 'bold 38px system-ui, sans-serif';
+    ctx.fillText(c.name, cx, b.y + 255);
+    ctx.font = '30px system-ui, sans-serif';
+    ctx.fillStyle = '#f0b429';
+    ctx.fillText('★'.repeat(c.stars) + '☆'.repeat(5 - c.stars), cx, b.y + 293);
+    ctx.fillStyle = '#5b4a3f';
+    ctx.font = 'bold 32px system-ui, sans-serif';
+    ctx.fillText(`${c.cm.toFixed(1)} cm`, cx, b.y + 330);
+  }
   const badge = c.isNew ? ['NEW!', '#ef6b5e'] : c.record ? ['최고 기록!', '#f0b429'] : null;
   if (badge) {
     ctx.font = 'bold 26px system-ui, sans-serif';
@@ -671,7 +694,7 @@ export function fishingHelp(s: FishingState, touch = false) {
   switch (s.phase) {
     case 'ready':
     case 'aim':
-      return '물 위를 누르고 있다가 링이 가장 작을 때 떼면 던져요 · 그림자 물고기 앞쪽에 던지면 잘 물어요' + (touch ? '' : ' · B 도감 · Esc 돌아가기');
+      return '물 위를 누르고 있다가 링이 가장 작을 때 떼면 던져요 · 그림자 물고기 앞쪽에 던지면 잘 물어요 · 뽀글거리는 둥근 그림자는 가라앉은 물건' + (touch ? '' : ' · B 도감 · Esc 돌아가기');
     case 'cast':
     case 'wait':
     case 'bite':
@@ -686,35 +709,9 @@ export function fishingHelp(s: FishingState, touch = false) {
   }
 }
 
-// ── 물고기 도감 (전체 화면) ── 필드의 도감 버튼 · 낚시터의 도감 판 · B 키로 연다. ctx 는 CSS px.
-// 디자인 좌표(가로 화면 1000×560 카드 3열 · 세로 화면 540×1040 카드 2열, 탭 2줄)로 그리고 화면에 맞춰 통째로 줄인다.
+// ── 물고기 도감 카드 ── 전체 도감 화면(book-draw.ts)의 물고기 쪽이 쓴다. 좌표는 도감의 디자인 좌표.
 const PATTERN_NAME: Record<string, string> = { peck: '톡톡', flurry: '연타', lift: '찌올림', drag: '끌고가기', slam: '한방', fake: '헛잠김', hesitant: '망설임' };
 const FIGHT_NAME: Record<string, string> = { steady: '꾸준', dart: '잔걸음', zigzag: '지그재그', heavy: '묵직', jump: '점프' };
-const SPOT_IDS = Object.keys(SPOTS);
-
-export function dexLayout(w: number, h: number) {
-  const wide = w >= h;
-  const L = wide ? { DW: 1000, DH: 560, cols: 3, tabRow: 7 } : { DW: 540, DH: 1040, cols: 2, tabRow: 4 };
-  const sf = safe();
-  const aw = w - sf.l - sf.r;
-  const ah = h - sf.t - sf.b;
-  const k = Math.min(1.25, (aw - 24) / L.DW, (ah - 24) / L.DH);
-  const tw = (L.DW - 40 - 6 * (L.tabRow - 1)) / L.tabRow;
-  const tabs = SPOT_IDS.map((_, i): Rect => ({ x: 20 + (i % L.tabRow) * (tw + 6), y: 88 + Math.floor(i / L.tabRow) * 62, w: tw, h: 56 }));
-  const top = 88 + Math.ceil(SPOT_IDS.length / L.tabRow) * 62 + 10;
-  return { ...L, k, ox: sf.l + (aw - L.DW * k) / 2, oy: sf.t + (ah - L.DH * k) / 2, tabs, top, close: { x: L.DW - 84, y: 8, w: 76, h: 76 } };
-}
-
-/** 도감 화면에서 누른 것 — 닫기(바깥·✕) · 탭 */
-export function dexHit(w: number, h: number, x: number, y: number): 'close' | { tab: string } | null {
-  const L = dexLayout(w, h);
-  const px = (x - L.ox) / L.k;
-  const py = (y - L.oy) / L.k;
-  if (px < 0 || py < 0 || px > L.DW || py > L.DH || inRect(L.close, px, py)) return 'close';
-  const i = L.tabs.findIndex((r) => inRect(r, px, py));
-  return i >= 0 ? { tab: SPOT_IDS[i] } : null;
-}
-
 
 /** 시트 칸을 첫 칸의 내용 크기로 box 안에 맞춰 (x, y) 가운데에 — 칸마다 같은 배율·같은 자리라 꿈틀대는 게 자연스럽다 */
 function fitSprite(ctx: CanvasRenderingContext2D, img: CanvasImageSource | null, st: St, f: number[], x: number, y: number, box: number, alpha: number) {
@@ -726,68 +723,8 @@ function fitSprite(ctx: CanvasRenderingContext2D, img: CanvasImageSource | null,
   ctx.globalAlpha = 1;
 }
 
-export function drawDex(ctx: CanvasRenderingContext2D, w: number, h: number, dex: Dex, tab: string, t: number) {
-  const L = dexLayout(w, h);
-  ctx.save();
-  ctx.fillStyle = 'rgba(40,28,20,0.55)';
-  ctx.fillRect(0, 0, w, h);
-  ctx.translate(L.ox, L.oy);
-  ctx.scale(L.k, L.k);
-  ctx.fillStyle = '#fffaf0';
-  ctx.beginPath();
-  ctx.roundRect(0, 0, L.DW, L.DH, 28);
-  ctx.fill();
-
-  // 제목 · 전체 몇 종 · 닫기
-  const all = Object.keys(FISH);
-  const title = '📖 물고기 도감';
-  ctx.textAlign = 'left';
-  ctx.fillStyle = '#5b4a3f';
-  ctx.font = 'bold 34px system-ui, sans-serif';
-  ctx.fillText(title, 28, 58);
-  const tw = ctx.measureText(title).width;
-  ctx.fillStyle = '#9a7b62';
-  ctx.font = '24px system-ui, sans-serif';
-  ctx.fillText(`${all.filter((k) => dex[k]).length} / ${all.length}`, 28 + tw + 14, 58);
-  const c = L.close;
-  ctx.fillStyle = 'rgba(120,85,55,0.14)';
-  ctx.beginPath();
-  ctx.arc(c.x + c.w / 2, c.y + c.h / 2, 28, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = '#5b4a3f';
-  ctx.font = 'bold 30px system-ui, sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillText('✕', c.x + c.w / 2, c.y + c.h / 2 + 11);
-
-  // 낚시터 탭 — 다 모으면 금색 ★
-  L.tabs.forEach((r, i) => {
-    const id = SPOT_IDS[i];
-    const kinds = Object.keys(SPOTS[id].fish);
-    const n = kinds.filter((k) => dex[k]).length;
-    const on = id === tab;
-    ctx.fillStyle = on ? '#f5a05a' : 'rgba(120,85,55,0.1)';
-    ctx.beginPath();
-    ctx.roundRect(r.x, r.y, r.w, r.h, 16);
-    ctx.fill();
-    ctx.fillStyle = on ? '#fff' : '#5b4a3f';
-    fitText(ctx, SPOTS[id].short, r.x + r.w / 2, r.y + 26, r.w - 10, 22, 'bold ');
-    ctx.fillStyle = on ? '#fff' : n === kinds.length ? '#e0a000' : '#9a7b62';
-    fitText(ctx, `${n === kinds.length ? '★ ' : ''}${n}/${kinds.length}`, r.x + r.w / 2, r.y + 48, r.w - 10, 17);
-  });
-
-  // 물고기 카드
-  const kinds = Object.keys(SPOTS[tab].fish);
-  const rows = Math.ceil(kinds.length / L.cols);
-  const cw = (L.DW - 40 - 12 * (L.cols - 1)) / L.cols;
-  const ch = (L.DH - L.top - 20 - 12 * (rows - 1)) / rows;
-  kinds.forEach((id, i) =>
-    dexCard(ctx, id, dex[id], { x: 20 + (i % L.cols) * (cw + 12), y: L.top + Math.floor(i / L.cols) * (ch + 12), w: cw, h: ch }, t + i * 0.37),
-  );
-  ctx.restore();
-}
-
 /** 잡은 종은 꿈틀대는 그림·이름·최고 기록·입질/당기기 버릇, 못 잡은 종은 검은 실루엣·??? (별은 보여 줘서 귀한 걸 안다) */
-function dexCard(ctx: CanvasRenderingContext2D, id: string, rec: Dex[string] | undefined, r: Rect, t: number) {
+export function fishCard(ctx: CanvasRenderingContext2D, id: string, rec: Dex[string] | undefined, r: Rect, t: number) {
   const def = FISH[id];
   const st = A.catch[id];
   ctx.fillStyle = rec ? '#ffffff' : 'rgba(120,85,55,0.08)';

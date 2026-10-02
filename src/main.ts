@@ -1,8 +1,10 @@
 // 게임 뼈대 — 캔버스·입력·장면 전환(필드 ↔ 던전 · 낚시터)·소리·감정·불러오기.
 // 필드는 field.ts(로직) / field-draw.ts(그리기), 던전은 dungeon.ts / dungeon-draw.ts, 낚시는 fishing.ts / fishing-draw.ts.
 import { assetUrl } from './assets.ts';
-import { bagLayout, bagTap, drawBag, itemIconsReady, resetBagView } from './bag-draw.ts';
-import { fromSave, stats, tickBuffs, type Bag } from './bag.ts';
+import { bagLayout, bagTap, drawBag, drawShop, itemIconsReady, resetBagView, resetShopView, shopLayout, shopTap, shopView } from './bag-draw.ts';
+import { count, fromSave, obtain, stats, tickBuffs, type Bag } from './bag.ts';
+import { bookLayout, bookTap, bookView, drawBook, groupOf, openBook, ungrouped, type BookData } from './book-draw.ts';
+import shopData from './data/shop.json' with { type: 'json' };
 import {
   sfxBite,
   sfxCast,
@@ -33,10 +35,7 @@ import { ENEMY_DEFS, type Kind } from './enemy.ts';
 import { biomeAt, drawField, fieldFx, fieldReady, fieldView, terrainAt, terrainReady } from './field-draw.ts';
 import { backFrom, FIELD, inWarp, makeFieldState, updateField, type FieldEvent, type FieldState, type Warp } from './field.ts';
 import {
-  dexHit,
-  dexLayout,
   dexReady,
-  drawDex,
   drawFishing,
   fishingButtonAt,
   fishingFx,
@@ -156,13 +155,14 @@ const pressing = new Map<number, ButtonId>();
 const ctl = () => controls(innerWidth, innerHeight, scene, touchOn);
 
 // ── 창: 물고기 도감 (필드 버튼 · 낚시터 도감 판 · B) · 가방 (필드·던전 버튼 · I). 열려 있는 동안 게임은 멈춘다
-let panel: 'dex' | 'bag' | null = null;
-let dexTab = Object.keys(SPOTS)[0];
-const dexAllowed = () => !fadeTo && (scene === 'field' || (scene === 'fishing' && dexReady(fishing)));
+// 'dex' = 도감 (물고기 · 몬스터 · 아이템), 'shop' = 고등어 상점 (필드 강아지마을 포탈)
+let panel: 'dex' | 'bag' | 'shop' | null = null;
+const dexAllowed = () => !fadeTo && (scene !== 'fishing' || dexReady(fishing));
 const bagAllowed = () => !fadeTo && (scene === 'field' || scene === 'dungeon');
-function openPanel(p: 'dex' | 'bag') {
-  if (p === 'dex' && scene === 'fishing') dexTab = fishing.spotId;
+function openPanel(p: 'dex' | 'bag' | 'shop') {
+  if (p === 'dex') scene === 'fishing' ? openBook('fish', fishing.spotId) : scene === 'dungeon' ? openBook('monster', groupOf(dungeon.enemies[0]?.kind ?? 'sword')) : openBook();
   if (p === 'bag') resetBagView();
+  if (p === 'shop') resetShopView();
   panel = p;
   // 누르고 있던 것은 놓은 걸로
   keys.clear();
@@ -241,9 +241,13 @@ canvas.addEventListener('pointerdown', (e) => {
   canvas.setPointerCapture(e.pointerId);
   const p = pos(e);
   if (panel === 'dex') {
-    const hit = dexHit(innerWidth, innerHeight, p.x, p.y);
-    if (hit === 'close') closePanel();
-    else if (hit) dexTab = hit.tab;
+    if (bookTap(innerWidth, innerHeight, p.x, p.y) === 'close') closePanel();
+    return;
+  }
+  if (panel === 'shop') {
+    const r = shopTap(innerWidth, innerHeight, p.x, p.y, bag, SHOP.stock);
+    if (r === 'close') closePanel();
+    else if (r === 'changed') saveBag();
     return;
   }
   if (panel === 'bag') {
@@ -430,8 +434,35 @@ function saveBag() {
     // 저장이 막힌 창이면 이번 판만
   }
 }
+// 몬스터 도감 — 종마다 쓰러뜨린 수
+const MON_KEY = 'nyang.monsters.v1';
+const monDex: Record<string, number> = (() => {
+  try {
+    const v = JSON.parse(localStorage.getItem(MON_KEY) ?? '{}');
+    return Object.fromEntries(Object.entries(v).filter(([k, n]) => ENEMY_DEFS[k] && Number.isFinite(n) && (n as number) > 0)) as Record<string, number>;
+  } catch {
+    return {};
+  }
+})();
+function saveMonDex() {
+  try {
+    localStorage.setItem(MON_KEY, JSON.stringify(monDex));
+  } catch {
+    // 이번 판만
+  }
+}
+const SHOP = shopData as { name: string; greet: string; stock: string[] };
+/** 도감이 보는 기록 — 몬스터 그림은 처음 볼 때 불러온다 */
+const bookData = (): BookData => ({
+  fish: dex,
+  monsters: monDex,
+  found: bag.found,
+  held: (id) => count(bag, id) + (Object.values(bag.equip).includes(id) ? 1 : 0),
+  sheet: (k) => sheets[k] ?? (enemySheet(k), null),
+});
+
 /** 낚싯대·릴의 감기·줄 강도 */
-const gear = () => ((s) => ({ reel: s.reel, line: s.line }))(stats(bag));
+const gear = () => ((s) => ({ reel: s.reel, line: s.line, luck: s.luck }))(stats(bag));
 
 let fishing: FishingState = makeFishing(startSpot, dex, Math.random, gear());
 [fishIn.x, fishIn.y] = fishing.spot.defaultCast;
@@ -456,20 +487,32 @@ if (trace)
       get touch() { return touchOn; },
       get dexOpen() { return panel === 'dex'; },
       get bagOpen() { return panel === 'bag'; },
-      get dexTab() { return dexTab; },
+      get shopOpen() { return panel === 'shop'; },
+      /** 도감에서 지금 보는 물고기 낚시터 탭 */
+      get dexTab() { return bookView.tab.fish; },
+      book: bookView,
       dex,
       bag,
+      monsters: monDex,
+      /** 지역이 없어 도감에 안 나오는 몬스터 */
+      ungrouped,
       /** 가방 화면의 칸 · 장비 칸 · 버튼 · 닫기 가운데 (CSS px) */
       bagScreen: () => {
         const L = bagLayout(innerWidth, innerHeight, bag.slots.length);
         const mid = (r: { x: number; y: number; w: number; h: number }) => ({ x: L.ox + (r.x + r.w / 2) * L.k, y: L.oy + (r.y + r.h / 2) * L.k });
         return { cells: L.cells.map(mid), slots: L.slots.map(mid), main: mid(L.main), drop: mid(L.drop), close: mid(L.close) };
       },
-      /** 도감 화면의 탭 i · 닫기 버튼 가운데 (CSS px) */
+      /** 도감 화면의 갈래 · 탭 · 칸 · 닫기 가운데 (CSS px) */
       dexScreen: () => {
-        const L = dexLayout(innerWidth, innerHeight);
+        const L = bookLayout(innerWidth, innerHeight);
         const mid = (r: { x: number; y: number; w: number; h: number }) => ({ x: L.ox + (r.x + r.w / 2) * L.k, y: L.oy + (r.y + r.h / 2) * L.k });
-        return { tabs: L.tabs.map(mid), close: mid(L.close) };
+        return { chips: L.chips.map(mid), tabs: L.tabs.map(mid), cells: L.cells.map(mid), close: mid(L.close) };
+      },
+      /** 상점 화면의 사기/팔기 · 칸 · 버튼 · 닫기 가운데 (CSS px) */
+      shopScreen: () => {
+        const L = shopLayout(innerWidth, innerHeight, shopView.mode === 'buy' ? SHOP.stock.length : bag.slots.length);
+        const mid = (r: { x: number; y: number; w: number; h: number }) => ({ x: L.ox + (r.x + r.w / 2) * L.k, y: L.oy + (r.y + r.h / 2) * L.k });
+        return { modes: L.modes.map(mid), cells: L.cells.map(mid), main: mid(L.main), drop: mid(L.drop), close: mid(L.close) };
       },
       get showMap() { return showMap; },
       get look() { return look; },
@@ -516,7 +559,11 @@ function fieldSound(e: FieldEvent) {
 /** 던전 사건 → 소리 */
 function dungeonSound(e: DungeonEvent) {
   if (e.type === 'hit') sfxHit(e.finish);
-  else if (e.type === 'pop') sfxPop();
+  else if (e.type === 'pop') {
+    sfxPop();
+    monDex[e.kind] = (monDex[e.kind] ?? 0) + 1; // 몬스터 도감
+    saveMonDex();
+  }
   else if (e.type === 'hurt') sfxHurt();
   else if (e.type === 'loot') (e.coin ? sfxCoin : sfxPickup)();
   else if (e.type === 'full') sfxFull();
@@ -569,8 +616,16 @@ function fishingEvent(e: FishEvent) {
       break;
     case 'caught':
       sfxCatch();
-      say(e.catch.isNew ? 'delight' : 'pride', 2.4);
-      saveDex(dex);
+      if (e.catch.item) {
+        // 건진 물건 → 가방 (팝업이 같은 catch 를 보고 NEW · 가득 참을 그린다)
+        e.catch.isNew = !bag.found[e.catch.kind];
+        e.catch.full = obtain(bag, e.catch.kind) > 0;
+        saveBag();
+        say(e.catch.full ? 'frustration' : e.catch.isNew ? 'treasure_temptation' : 'pride', 2.4);
+      } else {
+        say(e.catch.isNew ? 'delight' : 'pride', 2.4);
+        saveDex(dex);
+      }
       break;
     case 'fail':
       if (e.reason === 'snap') sfxSnap();
@@ -623,7 +678,7 @@ function fieldMood(dt: number, now: number) {
   for (const e of field.events) if (e.type === 'chop' && ++mood.chops % 5 === 0) say('exertion', 1.2);
   // 포탈 위: 낚시터면 군침, 던전이면 의욕, 아직 연결 전이면 갸웃
   const w = FIELD.warps.find((v) => inWarp(v, field.x, field.y));
-  if (w && w.id !== mood.portal) say(SPOTS[w.to] ? 'hunger' : w.to ? 'determination' : 'question', 1.6);
+  if (w && w.id !== mood.portal) say(SPOTS[w.to] ? 'hunger' : w.to === 'shop' ? 'delight' : w.to ? 'determination' : 'question', 1.6);
   mood.portal = w?.id ?? '';
   mood.stillT = field.moving ? 0 : mood.stillT + dt;
   if (mood.stillT > 7) {
@@ -695,7 +750,13 @@ const enterFishing = (to: string) =>
     sayHelp();
   });
 /** 포탈 → 던전 또는 낚시터 */
-const enterPortal = (to: string) => (SPOTS[to] ? enterFishing(to) : enterDungeon(to));
+/** 포탈 → 던전 · 낚시터, 또는 상점 창 (장면은 그대로 — 한 번 벗어났다 와야 다시 열린다) */
+const enterPortal = (to: string) => {
+  if (to !== 'shop') return SPOTS[to] ? enterFishing(to) : enterDungeon(to);
+  field.armed = false;
+  field.dwell = 0;
+  if (bagAllowed()) openPanel('shop');
+};
 /** 포탈 워프 — 포탈 위에 내린다. 한 번 벗어났다 들어와야 빨려 들어간다 (그 자리에서 바로 던전으로 가지 않음) */
 const warpTo = (w: Warp) =>
   goTo(() => {
@@ -813,7 +874,8 @@ function drawFieldScene() {
 function drawOverlay() {
   const s = pxRatio();
   ctx.setTransform(s, 0, 0, s, 0, 0);
-  if (panel === 'dex') return drawDex(ctx, innerWidth, innerHeight, dex, dexTab, last / 1000);
+  if (panel === 'dex') return drawBook(ctx, innerWidth, innerHeight, bookData(), last / 1000);
+  if (panel === 'shop') return drawShop(ctx, innerWidth, innerHeight, bag, SHOP, lastDt);
   if (panel === 'bag') return drawBag(ctx, innerWidth, innerHeight, bag, lastDt);
   const c = ctl();
   drawControls(ctx, c, stick && stickVector(c, stick.x, stick.y), new Set(pressing.values()));
@@ -831,11 +893,11 @@ function drawFade() {
 
 const help = document.getElementById('help')!;
 const HELP = {
-  field: 'WASD 이동 · 숲은 도끼로, 물은 배로 · 이정표 앞 포탈에 잠시 서 있으면 던전 · 지도 끌기·미니맵으로 둘러보기, 포탈 클릭 = 워프 · I 가방 · B 도감 · M 미니맵 · T 지형 보기',
+  field: 'WASD 이동 · 숲은 도끼로, 물은 배로 · 이정표 앞 포탈에 잠시 서 있으면 던전 · 지도 끌기·미니맵으로 둘러보기, 포탈 클릭 = 워프 · 강아지마을은 고등어 상점 · I 가방 · B 도감 · M 미니맵 · T 지형 보기',
   dungeon: 'WASD 이동 · 클릭/J 냥펀치 · Space 구르기 · 쓰러진 몬스터가 떨군 건 다가가면 주워요 · I 가방 · 빛나는 칸으로 나가기 · G 격자',
 };
 const HELP_TOUCH = {
-  field: '왼쪽 조이스틱으로 이동 · 숲은 도끼로, 물은 배로 · 포탈에 잠시 서 있으면 던전·낚시터 · 화면을 끌어 둘러보고 포탈을 누르면 워프',
+  field: '왼쪽 조이스틱으로 이동 · 숲은 도끼로, 물은 배로 · 포탈에 잠시 서 있으면 던전·낚시터 (강아지마을은 상점) · 화면을 끌어 둘러보고 포탈을 누르면 워프',
   dungeon: '조이스틱 이동 · 냥펀치 · 구르기 · 빛나는 칸으로 나가기',
 };
 function sayHelp() {

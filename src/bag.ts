@@ -24,7 +24,8 @@ export const TYPE_NAME: Record<ItemType, string> = {
 };
 /** 쓰기 효과: 체력 회복 · 잠깐 능력치(time 초) · 냥코인 · 열면 나오는 것(open 중 하나, key 가 있으면 그 아이템 하나를 쓴다) */
 export type Use = { heal?: number; buff?: Partial<Stats>; time?: number; coins?: number; open?: string[]; key?: string };
-export type ItemDef = { name: string; type: ItemType; desc: string; rare?: number; stats?: Partial<Stats>; use?: Use };
+/** price = 상점에서 살 때 값 (팔면 절반) */
+export type ItemDef = { name: string; type: ItemType; desc: string; price: number; rare?: number; stats?: Partial<Stats>; use?: Use };
 export const ITEMS = itemData as Record<string, ItemDef>;
 export const isEquip = (id: string) => SLOTS.includes(ITEMS[id]?.type as Slot);
 
@@ -36,13 +37,21 @@ export type Bag = {
   slots: (Stack | null)[];
   equip: Partial<Record<Slot, string>>;
   buffs: Buff[];
+  /** 지금까지 얻은 개수 (아이템 도감) — 팔거나 버려도 줄지 않는다 */
+  found: Record<string, number>;
 };
 export const BAG_SIZE = 24;
 export const MAX_STACK = 99;
 
 /** 새 가방 — 나뭇가지 검과 초보 낚싯대를 들고 시작한다 */
 export function makeBag(): Bag {
-  return { coins: 0, slots: Array(BAG_SIZE).fill(null), equip: { weapon: 'equipment_01', rod: 'equipment_25' }, buffs: [] };
+  return {
+    coins: 0,
+    slots: Array(BAG_SIZE).fill(null),
+    equip: { weapon: 'equipment_01', rod: 'equipment_25' },
+    buffs: [],
+    found: { equipment_01: 1, equipment_25: 1 },
+  };
 }
 
 /** 장비 능력치 합 (+ buffs 면 먹은 것의 잠깐 능력치도) */
@@ -80,6 +89,36 @@ export function addItem(b: Bag, id: string, n = 1): number {
       n -= k;
     }
   return n;
+}
+/** 새로 얻기 (줍기·건지기·사기·상자) — 가방에 넣고 도감에 센다. 못 넣은 개수를 돌려준다 */
+export function obtain(b: Bag, id: string, n = 1): number {
+  const left = addItem(b, id, n);
+  if (n > left) b.found[id] = (b.found[id] ?? 0) + n - left;
+  return left;
+}
+/** 가방에 이 아이템이 몇 개 더 들어가나 */
+export function room(b: Bag, id: string): number {
+  const max = isEquip(id) ? 1 : MAX_STACK;
+  return b.slots.reduce((t, s) => t + (!s ? max : s.id === id ? max - s.n : 0), 0);
+}
+/** 팔 때 값 (살 때의 절반, 최소 1) */
+export const sellPrice = (id: string) => Math.max(1, Math.floor(ITEMS[id].price / 2));
+/** 상점에서 n 개 산다 (자리만큼만). 안 되면 까닭 */
+export function buy(b: Bag, id: string, n = 1): string | null {
+  const k = Math.min(n, room(b, id), Math.floor(b.coins / ITEMS[id].price));
+  if (k <= 0) return room(b, id) ? '냥코인이 모자라요' : '가방에 자리가 없어요';
+  b.coins -= ITEMS[id].price * k;
+  obtain(b, id, k);
+  return null;
+}
+/** i 번 칸에서 n 개 판다 (기본 1개) */
+export function sellAt(b: Bag, i: number, n = 1): number {
+  const s = b.slots[i];
+  if (!s) return 0;
+  const k = Math.min(n, s.n);
+  b.coins += sellPrice(s.id) * k;
+  removeAt(b, i, k);
+  return k;
 }
 /** 가방에 이 아이템이 몇 개 있나 */
 export const count = (b: Bag, id: string) => b.slots.reduce((t, s) => t + (s?.id === id ? s.n : 0), 0);
@@ -150,7 +189,7 @@ export function useAt(b: Bag, i: number, canHeal: boolean, rng: () => number = M
     return { ok: false, msg: '가방이 가득 찼어요' };
   removeAt(b, i, 1);
   if (u.key) takeOne(b, u.key);
-  for (const g of got) addItem(b, g.id, g.n);
+  for (const g of got) obtain(b, g.id, g.n);
   if (u.coins) b.coins += u.coins;
   if (u.buff) {
     b.buffs = b.buffs.filter((f) => f.id !== s.id); // 같은 걸 또 먹으면 시간만 새로
@@ -212,5 +251,10 @@ export function fromSave(v: unknown): Bag {
     if (ok(s) && i >= b.slots.length) addItem(b, s.id, clean(s).n);
   });
   if (Array.isArray(o.buffs)) b.buffs = o.buffs.filter((f) => ITEMS[f?.id]?.use?.buff && f.left > 0).map((f) => ({ id: f.id, stats: ITEMS[f.id].use!.buff!, left: f.left }));
+  // 도감: 저장된 게 있으면 그대로, 없으면(도감 전 저장) 지금 가진 것·낀 것으로 채운다
+  b.found = {};
+  if (o.found && typeof o.found === 'object') {
+    for (const [id, n] of Object.entries(o.found)) if (ITEMS[id] && Number.isFinite(n) && n > 0) b.found[id] = Math.floor(n);
+  } else for (const id of [...b.slots.map((s) => s?.id), ...Object.values(b.equip)]) if (id) b.found[id] = Math.max(b.found[id] ?? 0, count(b, id) || 1);
   return b;
 }

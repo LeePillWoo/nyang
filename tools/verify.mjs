@@ -331,6 +331,11 @@ try {
     const { page, errors } = await open('fishing');
     const st = () => page.evaluate(() => ({ phase: __game.fishing.phase, run: __game.fishing.run > 0, fail: __game.fishing.fail }));
     check((await page.evaluate(() => __game.scene)) === 'fishing', '?fishing 으로 낚시터에서 시작');
+    // 이 시험은 물고기 흐름만 본다 — 가라앉은 물건(건지기)은 끄고 치운다 (건지기는 [상점 · 건지기 · 도감] 에서)
+    await page.evaluate(() => {
+      __game.fishing.spot.salvage = undefined;
+      __game.fishing.fishes = __game.fishing.fishes.filter((f) => !f.item);
+    });
     let bit = false;
     let miss = Infinity;
     for (let tries = 0; tries < 4 && !bit; tries++) {
@@ -701,6 +706,121 @@ try {
     await page.screenshot({ path: fsPath(new URL(`bag-${name}.png`, OUT)) });
     await tap(page, (await page.evaluate(() => __game.bagScreen())).close);
     check(opened && !(await page.evaluate(() => __game.bagOpen)) && errors.length === 0, `${name}: 필드 가방 버튼으로 열고 ✕ 로 닫기 · 에러 ${errors.length}건`);
+    await page.close();
+  }
+
+  // 3-8) 상점 · 건지기 · 도감: 강아지마을 포탈에 서면 고등어 상점 → 사기 1개 · 5개 · 팔기(모두) · 닫으면 그 자리에서 다시 안 열린다 →
+  //  낚시: 가라앉은 물건을 물리고 감으면 건져서 가방에 (물고기 도감엔 안 센다) → 던전에서 쓰러뜨리면 몬스터 도감 → B 로 도감
+  //  (던전에선 몬스터 갈래) · 갈래·탭·칸 누르기 · 휴대폰 세로. 화면은 tools/out/shop-*.png · book-*.png · fishing-salvage.png
+  console.log('\n[상점 · 건지기 · 도감]');
+  {
+    const { page, errors } = await open('field');
+    await page.evaluate(() => ['nyang.bag.v1', 'nyang.monsters.v1'].forEach((k) => localStorage.removeItem(k)));
+    await page.reload({ waitUntil: 'load' });
+    await page.waitForFunction(() => window.__sheets, { timeout: 60000 });
+    await page.evaluate(() => (__game.bag.coins = 500));
+    const shopWarp = FIELD.warps.find((w) => w.to === 'shop');
+    await page.evaluate((at) => Object.assign(__game.field, { x: at[0], y: at[1], camX: at[0], camY: at[1], armed: true, mode: 'walk' }), shopWarp.at);
+    const opened = await page.waitForFunction(() => __game.shopOpen, { timeout: 4000 }).then(() => true, () => false);
+    check(opened, `${shopWarp.label} 포탈에 서 있으면 고등어 상점이 열린다`);
+    const scr = () => page.evaluate(() => __game.shopScreen());
+    const click = async (p) => {
+      await page.mouse.move(p.x, p.y);
+      await page.mouse.down();
+      await page.mouse.up();
+    };
+    const potions = () => page.evaluate(() => __game.bag.slots.reduce((t, s) => t + (s?.id === 'curios_01' ? s.n : 0), 0));
+    await click((await scr()).cells[0]); // 첫 물건 = 작은 회복 물약 30냥
+    await click((await scr()).main);
+    await click((await scr()).drop); // 5개 사기
+    await sleep(100);
+    await page.screenshot({ path: fsPath(new URL('shop-desktop.png', OUT)) });
+    const bought = await page.evaluate(() => __game.bag.coins);
+    check((await potions()) === 6 && bought === 500 - 6 * 30, `사기 1개 + 5개 → 물약 ${await potions()}개 · 냥코인 ${bought}`);
+    await click((await scr()).modes[1]);
+    await click((await scr()).cells[await page.evaluate(() => __game.bag.slots.findIndex((s) => s?.id === 'curios_01'))]);
+    await sleep(100);
+    await page.screenshot({ path: fsPath(new URL('shop-sell.png', OUT)) });
+    await click((await scr()).drop); // 모두 팔기
+    const sold = await page.evaluate(() => ({ coins: __game.bag.coins, found: __game.bag.found.curios_01 }));
+    check((await potions()) === 0 && sold.coins === bought + 6 * 15 && sold.found === 6, `모두 팔기 → 반값 6 × 15냥 = ${sold.coins - bought} · 도감엔 6개 그대로`);
+    await page.keyboard.press('Escape');
+    await sleep(1500);
+    check(!(await page.evaluate(() => __game.shopOpen)), '닫으면 포탈 위에 있어도 다시 안 열린다 (한 번 벗어났다 와야)');
+    check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
+    await page.close();
+  }
+  {
+    const { page, errors } = await open('fishing');
+    await page.waitForFunction(() => __game.fishing.phase === 'ready', { timeout: 8000 });
+    const id = 'curios_19'; // 쪽지 든 병
+    await page.evaluate((id) => __game.bite(id), id);
+    await page.mouse.move(600, 400);
+    await page.mouse.down();
+    const done = await page.waitForFunction(() => !['bite', 'hook', 'reel'].includes(__game.fishing.phase), { timeout: 20000 }).then(() => true, () => false);
+    await page.mouse.up();
+    await sleep(600);
+    await page.screenshot({ path: fsPath(new URL('fishing-salvage.png', OUT)) });
+    const r = await page.evaluate((id) => ({ c: __game.fishing.catch, has: __game.bag.slots.some((s) => s?.id === id), dex: Object.keys(__game.fishing.dex).length }), id);
+    check(done && r.c?.item && r.c.kind === id && r.has, `가라앉은 물건을 물리고 감으면 건져서 가방에 (${r.c?.name})`);
+    check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
+    await page.close();
+  }
+  {
+    const { page, errors } = await open('dungeon');
+    await page.evaluate(() => localStorage.removeItem('nyang.monsters.v1'));
+    await page.reload({ waitUntil: 'load' });
+    await page.waitForFunction(() => window.__sheets, { timeout: 60000 });
+    await page.evaluate(() => {
+      const d = __game.dungeon;
+      const e = d.enemies.find((v) => v.kind === 'sword');
+      Object.assign(e, { hp: 1, x: d.P.x + d.P.faceX * 0.9, z: d.P.z + d.P.faceZ * 0.9 });
+    });
+    await page.keyboard.press('KeyJ');
+    await sleep(300);
+    const mon = await page.evaluate(() => ({ n: __game.monsters.sword, saved: JSON.parse(localStorage.getItem('nyang.monsters.v1') ?? '{}').sword }));
+    check(mon.n === 1 && mon.saved === 1, '쓰러뜨리면 몬스터 도감에 센다 (저장도)');
+    check((await page.evaluate(() => __game.ungrouped())).length === 0, '모든 몬스터가 도감 지역에 들어 있다');
+    await page.keyboard.press('KeyB');
+    const book = await page.evaluate(() => ({ open: __game.dexOpen, cat: __game.book.cat, tab: __game.book.tab.monster }));
+    check(book.open && book.cat === 'monster' && book.tab === 'rat', `던전에서 B → 도감 몬스터 갈래 · 그 방 지역 (${book.cat} ${book.tab})`);
+    const ds = () => page.evaluate(() => __game.dexScreen());
+    const click = async (p) => {
+      await page.mouse.move(p.x, p.y);
+      await page.mouse.down();
+      await page.mouse.up();
+    };
+    await click((await ds()).cells[0]);
+    await sleep(500); // 몬스터 그림 불러오기
+    await page.screenshot({ path: fsPath(new URL('book-monster.png', OUT)) });
+    check((await page.evaluate(() => __game.book.pick)) === 'sword', '몬스터 칸을 누르면 설명');
+    await click((await ds()).chips[2]);
+    await click((await ds()).cells[0]);
+    await sleep(200);
+    await page.screenshot({ path: fsPath(new URL('book-item.png', OUT)) });
+    const it = await page.evaluate(() => ({ cat: __game.book.cat, pick: __game.book.pick }));
+    check(it.cat === 'item' && it.pick === 'equipment_01', `아이템 갈래 · 칸 (${it.pick})`);
+    await click((await ds()).chips[0]);
+    check((await page.evaluate(() => __game.book.cat)) === 'fish', '물고기 갈래');
+    await click((await ds()).close);
+    check(!(await page.evaluate(() => __game.dexOpen)) && errors.length === 0, `✕ 로 닫기 · 페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
+    await page.close();
+  }
+  for (const [name, view] of [['phone-portrait', { width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true }], ['phone', PHONE]]) {
+    const { page, errors } = await open('field', '', view, '&touch');
+    await page.keyboard.press('KeyB');
+    await tap(page, (await page.evaluate(() => __game.dexScreen())).chips[1]);
+    await tap(page, (await page.evaluate(() => __game.dexScreen())).cells[0]);
+    await sleep(500);
+    await page.screenshot({ path: fsPath(new URL(`book-${name}.png`, OUT)) });
+    await tap(page, (await page.evaluate(() => __game.dexScreen())).close);
+    const shopWarp = FIELD.warps.find((w) => w.to === 'shop');
+    await page.evaluate((at) => Object.assign(__game.field, { x: at[0], y: at[1], camX: at[0], camY: at[1], armed: true, mode: 'walk' }), shopWarp.at);
+    await page.waitForFunction(() => __game.shopOpen, { timeout: 4000 }).catch(() => {});
+    await tap(page, (await page.evaluate(() => __game.shopScreen())).cells[3]);
+    await sleep(200);
+    await page.screenshot({ path: fsPath(new URL(`shop-${name}.png`, OUT)) });
+    check(errors.length === 0, `${name}: 도감·상점 화면 · 페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
     await page.close();
   }
 

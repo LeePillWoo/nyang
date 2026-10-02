@@ -7,7 +7,7 @@
  * 장비 능력치(가방 bag.ts)가 공격·체력·방어·이동·행운에 더해진다. 쓰러진 몬스터는 냥코인·아이템을 떨어뜨리고,
  * 고양이가 다가가면 빨려 와 가방에 들어간다 (방을 깨면 남은 게 전부 날아온다).
  */
-import { addItem, makeBag, rollDrops, stats, type Bag } from './bag.ts';
+import { makeBag, obtain, rollDrops, stats, type Bag } from './bag.ts';
 import { CELL, resolveCircle } from './collide.ts';
 import player from './data/player.json' with { type: 'json' };
 import {
@@ -49,7 +49,7 @@ const MAGNET = 1.8;
 export type Arrow = { x: number; z: number; dx: number; dz: number; speed: number; dmg: number; life: number };
 export type Phase = 'playing' | 'cleared' | 'napped';
 /** 소리용 사건. 한 프레임 동안만 남는다 */
-export type DungeonEvent = { type: 'hit'; finish: boolean } | { type: 'pop' } | { type: 'hurt' } | { type: 'loot'; coin: boolean } | { type: 'full' };
+export type DungeonEvent = { type: 'hit'; finish: boolean } | { type: 'pop'; kind: Kind } | { type: 'hurt' } | { type: 'loot'; coin: boolean } | { type: 'full' };
 /** 화면 기준 입력. mx, my 는 -1..1 */
 export type DungeonInput = { mx: number; my: number; punch: boolean; dash: boolean };
 
@@ -203,7 +203,7 @@ function dropLoot(d: Dungeon, e: Enemy) {
 
 /** 줍기: 가방에 넣고 알림. 못 넣은 만큼 남긴다 */
 function take(d: Dungeon, l: Loot) {
-  const left = l.id === 'coin' ? ((d.bag.coins += l.n), 0) : addItem(d.bag, l.id, l.n);
+  const left = l.id === 'coin' ? ((d.bag.coins += l.n), 0) : obtain(d.bag, l.id, l.n);
   const got = l.n - left;
   if (got > 0) {
     const last = d.toasts[d.toasts.length - 1];
@@ -314,7 +314,7 @@ export function updateDungeon(d: Dungeon, input: DungeonInput, dt: number): 'exi
         addFx(d, e.x, e.z, down ? ((d.room.def.popFx as FxId) ?? 'burst') : 'spark', down ? 333 : 219);
         if (down) {
           finish = true;
-          d.events.push({ type: 'pop' });
+          d.events.push({ type: 'pop', kind: e.kind });
           dropLoot(d, e);
         }
       }

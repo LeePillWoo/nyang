@@ -16,7 +16,8 @@
     "slackTime": 2.2,
     "landRadius": 26,
     "failTime": 1.8,
-    "boredTime": 15
+    "boredTime": 15,
+    "salvage": 0.15
   },
   "spots": {
     "lake_island_fishing": {
@@ -36,6 +37,7 @@
       "defaultCast": [1160, 535],
       "popup": [1210, 340],
       "fishCount": 4,
+      "salvage": [["curios_13", 10], ["curios_14", 10], ["curios_18", 4], ["curios_19", 3], ["curios_20", 2], ["materials_35", 2], ["equipment_26", 1]],
       "fish": {
         "silver_minnow": 34,
         "golden_crucian": 26,
@@ -66,6 +68,7 @@
       "defaultCast": [1050, 540],
       "popup": [1210, 340],
       "fishCount": 4,
+      "salvage": [["materials_16", 10], ["curios_11", 6], ["curios_14", 4], ["curios_30", 2], ["equipment_15", 1], ["equipment_27", 1]],
       "fish": {
         "ice_smelt": 34,
         "snow_whitefish": 26,
@@ -95,6 +98,7 @@
       "defaultCast": [1130, 555],
       "popup": [1210, 340],
       "fishCount": 4,
+      "salvage": [["curios_16", 8], ["curios_18", 6], ["curios_25", 2], ["curios_27", 2], ["curios_28", 2], ["equipment_16", 0.5]],
       "fish": {
         "turquoise_killi": 34,
         "amber_tilapia": 26,
@@ -122,6 +126,7 @@
       "defaultCast": [1130, 545],
       "popup": [1210, 340],
       "fishCount": 4,
+      "salvage": [["materials_19", 10], ["materials_21", 6], ["materials_20", 3], ["curios_19", 3], ["curios_29", 2], ["equipment_18", 1]],
       "fish": {
         "blue_mackerel": 34,
         "clownfish": 26,
@@ -148,6 +153,7 @@
       "defaultCast": [1130, 550],
       "popup": [1210, 340],
       "fishCount": 4,
+      "salvage": [["materials_13", 8], ["materials_14", 8], ["materials_15", 5], ["curios_21", 2], ["curios_26", 2], ["curios_34", 1]],
       "fish": {
         "pearl_cave_tetra": 34,
         "blue_lanternfish": 26,
@@ -176,6 +182,7 @@
       "defaultCast": [1130, 550],
       "popup": [1210, 340],
       "fishCount": 4,
+      "salvage": [["materials_05", 10], ["curios_17", 8], ["curios_15", 4], ["curios_32", 2], ["curios_35", 2], ["equipment_31", 1]],
       "fish": {
         "redfin_dace": 34,
         "autumn_bitterling": 26,
@@ -202,6 +209,7 @@
       "defaultCast": [1130, 550],
       "popup": [1210, 340],
       "fishCount": 4,
+      "salvage": [["materials_24", 10], ["materials_03", 8], ["curios_16", 6], ["curios_19", 3], ["curios_31", 1], ["curios_36", 1]],
       "fish": {
         "mudskipper": 34,
         "archerfish": 26,
