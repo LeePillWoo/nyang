@@ -503,7 +503,7 @@ const enterFishing = (to: string) =>
     [fishIn.x, fishIn.y] = fishing.spot.defaultCast; // 마우스를 안 움직이고 Space 로 던지면 여기로
     resetFishingFx();
     quiet();
-    say('focus', 1.6);
+    say((fishing.spot.mood ?? 'focus') as EmoteId, 1.6);
     sayHelp();
   });
 /** 포탈 → 던전 또는 낚시터 */

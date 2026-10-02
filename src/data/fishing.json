@@ -25,7 +25,12 @@
       "size": [1672, 941],
       "seat": [735, 482],
       "catScale": 0.9,
-      "water": [[960, 210], [1560, 210], [1560, 755], [965, 755]],
+      "water": [
+        [960, 210],
+        [1560, 210],
+        [1560, 755],
+        [965, 755]
+      ],
       "landing": [985, 545],
       "defaultCast": [1160, 535],
       "popup": [1210, 340],
@@ -37,6 +42,166 @@
         "rainbow_trout": 12,
         "blue_catfish": 7,
         "sunset_koi": 3
+      }
+    },
+    "ice_fishing": {
+      "name": "크리스마스 얼음 호수",
+      "image": "fishing/ice/ice_bg_v1",
+      "size": [1672, 941],
+      "seat": [640, 477],
+      "catScale": 0.9,
+      "water": [
+        [945, 340],
+        [1220, 335],
+        [1410, 415],
+        [1460, 595],
+        [1300, 710],
+        [1010, 685],
+        [850, 570],
+        [850, 440]
+      ],
+      "landing": [890, 540],
+      "defaultCast": [1050, 540],
+      "popup": [1210, 340],
+      "fishCount": 4,
+      "fish": {
+        "ice_smelt": 34,
+        "snow_whitefish": 26,
+        "arctic_char": 18,
+        "violet_grayling": 12,
+        "mottled_burbot": 7,
+        "aurora_star": 3
+      },
+      "clip": true,
+      "mood": "cold",
+      "shadowAlpha": 0.6
+    },
+    "desert_fishing": {
+      "name": "피라미드 오아시스",
+      "image": "fishing/desert/desert_bg_v1",
+      "size": [1672, 941],
+      "seat": [745, 490],
+      "catScale": 0.9,
+      "water": [
+        [950, 210],
+        [1570, 210],
+        [1570, 800],
+        [960, 800]
+      ],
+      "landing": [995, 553],
+      "defaultCast": [1130, 555],
+      "popup": [1210, 340],
+      "fishCount": 4,
+      "fish": {
+        "turquoise_killi": 34,
+        "amber_tilapia": 26,
+        "ruby_barb": 18,
+        "sand_loach": 12,
+        "oasis_moonfish": 7,
+        "royal_lapis": 3
+      },
+      "mood": "heat"
+    },
+    "sea_fishing": {
+      "name": "해적섬 앞 바다",
+      "image": "fishing/sea/sea_bg_v1",
+      "size": [1672, 941],
+      "seat": [730, 465],
+      "catScale": 0.9,
+      "water": [
+        [950, 180],
+        [1570, 180],
+        [1570, 800],
+        [960, 800]
+      ],
+      "landing": [981, 528],
+      "defaultCast": [1130, 545],
+      "popup": [1210, 340],
+      "fishCount": 4,
+      "fish": {
+        "blue_mackerel": 34,
+        "clownfish": 26,
+        "pink_bream": 18,
+        "yellow_puffer": 12,
+        "sand_flounder": 7,
+        "bluefin_tuna": 3
+      }
+    },
+    "cave_fishing": {
+      "name": "수정동굴 지하호수",
+      "image": "fishing/cave/cave_bg_v1",
+      "size": [1672, 941],
+      "seat": [735, 482],
+      "catScale": 0.9,
+      "water": [
+        [960, 260],
+        [1550, 260],
+        [1550, 790],
+        [960, 790]
+      ],
+      "landing": [985, 545],
+      "defaultCast": [1130, 550],
+      "popup": [1210, 340],
+      "fishCount": 4,
+      "fish": {
+        "pearl_cave_tetra": 34,
+        "blue_lanternfish": 26,
+        "violet_crystal_barb": 18,
+        "rose_cave_loach": 12,
+        "moon_diskfish": 7,
+        "obsidian_jewel": 3
+      },
+      "shadowAlpha": 0.38,
+      "mood": "dazzled"
+    },
+    "autumn_fishing": {
+      "name": "가을 숲 연못",
+      "image": "fishing/autumn/autumn_bg_v1",
+      "size": [1672, 941],
+      "seat": [735, 482],
+      "catScale": 0.9,
+      "water": [
+        [960, 260],
+        [1550, 260],
+        [1550, 790],
+        [960, 790]
+      ],
+      "landing": [985, 545],
+      "defaultCast": [1130, 550],
+      "popup": [1210, 340],
+      "fishCount": 4,
+      "fish": {
+        "redfin_dace": 34,
+        "autumn_bitterling": 26,
+        "copper_tench": 18,
+        "leaf_gourami": 12,
+        "pumpkin_sunfish": 7,
+        "maple_fantail": 3
+      }
+    },
+    "mangrove_fishing": {
+      "name": "맹그로브 늪지",
+      "image": "fishing/mangrove/mangrove_bg_v1",
+      "size": [1672, 941],
+      "seat": [735, 482],
+      "catScale": 0.9,
+      "water": [
+        [960, 260],
+        [1550, 260],
+        [1550, 790],
+        [960, 790]
+      ],
+      "landing": [985, 545],
+      "defaultCast": [1130, 550],
+      "popup": [1210, 340],
+      "fishCount": 4,
+      "fish": {
+        "mudskipper": 34,
+        "archerfish": 26,
+        "silver_mullet": 18,
+        "green_scat": 12,
+        "mangrove_jack": 7,
+        "emerald_goby": 3
       }
     }
   }

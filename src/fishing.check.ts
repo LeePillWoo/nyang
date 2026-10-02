@@ -3,9 +3,11 @@ import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import atlas from './data/fishing-atlas.json' with { type: 'json' };
 import {
+  clampWater,
   commitBite,
   debugBite,
   FISH,
+  inWaterBy,
   makeFishing,
   record,
   RULES,
@@ -334,6 +336,29 @@ function hooked(kind: string, seed: number) {
   s.t = 0;
   tap(s);
   assert.equal(s.phase, 'ready');
+}
+
+// 얼음 구멍(다각형 물): 물고기는 헤엄치고 놀라 달아나도 늘 구멍 안에 있고, 구멍 밖을 겨눠도 찌는 구멍 안에 떨어진다
+{
+  const s = makeFishing('ice_fishing', {}, seeded(61));
+  const spot = s.spot;
+  let out = 0;
+  for (let k = 0; k < 60 * 30; k++) {
+    if (k % 90 === 0 && s.fishes[0]) s.fishes.forEach((f) => (f.scared = 0)); // 가끔 다시 다가오게
+    if (k % 240 === 0) {
+      // 아무 데나 던져 물고기를 놀라게 한다
+      s.phase = 'cast';
+      s.t = 0;
+      [s.castX, s.castY] = clampWater(spot, 900 + (k % 600), 400 + (k % 300));
+    }
+    updateFishing(s, at(0, 0), DT);
+    for (const f of s.fishes) if (!inWaterBy(spot, f.x, f.y, 0)) out++;
+  }
+  assert.equal(out, 0, `얼음 위로 나간 물고기 프레임 ${out}`);
+  for (const [x, y] of [[1600, 200], [700, 500], [1200, 900], [860, 345]]) {
+    const [cx, cy] = clampWater(spot, x, y);
+    assert.ok(inWaterBy(spot, cx, cy, 19), `(${x},${y}) → (${cx.toFixed(0)},${cy.toFixed(0)}) 이 구멍 안`);
+  }
 }
 
 // 데이터가 서로 맞는지: 낚시터의 물고기는 fish.json · 시트 좌표(fishing-atlas.json)에 있고, 배경·시트 WebP 가 실제로 있다

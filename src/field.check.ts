@@ -17,7 +17,7 @@ import {
   type TerrainAt,
 } from './field.ts';
 
-const warp = FIELD.warps[0];
+const warp = FIELD.warps.find((w) => w.to)!; // 연결된 첫 포탈 (던전이든 낚시터든)
 const [wx, wy] = warp.at;
 const run = (s: FieldState, mx: number, my: number, secs: number) => {
   let got = null;
@@ -42,7 +42,7 @@ const standOnWarp = () => {
 {
   const s = standOnWarp();
   assert.equal(run(s, 0, 0, warp.dwell * 0.5), null, '잠깐은 안 간다');
-  assert.equal(run(s, 0, 0, warp.dwell * 0.6)?.to, 'alley', '충분히 머물면 던전으로');
+  assert.equal(run(s, 0, 0, warp.dwell * 0.6)?.to, warp.to, '충분히 머물면 그 포탈의 던전·낚시터로');
 }
 
 // 머물다 나가면 처음부터 다시 센다
@@ -64,12 +64,12 @@ const standOnWarp = () => {
   s.x = wx + 100;
   run(s, 0, 0, 0.05);
   s.x = wx;
-  assert.equal(run(s, 0, 0, warp.dwell + 0.1)?.to, 'alley');
+  assert.equal(run(s, 0, 0, warp.dwell + 0.1)?.to, warp.to);
 }
 
 // 던전에서 나오면 입구 앞에 서고, 나오자마자 다시 빨려 들어가지 않는다
 {
-  assert.deepEqual(backFrom('alley'), warp.back);
+  assert.deepEqual(backFrom(warp.to), warp.back);
   assert.ok(!inWarp(warp, warp.back[0], warp.back[1]));
 }
 

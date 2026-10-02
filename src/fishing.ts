@@ -45,7 +45,31 @@ export type FishDef = {
   legendary: boolean;
 };
 export const FISH = fishDefs as Record<string, FishDef>;
-export type SpotDef = (typeof data.spots)['lake_island_fishing'];
+/** 낚시터 (fishing.json spots) — 좌표는 그 배경 그림 픽셀 */
+export type SpotDef = {
+  name: string;
+  /** 배경 (src/assets/ 기준, 확장자 없이) */
+  image: string;
+  size: number[];
+  /** 고양이 발 자리와 배율 */
+  seat: number[];
+  catScale: number;
+  /** 물 영역 다각형 — 물고기·찌·조준이 이 안에 있다 */
+  water: number[][];
+  /** 낚아 올리는 곳 (선착장 끝 물) */
+  landing: number[];
+  defaultCast: number[];
+  popup: number[];
+  fishCount: number;
+  /** 사는 물고기 → 나오는 비율 */
+  fish: Record<string, number>;
+  /** 물 영역 밖으로 그림자·물결·찌를 그리지 않는다 (얼음 구멍처럼 보이는 물이 일부뿐인 곳) */
+  clip?: boolean;
+  /** 그림자 진하기 (기본 0.32) */
+  shadowAlpha?: number;
+  /** 들어갈 때 고양이 감정 (emotions.json) */
+  mood?: string;
+};
 export const SPOTS = data.spots as Record<string, SpotDef>;
 export const RULES = data.rules;
 
@@ -198,17 +222,47 @@ const box = (spot: SpotDef) => {
   const ys = spot.water.map((p) => p[1]);
   return { x0: Math.min(...xs), x1: Math.max(...xs), y0: Math.min(...ys), y1: Math.max(...ys) };
 };
-/** ponytail: 물 영역 바운딩 박스 안으로 가둔다 — 물 다각형이 거의 직사각형이라 충분. 휘어진 물가가 오면 다각형 투영으로 */
+/** 물 다각형 변까지 가장 짧은 거리 */
+function edgeDist(spot: SpotDef, x: number, y: number) {
+  const p = spot.water;
+  let best = Infinity;
+  for (let i = 0, j = p.length - 1; i < p.length; j = i++) {
+    const [ax, ay] = p[j];
+    const [bx, by] = p[i];
+    const t = Math.max(0, Math.min(1, ((x - ax) * (bx - ax) + (y - ay) * (by - ay)) / ((bx - ax) ** 2 + (by - ay) ** 2 || 1)));
+    best = Math.min(best, Math.hypot(x - ax - t * (bx - ax), y - ay - t * (by - ay)));
+  }
+  return best;
+}
+/** 물 안쪽이고 물가에서 m 이상 떨어져 있나 */
+export const inWaterBy = (spot: SpotDef, x: number, y: number, m: number) => inWater(spot, x, y) && edgeDist(spot, x, y) >= m;
+
+/**
+ * 물 안으로 가둔다 (물가에서 m 안쪽). 먼저 바운딩 박스로 — 직사각형 물에선 이것만으로 끝나고 물가를 따라 미끄러진다.
+ * 그래도 밖이면(얼음 구멍 같은 다각형) 물 가운데 쪽으로 당긴다 (볼록한 물 영역이면 정확하다).
+ */
 export function clampWater(spot: SpotDef, x: number, y: number, m = 20): [number, number] {
   const b = box(spot);
-  return [Math.min(b.x1 - m, Math.max(b.x0 + m, x)), Math.min(b.y1 - m, Math.max(b.y0 + m, y))];
+  x = Math.min(b.x1 - m, Math.max(b.x0 + m, x));
+  y = Math.min(b.y1 - m, Math.max(b.y0 + m, y));
+  if (inWaterBy(spot, x, y, m)) return [x, y];
+  const cx = spot.water.reduce((a, q) => a + q[0], 0) / spot.water.length;
+  const cy = spot.water.reduce((a, q) => a + q[1], 0) / spot.water.length;
+  let lo = 0;
+  let hi = 1;
+  for (let i = 0; i < 18; i++) {
+    const t = (lo + hi) / 2;
+    if (inWaterBy(spot, cx + (x - cx) * t, cy + (y - cy) * t, m)) lo = t;
+    else hi = t;
+  }
+  return [cx + (x - cx) * lo, cy + (y - cy) * lo];
 }
 function randomWater(s: FishingState, m = 40): [number, number] {
   const b = box(s.spot);
   for (let i = 0; i < 30; i++) {
     const x = b.x0 + m + (b.x1 - b.x0 - 2 * m) * s.rng();
     const y = b.y0 + m + (b.y1 - b.y0 - 2 * m) * s.rng();
-    if (inWater(s.spot, x, y)) return [x, y];
+    if (inWaterBy(s.spot, x, y, m)) return [x, y];
   }
   return [(b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2];
 }

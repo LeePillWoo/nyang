@@ -188,7 +188,19 @@ export function drawFishing(ctx: CanvasRenderingContext2D, cw: number, ch: numbe
 
   stepFx(s, v.dt);
 
+  // 얼음 구멍처럼 물이 일부뿐인 곳은 물 영역 밖으로 그림자·물결·찌가 나가지 않게 자른다
+  const clip = (on: boolean) => {
+    if (!spot.clip) return;
+    if (!on) return ctx.restore();
+    ctx.save();
+    ctx.beginPath();
+    spot.water.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+    ctx.closePath();
+    ctx.clip();
+  };
+
   // 그림자 물고기
+  clip(true);
   for (const f of s.fishes) drawShadow(ctx, s, f, v.t);
 
   // 물결 · 한 번 재생 이펙트 (물에 붙은 것)
@@ -204,6 +216,7 @@ export function drawFishing(ctx: CanvasRenderingContext2D, cw: number, ch: numbe
     if (sh.st === A.fx.states.catch_sparkle) continue;
     cell(ctx, IMG('fx'), at(sh.st, sh.t), sh.x, sh.y, sh.scale);
   }
+  clip(false);
 
   // 고양이 프레임을 먼저 골라 낚싯대 끝을 안다 → 줄 → 고양이 → 찌
   const cf = catFrame(s, v.t);
@@ -216,7 +229,10 @@ export function drawFishing(ctx: CanvasRenderingContext2D, cw: number, ch: numbe
   const end = lineEnd(s, tipX, tipY);
   if (end) drawLine(ctx, s, tipX, tipY, end.x, end.y, v.t);
   ctx.drawImage(IMG('cat'), csx, csy, csw, csh, cox, coy, csw * k, csh * k);
+  // 날아가는 찌는 자르지 않는다 (공중)
+  if (s.phase !== 'cast') clip(true);
   drawBobber(ctx, s, end, v.t);
+  if (s.phase !== 'cast') clip(false);
   drawAim(ctx, s, tipX, tipY);
   drawEmote(ctx, cox + (cbx + cbw * 0.42) * k, coy + cby * k - 2, 72);
 
@@ -274,7 +290,8 @@ function drawShadow(ctx: CanvasRenderingContext2D, s: FishingState, f: Fish, t: 
   if (hooked && s.run > 0) rot += Math.sin(t * 32) * 0.16; // 날뛸 땐 몸부림
   // 펄쩍 뛰어 물 밖에 있는 동안은 그림자가 옅다
   const air = hooked && s.jumpT > 0 ? 0.3 : 1;
-  cell(ctx, IMG('shadow'), fr, f.x, f.y, scale, flip, rot, (hooked ? 0.45 : 0.32) * f.alpha * air);
+  const base = s.spot.shadowAlpha ?? 0.32;
+  cell(ctx, IMG('shadow'), fr, f.x, f.y, scale, flip, rot, (hooked ? base + 0.13 : base) * f.alpha * air);
   // 전설 물고기는 가끔 반짝인다 — 알아보고 노리게
   if (f.def.legendary && f.mode !== 'leave') {
     const lt = (t + f.id * 0.7) % 2.4;

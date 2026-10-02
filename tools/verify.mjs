@@ -55,7 +55,7 @@ async function open(where = 'dungeon', room = '') {
   const page = await browser.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
-  const q = where === 'dungeon' ? '&dungeon' + (room ? '=' + room : '') : where === 'fishing' ? '&fishing' : '';
+  const q = where === 'dungeon' ? '&dungeon' + (room ? '=' + room : '') : where === 'fishing' ? '&fishing' + (room ? '=' + room : '') : '';
   await page.goto(base + '?trace' + q, { waitUntil: 'load' });
   await page.waitForFunction(() => window.__sheets, { timeout: 60000 });
   return { page, errors };
@@ -392,7 +392,47 @@ try {
     await page.close();
   }
 
-  // 4) 왕복: 필드에서 시작 → 집 앞 워프로 걸어가 머문다 → 던전 → 노란 매트로 걸어 나간다 → 필드
+  // 3-5) 낚시터마다: 열린다 · 실제 마우스로 던진 찌가 그곳 물 안에 떨어진다 · 물고기가 물 밖(얼음 위)으로 안 나간다 · 에러 없음.
+  //  화면은 tools/out/fishing-<낚시터>.png
+  console.log('\n[낚시터]');
+  for (const id of Object.keys(readJson('../src/data/fishing.json').spots)) {
+    const { page, errors } = await open('fishing', id);
+    await page.waitForFunction((id) => __game.scene === 'fishing' && __game.fishing.spotId === id, { timeout: 8000 }, id);
+    const spot = await page.evaluate(() => __game.fishing.spot);
+    const at = await page.evaluate(([x, y]) => __game.fishScreen(x, y), spot.defaultCast);
+    await page.mouse.move(at.x, at.y);
+    await page.mouse.down();
+    await sleep(530);
+    await page.mouse.up();
+    const landed = await page.waitForFunction(() => __game.fishing.phase === 'wait', { timeout: 3000 }).then(() => true, () => false);
+    // 2초 동안 물고기 위치를 지켜본다
+    const outside = await page.evaluate(
+      () =>
+        new Promise((done) => {
+          const s = __game.fishing;
+          const inPoly = (x, y) => {
+            let r = false;
+            const p = s.spot.water;
+            for (let i = 0, j = p.length - 1; i < p.length; j = i++)
+              if (p[i][1] > y !== p[j][1] > y && x < ((p[j][0] - p[i][0]) * (y - p[i][1])) / (p[j][1] - p[i][1]) + p[i][0]) r = !r;
+            return r;
+          };
+          let bad = inPoly(s.bobX, s.bobY) ? 0 : 1000;
+          const t0 = performance.now();
+          const f = () => {
+            for (const v of s.fishes) if (!inPoly(v.x, v.y)) bad++;
+            if (performance.now() - t0 < 2000) requestAnimationFrame(f);
+            else done(bad);
+          };
+          f();
+        }),
+    );
+    check(landed && outside === 0 && errors.length === 0, `${id} (${spot.name}): 찌가 물 안에 · 물고기 물 밖 ${outside >= 1000 ? '찌가 밖!' : outside + '프레임'} · 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
+    await page.screenshot({ path: fsPath(new URL(`fishing-${id}.png`, OUT)) });
+    await page.close();
+  }
+
+  // 4) 왕복: 필드에서 시작 → 골목 던전 포탈(고양이마을) 앞으로 → 포탈로 걸어가 머문다 → 던전 → 나가는 칸으로 걸어 나간다 → 필드
   console.log('\n[필드 ↔ 던전 왕복]');
   {
     const { page, errors } = await open('field');
@@ -405,9 +445,11 @@ try {
     const moved = await page.evaluate(() => __game.field.x);
     check(moved > game.x + 20, `D 키로 오른쪽으로 걷는다 (${game.x.toFixed(0)} → ${moved.toFixed(0)})`);
 
+    const ALLEY = FIELD.warps.find((w) => w.to === 'alley');
+    await page.evaluate(([x, y]) => Object.assign(__game.field, { x, y, camX: x, camY: y, armed: true, mode: 'walk' }), ALLEY.back);
+    await sleep(300);
     const warp = await page.evaluate(() => __game.field.warp ?? null);
-    const warpAt = FIELD.warps[0].at;
-    await walk(page, fieldPos, warpAt, fieldKeys, () => __game.field.dwell > 0.3);
+    await walk(page, fieldPos, ALLEY.at, fieldKeys, () => __game.field.dwell > 0.3);
     await page.screenshot({ path: fsPath(new URL('field-warp.png', OUT)) });
     const entered = await page.waitForFunction(() => __game.scene === 'dungeon', { timeout: 4000 }).then(() => true, () => false);
     check(entered && warp === null, '워프에 머물면 던전으로 들어간다');
@@ -432,9 +474,9 @@ try {
     check(left, '방을 클리어한 뒤 나가는 칸까지 걸어가 필드로 나온다');
     await sleep(500);
     const back = await page.evaluate(() => ({ x: __game.field.x, y: __game.field.y, armed: __game.field.armed }));
-    const [bx, by] = FIELD.warps[0].back;
+    const [bx, by] = ALLEY.back;
     // 도착 순간 아직 누르고 있던 키로 몇 픽셀 걸을 수 있다 (게임에서도 정상 동작)
-    check(Math.abs(back.x - bx) < 15 && Math.abs(back.y - by) < 15, `집 앞으로 돌아온다 (${back.x.toFixed(0)}, ${back.y.toFixed(0)})`);
+    check(Math.abs(back.x - bx) < 15 && Math.abs(back.y - by) < 15, `들어갔던 포탈 앞으로 돌아온다 (${back.x.toFixed(0)}, ${back.y.toFixed(0)})`);
     await sleep(1500);
     check((await page.evaluate(() => __game.scene)) === 'field', '돌아오자마자 다시 빨려 들어가지 않는다');
     await page.screenshot({ path: fsPath(new URL('field-back.png', OUT)) });
