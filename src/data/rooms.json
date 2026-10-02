@@ -52,7 +52,8 @@
       ["frog_lily", 2, 2],
       ["slime_drop", 7, 2],
       ["frog_pouch", 6, 6],
-      ["slime_wave", 2, 7]
+      ["slime_wave", 2, 7],
+      ["reed_dragonfly", 1, 4]
     ],
     "mood": "rhythm"
   },
@@ -81,7 +82,8 @@
       ["crab_shell", 2, 2],
       ["gull_scout", 7, 2],
       ["gull_sailor", 6, 6],
-      ["crab_chest", 2, 7]
+      ["crab_chest", 2, 7],
+      ["coral_octopus", 1, 4]
     ],
     "mood": "focus"
   },
@@ -109,7 +111,8 @@
     "spawns": [
       ["turtle_dune", 2, 2],
       ["crab_cup", 7, 2],
-      ["turtle_wood", 6, 6]
+      ["turtle_wood", 6, 6],
+      ["lily_snail", 2, 7]
     ],
     "mood": "relief"
   },
@@ -138,7 +141,8 @@
       ["mushroom_parasol", 2, 2],
       ["beetle_acorn", 7, 2],
       ["sprout_bramble", 6, 6],
-      ["mushroom_cluster", 2, 7]
+      ["mushroom_cluster", 2, 7],
+      ["moss_boar", 1, 4]
     ],
     "mood": "focus"
   },
@@ -167,7 +171,8 @@
       ["sunflower_short", 2, 2],
       ["beetle_leafwing", 7, 2],
       ["sunflower_twin", 6, 6],
-      ["sprout_twig", 2, 7]
+      ["sprout_twig", 2, 7],
+      ["acorn_squirrel", 1, 4]
     ],
     "mood": "delight"
   },
@@ -195,7 +200,8 @@
     "spawns": [
       ["golem_stack", 2, 2],
       ["sprout_coil", 7, 2],
-      ["golem_boulder", 6, 6]
+      ["golem_boulder", 6, 6],
+      ["quartz_ram", 2, 7]
     ],
     "mood": "determination"
   },
@@ -224,7 +230,7 @@
       ["gift_ruby", 2, 2],
       ["gift_emerald", 7, 2],
       ["gift_bauble", 6, 6],
-      ["gift_ruby", 2, 7]
+      ["snow_hare", 2, 7]
     ],
     "popFx": "gift_confetti",
     "mood": "gift_anticipation"
@@ -254,7 +260,7 @@
       ["penguin_scarf", 2, 2],
       ["penguin_icecrest", 7, 2],
       ["penguin_bell", 6, 6],
-      ["penguin_scarf", 2, 7]
+      ["icicle_hedgehog", 2, 7]
     ],
     "popFx": "ice_impact",
     "mood": "listening"
@@ -284,7 +290,8 @@
       ["jackal_linen", 2, 2],
       ["jackal_urn", 7, 2],
       ["jackal_pharaoh", 6, 6],
-      ["scarab_turquoise", 2, 7]
+      ["scarab_turquoise", 2, 7],
+      ["sand_scorpion", 1, 4]
     ],
     "popFx": "sand_puff",
     "mood": "treasure_temptation"
@@ -314,7 +321,8 @@
       ["scarab_turquoise", 2, 2],
       ["scarab_wing", 7, 2],
       ["scarab_crescent", 6, 6],
-      ["jackal_urn", 2, 7]
+      ["jackal_urn", 2, 7],
+      ["cactus_armadillo", 1, 4]
     ],
     "popFx": "sand_puff",
     "mood": "suspicion"
@@ -344,7 +352,7 @@
       ["bat_cyan", 2, 2],
       ["bat_quartz", 7, 2],
       ["bat_amber", 6, 6],
-      ["bat_cyan", 2, 7]
+      ["ore_mole", 2, 7]
     ],
     "popFx": "crystal_impact",
     "mood": "dazzled"
@@ -374,7 +382,7 @@
       ["otter_paddle", 2, 2],
       ["otter_buoy", 7, 2],
       ["otter_captain", 6, 6],
-      ["otter_paddle", 2, 7]
+      ["anchor_seal", 2, 7]
     ],
     "popFx": "pirate_smoke",
     "mood": "treasure_temptation"

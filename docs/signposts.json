@@ -43,6 +43,13 @@
     { "id": "oasis", "name": "사막 오아시스", "biome": "desert", "icon": "palm tree", "board": [4950, 2201], "ground": [4950, 2244], "tile": "r4_c5" },
     { "id": "sand_slide", "name": "모래 미끄럼틀", "biome": "desert", "icon": "winding slide", "board": [4353, 2389], "ground": [4353, 2435], "tile": "r5_c5" },
     { "id": "desert_landing", "name": "사막 선착장", "biome": "desert", "icon": "sailboat", "board": [3996, 2460], "ground": [3996, 2510], "tile": "r5_c4" },
-    { "id": "ancient_ruins", "name": "사막 고대 유적", "biome": "desert", "icon": "arch", "board": [4926, 2559], "ground": [4926, 2604], "tile": "r5_c5" }
+    { "id": "ancient_ruins", "name": "사막 고대 유적", "biome": "desert", "icon": "arch", "board": [4926, 2559], "ground": [4926, 2604], "tile": "r5_c5" },
+    { "id": "forest_added_cave", "name": "이끼숲 동굴", "biome": "forest", "icon": "cave", "board": [520, 1311], "ground": [520, 1331], "tile": "r2_c0" },
+    { "id": "mountain_added_cave", "name": "광석 광산 동굴", "biome": "mountain", "icon": "cave", "board": [2237, 1119], "ground": [2237, 1139], "tile": "r2_c2" },
+    { "id": "lake_added_cave", "name": "호숫가 수중굴", "biome": "lake", "icon": "cave", "board": [2955, 1169], "ground": [2955, 1189], "tile": "r2_c3" },
+    { "id": "snow_added_cave", "name": "고드름 설원 동굴", "biome": "snow", "icon": "cave", "board": [1421, 240], "ground": [1421, 260], "tile": "r0_c1" },
+    { "id": "desert_added_cave", "name": "스카라베 사막 동굴", "biome": "desert", "icon": "cave", "board": [4652, 2205], "ground": [4652, 2225], "tile": "r4_c5" },
+    { "id": "sea_added_cave", "name": "산호 해저 동굴", "biome": "sea", "icon": "cave", "board": [4845, 1264], "ground": [4845, 1284], "tile": "r2_c5" },
+    { "id": "autumn_added_cave", "name": "단풍나무 뿌리 동굴", "biome": "autumn", "icon": "cave", "board": [295, 2562], "ground": [295, 2582], "tile": "r5_c0" }
   ]
 }

@@ -8,6 +8,7 @@
 // - 지형 마스크 src/assets/world/masks/mask_rR_cC.png 가 없는 조각에만 빈 마스크(검정 = 전부 걷기)를 만든다.
 //   **이미 있는 마스크는 건드리지 않는다** (손으로 칠한 마스크 보호).
 // - 낚시 시트 좌표 art/fishing/common/atlas.json + art/fishing/<낚시터>/atlas.json → src/data/fishing-atlas.json (원본이 바뀌었을 때만).
+// - 아이템 아이콘 좌표 art/items/catalog.json → src/data/item-icons.json (원본이 바뀌었을 때만).
 // - src/assets 에 원본(PNG·JSON·MD)이 들어와 있으면 art/ 로 옮기라고 알려 준다 (지형 마스크 빼고).
 // - 미니맵 src/assets/world/minimap.webp 를 조각 36장을 1/8 로 줄여 만든다 (조각이 바뀌었을 때만).
 // - art/temp/, art/metadata/ 와 PNG 가 아닌 파일은 건너뛴다.
@@ -161,6 +162,22 @@ if (atlases.length && (all || !fs.existsSync(ATLAS_OUT) || atlases.some((a) => f
     }
   fs.writeFileSync(ATLAS_OUT, JSON.stringify(out).replace(/\],\[/g, '],\n[') + '\n');
   console.log(`  낚시 좌표  src/data/fishing-atlas.json (물고기 ${Object.keys(out.catch).length}종)`);
+}
+
+// 아이템 아이콘 좌표 art/items/catalog.json → src/data/item-icons.json: id → [시트, x, y, w, h] (그림이 있는 범위만)
+const ITEM_CAT = path.join(ART, 'items/catalog.json');
+const ICONS_OUT = path.join(ROOT, 'src/data/item-icons.json');
+if (fs.existsSync(ITEM_CAT) && (all || !fs.existsSync(ICONS_OUT) || fs.statSync(ITEM_CAT).mtimeMs > fs.statSync(ICONS_OUT).mtimeMs)) {
+  const cat = JSON.parse(fs.readFileSync(ITEM_CAT, 'utf8').replace(/^﻿/, '')); // BOM 이 붙어 올 때가 있다
+  const out = Object.fromEntries(
+    cat.items.map((it) => {
+      const [x, y] = it.rect;
+      const [bx, by, bw, bh] = it.visibleBounds;
+      return [it.id, [it.file.replace(/\.png$/, ''), x + bx, y + by, bw, bh]];
+    }),
+  );
+  fs.writeFileSync(ICONS_OUT, JSON.stringify(out).replace(/\],"/g, '],\n"') + '\n');
+  console.log(`  아이템 아이콘  src/data/item-icons.json (${cat.items.length}종)`);
 }
 
 // 원본 PNG 는 art/ 에 둔다 — src/assets 는 git 에 올라가는 게임용(WebP)이라 원본이 들어오면 알려 준다 (지형 마스크는 예외)
