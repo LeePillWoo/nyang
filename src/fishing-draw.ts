@@ -4,7 +4,8 @@
 import { image } from './assets.ts';
 import atlas from './data/fishing-atlas.json' with { type: 'json' };
 import { drawEmote } from './emote.ts';
-import { fishLen, mouth, RULES, SPOTS, type FailHint, type FailReason, type Fish, type FishEvent, type FishingState } from './fishing.ts';
+import { FISH, fishLen, mouth, RULES, SPOTS, type Dex, type FailHint, type FailReason, type Fish, type FishEvent, type FishingState } from './fishing.ts';
+import { safe } from './touch.ts';
 
 /** 칸마다 [x, y, w, h, 내용 x, y, w, h] — 고양이는 뒤에 [발 x, y, 낚싯대 끝 x, y] (칸 기준) */
 type St = { name: string; fps: number; loop: boolean; frames: number[][] };
@@ -22,6 +23,27 @@ export const fishingReady = (spotId: string) =>
   ]);
 const catchImg = (kind: string) => image(A.catch[kind].sheet).img;
 
+/** 검은 실루엣 시트 — 시트마다 한 번 만든다. ctx.filter 는 iOS 사파리 17 이하에서 무시돼서 못 잡은 물고기가 다 보였다 */
+const darkSheets = new Map<HTMLImageElement, HTMLCanvasElement>();
+/** 잡은 종은 그림 그대로, 못 잡은 종은 실루엣. 아직 불러오는 중이면 null */
+function fishImg(kind: string, caught: boolean): CanvasImageSource | null {
+  const img = catchImg(kind);
+  if (!img.complete || !img.naturalWidth) return null;
+  if (caught) return img;
+  let c = darkSheets.get(img);
+  if (!c) {
+    c = document.createElement('canvas');
+    c.width = img.naturalWidth;
+    c.height = img.naturalHeight;
+    const g = c.getContext('2d')!;
+    g.drawImage(img, 0, 0);
+    g.globalCompositeOperation = 'source-in';
+    g.fillRect(0, 0, c.width, c.height); // 그린 곳만 검게
+    darkSheets.set(img, c);
+  }
+  return c;
+}
+
 /** 캔버스 픽셀 기준 변환 (마우스 → 그림 좌표에 쓴다) */
 export const fishingView = { sc: 1, ox: 0, oy: 0 };
 
@@ -32,7 +54,7 @@ const at = (st: St, t: number) => {
 };
 
 /** 칸 가운데를 (x, y) 에 맞춰 그린다 */
-function cell(ctx: CanvasRenderingContext2D, img: HTMLImageElement, f: number[], x: number, y: number, scale: number, flip = 1, rot = 0, alpha = 1) {
+function cell(ctx: CanvasRenderingContext2D, img: CanvasImageSource, f: number[], x: number, y: number, scale: number, flip = 1, rot = 0, alpha = 1) {
   const [sx, sy, sw, sh] = f;
   ctx.save();
   ctx.translate(x, y);
@@ -147,6 +169,8 @@ export function fishingFx(s: FishingState, events: FishEvent[]) {
 type Rect = { x: number; y: number; w: number; h: number };
 const inRect = (r: Rect, x: number, y: number) => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
 const exitBtn = (s: FishingState): Rect => ({ x: s.spot.size[0] - 24 - 250, y: 22, w: 250, h: 62 });
+/** 왼쪽 위 도감 판 */
+const DEX_PANEL: Rect = { x: 24, y: 22, w: 520, h: 182 };
 const POPUP = { w: 480, h: 440 };
 function popupBox(s: FishingState) {
   const [cx, cy] = s.spot.popup;
@@ -159,19 +183,39 @@ function popupButtons(s: FishingState) {
     leave: { x: b.x + b.w - 230, y: b.y + b.h - 84, w: 200, h: 62 },
   };
 }
+
+// 작은 화면(휴대폰)에선 그림째 줄어든 UI 판을 다시 키운다 — 그림 1px 이 화면에서 0.55 CSS px 은 되게 (최대 1.8배).
+// 판마다 붙박이 점(도감 = 왼쪽 위, 돌아가기 = 오른쪽 위, 장력 = 아래, 팝업 = 가운데)을 두고 그 점 기준으로 키운다.
+let uiK = 1;
+const grow = (r: Rect, ax: number, ay: number): Rect => ({ x: ax + (r.x - ax) * uiK, y: ay + (r.y - ay) * uiK, w: r.w * uiK, h: r.h * uiK });
+function zoom(ctx: CanvasRenderingContext2D, ax: number, ay: number) {
+  ctx.translate(ax, ay);
+  ctx.scale(uiK, uiK);
+  ctx.translate(-ax, -ay);
+}
+const popupCenter = (s: FishingState) => ((b) => [b.x + b.w / 2, b.y + b.h / 2] as const)(popupBox(s));
+/** 장력 판의 붙박이 점 (판 아래 가운데) */
+const tensionAnchor = (s: FishingState) => [s.spot.size[0] / 2 + 75, 882] as const;
+
+/** 도감을 열 수 있는 때 (던지기·기다리기·당기기 중엔 누르는 게 낚시라서 안 연다) */
+export const dexReady = (s: FishingState) => s.phase === 'ready' || s.phase === 'caught' || s.phase === 'fail';
+export type FishingButton = 'again' | 'leave' | 'dex' | null;
 /** 그림 좌표 (x, y) 에 있는 버튼 */
-export function fishingButtonAt(s: FishingState, x: number, y: number): 'again' | 'leave' | null {
-  if (inRect(exitBtn(s), x, y)) return 'leave';
+export function fishingButtonAt(s: FishingState, x: number, y: number): FishingButton {
+  if (inRect(grow(exitBtn(s), s.spot.size[0] - 24, 22), x, y)) return 'leave';
   if (s.phase === 'caught') {
     const b = popupButtons(s);
-    if (inRect(b.again, x, y)) return 'again';
-    if (inRect(b.leave, x, y)) return 'leave';
+    const [cx, cy] = popupCenter(s);
+    if (inRect(grow(b.again, cx, cy), x, y)) return 'again';
+    if (inRect(grow(b.leave, cx, cy), x, y)) return 'leave';
   }
+  if (dexReady(s) && inRect(grow(DEX_PANEL, DEX_PANEL.x, DEX_PANEL.y), x, y)) return 'dex';
   return null;
 }
 
 // ── 그리기 ──
-export type FishingViewOpts = { t: number; dt: number; hover: 'again' | 'leave' | null };
+/** touch = 터치 화면 (버튼 글자에서 키 안내를 뺀다) */
+export type FishingViewOpts = { t: number; dt: number; hover: FishingButton; touch: boolean };
 
 export function drawFishing(ctx: CanvasRenderingContext2D, cw: number, ch: number, s: FishingState, v: FishingViewOpts) {
   const spot = s.spot;
@@ -180,6 +224,7 @@ export function drawFishing(ctx: CanvasRenderingContext2D, cw: number, ch: numbe
   const ox = (cw - W * sc) / 2;
   const oy = (ch - H * sc) / 2;
   Object.assign(fishingView, { sc, ox, oy });
+  uiK = Math.max(1, Math.min(1.8, 0.55 / (sc / Math.min(devicePixelRatio, 2))));
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.fillStyle = '#58b6dd'; // 화면 비율이 달라 남는 곳은 물빛으로
   ctx.fillRect(0, 0, cw, ch);
@@ -426,7 +471,7 @@ function drawCatch(ctx: CanvasRenderingContext2D, s: FishingState, v: FishingVie
   const c = s.catch!;
   const b = popupBox(s);
   const p = Math.min(1, s.t / 0.25);
-  const pop = 1 + 0.12 * Math.sin(p * Math.PI) - 0.12 * (1 - p); // 톡 튀어나온다
+  const pop = (1 + 0.12 * Math.sin(p * Math.PI) - 0.12 * (1 - p)) * uiK; // 톡 튀어나온다
   ctx.save();
   ctx.translate(b.x + b.w / 2, b.y + b.h / 2);
   ctx.scale(pop, pop);
@@ -499,18 +544,27 @@ function drawUi(ctx: CanvasRenderingContext2D, s: FishingState, v: FishingViewOp
   const [W] = s.spot.size;
   ctx.save();
   ctx.textAlign = 'left';
-  // 도감
+  // 도감 판 (누르면 전체 도감)
+  ctx.save();
+  zoom(ctx, DEX_PANEL.x, DEX_PANEL.y);
   const kinds = Object.keys(s.spot.fish);
   const got = kinds.filter((k) => s.dex[k]).length;
-  ctx.fillStyle = 'rgba(255,250,240,0.88)';
+  ctx.fillStyle = v.hover === 'dex' ? 'rgba(255,255,255,0.96)' : 'rgba(255,250,240,0.88)';
   ctx.beginPath();
-  ctx.roundRect(24, 22, 520, 182, 24);
+  ctx.roundRect(DEX_PANEL.x, DEX_PANEL.y, DEX_PANEL.w, DEX_PANEL.h, 24);
   ctx.fill();
   ctx.fillStyle = '#5b4a3f';
   ctx.font = 'bold 30px system-ui, sans-serif';
   ctx.fillText(`${s.spot.name} · 낚시`, 46, 64);
   ctx.font = '22px system-ui, sans-serif';
   ctx.fillText(`도감 ${got}/${kinds.length} · 이번에 ${s.caughtCount}마리`, 46, 98);
+  if (dexReady(s)) {
+    ctx.textAlign = 'right';
+    ctx.fillStyle = '#c0703a';
+    ctx.font = 'bold 20px system-ui, sans-serif';
+    ctx.fillText('📖 전체 도감 ›', DEX_PANEL.x + DEX_PANEL.w - 20, 98);
+    ctx.textAlign = 'left';
+  }
   kinds.forEach((k, i) => {
     const st = A.catch[k];
     const x = 46 + i * 80 + 36;
@@ -519,9 +573,8 @@ function drawUi(ctx: CanvasRenderingContext2D, s: FishingState, v: FishingViewOp
     ctx.beginPath();
     ctx.roundRect(x - 36, y - 34, 72, 68, 14);
     ctx.fill();
-    if (!s.dex[k]) ctx.filter = 'brightness(0)';
-    cell(ctx, catchImg(k), st.frames[0], x, y, 64 / st.frames[0][6], 1, 0, s.dex[k] ? 1 : 0.3);
-    ctx.filter = 'none';
+    const im = fishImg(k, !!s.dex[k]);
+    if (im) cell(ctx, im, st.frames[0], x, y, 64 / st.frames[0][6], 1, 0, s.dex[k] ? 1 : 0.3);
     if (s.dex[k]) {
       ctx.fillStyle = '#5b4a3f';
       ctx.font = 'bold 15px system-ui, sans-serif';
@@ -530,18 +583,27 @@ function drawUi(ctx: CanvasRenderingContext2D, s: FishingState, v: FishingViewOp
       ctx.textAlign = 'left';
     }
   });
+  ctx.restore();
 
   // 돌아가기
-  const eb = exitBtn(s);
-  button(ctx, eb, '돌아가기 (Esc)', v.hover === 'leave' && s.phase !== 'caught', 'plain');
+  ctx.save();
+  zoom(ctx, W - 24, 22);
+  button(ctx, exitBtn(s), v.touch ? '돌아가기' : '돌아가기 (Esc)', v.hover === 'leave' && s.phase !== 'caught', 'plain');
+  ctx.restore();
 
   // 장력 게이지
-  if (s.phase === 'reel' || s.phase === 'hook') drawTension(ctx, s, v.t);
+  if (s.phase === 'reel' || s.phase === 'hook') {
+    ctx.save();
+    zoom(ctx, ...tensionAnchor(s));
+    drawTension(ctx, s, v.t);
+    ctx.restore();
+  }
 
   // 알림 글자
   if (banner) {
     const a = Math.min(1, (1.8 - banner.t) / 0.3);
     ctx.globalAlpha = a;
+    zoom(ctx, W * 0.66, 300);
     ctx.font = 'bold 46px system-ui, sans-serif';
     ctx.textAlign = 'center';
     ctx.lineJoin = 'round';
@@ -604,23 +666,179 @@ function drawTension(ctx: CanvasRenderingContext2D, s: FishingState, t: number) 
   }
 }
 
-/** 낚시 안내 (화면 아래 안내줄) */
-export function fishingHelp(s: FishingState) {
+/** 낚시 안내 (화면 아래 안내줄). 터치 화면에선 키 안내를 빼고, 당기는 동안은 장력 판과 겹쳐서 비운다 (판이 할 일을 알려 준다) */
+export function fishingHelp(s: FishingState, touch = false) {
   switch (s.phase) {
     case 'ready':
     case 'aim':
-      return '물 위를 누르고 있다가 링이 가장 작을 때 떼면 던져요 · 그림자 물고기 앞쪽에 던지면 잘 물어요 · Esc 돌아가기';
+      return '물 위를 누르고 있다가 링이 가장 작을 때 떼면 던져요 · 그림자 물고기 앞쪽에 던지면 잘 물어요' + (touch ? '' : ' · B 도감 · Esc 돌아가기');
     case 'cast':
     case 'wait':
     case 'bite':
       return '톡톡·연타·헛잠김엔 기다리고 — 찌가 쏙 잠기거나, 쑥 떠오르거나, 옆으로 끌려가면 누르세요! · 아무도 안 물 때 누르면 다시 감아요';
     case 'hook':
     case 'reel':
-      return '누르고 있으면 감아요 · 물고기가 날뛰면 손을 떼요 (줄이 끊어져요) · 너무 오래 놓으면 바늘이 빠져요';
+      return touch ? '' : '누르고 있으면 감아요 · 물고기가 날뛰면 손을 떼요 (줄이 끊어져요) · 너무 오래 놓으면 바늘이 빠져요';
     case 'caught':
-      return '클릭/Space 다시 낚시 · Esc 돌아가기';
+      return touch ? '화면을 누르면 다시 낚시' : '클릭/Space 다시 낚시 · B 도감 · Esc 돌아가기';
     default:
       return '다시 던져 봐요';
+  }
+}
+
+// ── 물고기 도감 (전체 화면) ── 필드의 도감 버튼 · 낚시터의 도감 판 · B 키로 연다. ctx 는 CSS px.
+// 디자인 좌표(가로 화면 1000×560 카드 3열 · 세로 화면 540×1040 카드 2열, 탭 2줄)로 그리고 화면에 맞춰 통째로 줄인다.
+const PATTERN_NAME: Record<string, string> = { peck: '톡톡', flurry: '연타', lift: '찌올림', drag: '끌고가기', slam: '한방', fake: '헛잠김', hesitant: '망설임' };
+const FIGHT_NAME: Record<string, string> = { steady: '꾸준', dart: '잔걸음', zigzag: '지그재그', heavy: '묵직', jump: '점프' };
+const SPOT_IDS = Object.keys(SPOTS);
+
+export function dexLayout(w: number, h: number) {
+  const wide = w >= h;
+  const L = wide ? { DW: 1000, DH: 560, cols: 3, tabRow: 7 } : { DW: 540, DH: 1040, cols: 2, tabRow: 4 };
+  const sf = safe();
+  const aw = w - sf.l - sf.r;
+  const ah = h - sf.t - sf.b;
+  const k = Math.min(1.25, (aw - 24) / L.DW, (ah - 24) / L.DH);
+  const tw = (L.DW - 40 - 6 * (L.tabRow - 1)) / L.tabRow;
+  const tabs = SPOT_IDS.map((_, i): Rect => ({ x: 20 + (i % L.tabRow) * (tw + 6), y: 88 + Math.floor(i / L.tabRow) * 62, w: tw, h: 56 }));
+  const top = 88 + Math.ceil(SPOT_IDS.length / L.tabRow) * 62 + 10;
+  return { ...L, k, ox: sf.l + (aw - L.DW * k) / 2, oy: sf.t + (ah - L.DH * k) / 2, tabs, top, close: { x: L.DW - 84, y: 8, w: 76, h: 76 } };
+}
+
+/** 도감 화면에서 누른 것 — 닫기(바깥·✕) · 탭 */
+export function dexHit(w: number, h: number, x: number, y: number): 'close' | { tab: string } | null {
+  const L = dexLayout(w, h);
+  const px = (x - L.ox) / L.k;
+  const py = (y - L.oy) / L.k;
+  if (px < 0 || py < 0 || px > L.DW || py > L.DH || inRect(L.close, px, py)) return 'close';
+  const i = L.tabs.findIndex((r) => inRect(r, px, py));
+  return i >= 0 ? { tab: SPOT_IDS[i] } : null;
+}
+
+/** 칸 폭을 넘으면 글자를 줄인다 */
+function fitText(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, maxW: number, px: number, bold = '') {
+  ctx.font = `${bold}${px}px system-ui, sans-serif`;
+  const w = ctx.measureText(text).width;
+  if (w > maxW) ctx.font = `${bold}${Math.floor((px * maxW) / w)}px system-ui, sans-serif`;
+  ctx.fillText(text, x, y);
+}
+
+/** 시트 칸을 첫 칸의 내용 크기로 box 안에 맞춰 (x, y) 가운데에 — 칸마다 같은 배율·같은 자리라 꿈틀대는 게 자연스럽다 */
+function fitSprite(ctx: CanvasRenderingContext2D, img: CanvasImageSource | null, st: St, f: number[], x: number, y: number, box: number, alpha: number) {
+  if (!img) return; // 아직 불러오는 중
+  const [, , , , cx, cy, cw, chh] = st.frames[0];
+  const k = Math.min(box / cw, box / chh);
+  ctx.globalAlpha = alpha;
+  ctx.drawImage(img, f[0], f[1], f[2], f[3], x - (cx + cw / 2) * k, y - (cy + chh / 2) * k, f[2] * k, f[3] * k);
+  ctx.globalAlpha = 1;
+}
+
+export function drawDex(ctx: CanvasRenderingContext2D, w: number, h: number, dex: Dex, tab: string, t: number) {
+  const L = dexLayout(w, h);
+  ctx.save();
+  ctx.fillStyle = 'rgba(40,28,20,0.55)';
+  ctx.fillRect(0, 0, w, h);
+  ctx.translate(L.ox, L.oy);
+  ctx.scale(L.k, L.k);
+  ctx.fillStyle = '#fffaf0';
+  ctx.beginPath();
+  ctx.roundRect(0, 0, L.DW, L.DH, 28);
+  ctx.fill();
+
+  // 제목 · 전체 몇 종 · 닫기
+  const all = Object.keys(FISH);
+  const title = '📖 물고기 도감';
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#5b4a3f';
+  ctx.font = 'bold 34px system-ui, sans-serif';
+  ctx.fillText(title, 28, 58);
+  const tw = ctx.measureText(title).width;
+  ctx.fillStyle = '#9a7b62';
+  ctx.font = '24px system-ui, sans-serif';
+  ctx.fillText(`${all.filter((k) => dex[k]).length} / ${all.length}`, 28 + tw + 14, 58);
+  const c = L.close;
+  ctx.fillStyle = 'rgba(120,85,55,0.14)';
+  ctx.beginPath();
+  ctx.arc(c.x + c.w / 2, c.y + c.h / 2, 28, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#5b4a3f';
+  ctx.font = 'bold 30px system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('✕', c.x + c.w / 2, c.y + c.h / 2 + 11);
+
+  // 낚시터 탭 — 다 모으면 금색 ★
+  L.tabs.forEach((r, i) => {
+    const id = SPOT_IDS[i];
+    const kinds = Object.keys(SPOTS[id].fish);
+    const n = kinds.filter((k) => dex[k]).length;
+    const on = id === tab;
+    ctx.fillStyle = on ? '#f5a05a' : 'rgba(120,85,55,0.1)';
+    ctx.beginPath();
+    ctx.roundRect(r.x, r.y, r.w, r.h, 16);
+    ctx.fill();
+    ctx.fillStyle = on ? '#fff' : '#5b4a3f';
+    fitText(ctx, SPOTS[id].short, r.x + r.w / 2, r.y + 26, r.w - 10, 22, 'bold ');
+    ctx.fillStyle = on ? '#fff' : n === kinds.length ? '#e0a000' : '#9a7b62';
+    fitText(ctx, `${n === kinds.length ? '★ ' : ''}${n}/${kinds.length}`, r.x + r.w / 2, r.y + 48, r.w - 10, 17);
+  });
+
+  // 물고기 카드
+  const kinds = Object.keys(SPOTS[tab].fish);
+  const rows = Math.ceil(kinds.length / L.cols);
+  const cw = (L.DW - 40 - 12 * (L.cols - 1)) / L.cols;
+  const ch = (L.DH - L.top - 20 - 12 * (rows - 1)) / rows;
+  kinds.forEach((id, i) =>
+    dexCard(ctx, id, dex[id], { x: 20 + (i % L.cols) * (cw + 12), y: L.top + Math.floor(i / L.cols) * (ch + 12), w: cw, h: ch }, t + i * 0.37),
+  );
+  ctx.restore();
+}
+
+/** 잡은 종은 꿈틀대는 그림·이름·최고 기록·입질/당기기 버릇, 못 잡은 종은 검은 실루엣·??? (별은 보여 줘서 귀한 걸 안다) */
+function dexCard(ctx: CanvasRenderingContext2D, id: string, rec: Dex[string] | undefined, r: Rect, t: number) {
+  const def = FISH[id];
+  const st = A.catch[id];
+  ctx.fillStyle = rec ? '#ffffff' : 'rgba(120,85,55,0.08)';
+  ctx.beginPath();
+  ctx.roundRect(r.x, r.y, r.w, r.h, 20);
+  ctx.fill();
+  if (rec) {
+    ctx.strokeStyle = 'rgba(120,85,55,0.18)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
+  // 넓은 카드는 그림 왼쪽 · 글 오른쪽, 좁은 카드(세로 화면)는 그림 위 · 글 아래
+  const vert = r.w < r.h * 1.3;
+  const box = vert ? Math.min(r.w - 40, r.h - 156) : Math.min(r.h - 40, r.w * 0.36);
+  const bx = vert ? r.x + r.w / 2 : r.x + 14 + box / 2;
+  const by = vert ? r.y + 12 + box / 2 : r.y + r.h / 2;
+  ctx.fillStyle = rec ? 'rgba(111,211,255,0.2)' : 'rgba(120,85,55,0.08)';
+  ctx.beginPath();
+  ctx.arc(bx, by, box / 2, 0, Math.PI * 2);
+  ctx.fill();
+  fitSprite(ctx, fishImg(id, !!rec), st, rec ? at(st, t) : st.frames[0], bx, by, box * 0.86, rec ? 1 : 0.3);
+
+  const x = vert ? r.x + r.w / 2 : r.x + 28 + box;
+  const mw = vert ? r.w - 20 : r.w - 42 - box;
+  const y = vert ? r.y + 12 + box + 30 : r.y + r.h / 2 - 42;
+  ctx.textAlign = vert ? 'center' : 'left';
+  ctx.fillStyle = '#5b4a3f';
+  fitText(ctx, rec ? def.name : '???', x, y, mw, 25, 'bold ');
+  ctx.fillStyle = '#f0b429';
+  fitText(ctx, '★'.repeat(def.stars) + '☆'.repeat(5 - def.stars), x, y + 28, mw, 20);
+  if (rec) {
+    ctx.fillStyle = '#5b4a3f';
+    fitText(ctx, `최고 ${rec.best.toFixed(1)}cm · ${rec.count}마리`, x, y + 56, mw, 19);
+    const top = Object.entries(def.patterns)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 2)
+      .map(([p]) => PATTERN_NAME[p] ?? p)
+      .join('·');
+    ctx.fillStyle = '#9a7b62';
+    fitText(ctx, `입질 ${top}`, x, y + 81, mw, 17);
+    fitText(ctx, `당기기 ${FIGHT_NAME[def.fight] ?? def.fight}`, x, y + 103, mw, 17);
+  } else {
+    ctx.fillStyle = '#9a7b62';
+    fitText(ctx, '아직 못 낚았어요', x, y + 56, mw, 19);
   }
 }
 

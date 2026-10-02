@@ -50,13 +50,14 @@ const browser = await puppeteer.launch({
   defaultViewport: VIEW,
 });
 
-/** where: 'dungeon' 이면 던전에서 바로 시작, 'field' 면 게임처럼 필드에서 시작 */
-async function open(where = 'dungeon', room = '') {
+/** where: 'dungeon' 이면 던전에서 바로 시작, 'field' 면 게임처럼 필드에서 시작. view = 화면 (휴대폰 터치 등), extra = 덧붙일 URL 옵션 */
+async function open(where = 'dungeon', room = '', view = null, extra = '') {
   const page = await browser.newPage();
+  if (view) await page.setViewport(view);
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
   const q = where === 'dungeon' ? '&dungeon' + (room ? '=' + room : '') : where === 'fishing' ? '&fishing' + (room ? '=' + room : '') : '';
-  await page.goto(base + '?trace' + q, { waitUntil: 'load' });
+  await page.goto(base + '?trace' + q + extra, { waitUntil: 'load' });
   await page.waitForFunction(() => window.__sheets, { timeout: 60000 });
   return { page, errors };
 }
@@ -430,6 +431,157 @@ try {
     check(landed && outside === 0 && errors.length === 0, `${id} (${spot.name}): 찌가 물 안에 · 물고기 물 밖 ${outside >= 1000 ? '찌가 밖!' : outside + '프레임'} · 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
     await page.screenshot({ path: fsPath(new URL(`fishing-${id}.png`, OUT)) });
     await page.close();
+  }
+
+  // 3-6) 터치 (휴대폰 가로 844×390, 실제 터치 입력): 손가락을 대면 터치 UI 가 켜진다 · 조이스틱으로 필드 고양이가 움직인다 ·
+  //  도감 버튼 → 탭 바꾸기 → 바깥 눌러 닫기 · 던전에서 조이스틱 + 냥펀치를 두 손가락으로 같이 · 구르기 버튼 · 낮잠은 화면을 눌러 깨기 ·
+  //  낚시: 누르고 있다 떼면 던진다 · 도감 판 → 그 낚시터 탭 → ✕ · 돌아가기 버튼. 화면은 tools/out/touch-*.png
+  console.log('\n[터치 · 도감]');
+  const PHONE = { width: 844, height: 390, deviceScaleFactor: 2, isMobile: true, hasTouch: true, isLandscape: true };
+  const SPOT_IDS = Object.keys(readJson('../src/data/fishing.json').spots);
+  /** 손가락 하나로 (x, y) 를 누르고 to 로 끌어 ms 동안 있다가 뗀다 */
+  const hold = async (page, p, to, ms) => {
+    const t = await page.touchscreen.touchStart(p.x, p.y);
+    for (let i = 1; i <= 4; i++) await t.move(p.x + ((to.x - p.x) * i) / 4, p.y + ((to.y - p.y) * i) / 4);
+    await sleep(ms);
+    return t;
+  };
+  const tap = async (page, p) => (await page.touchscreen.touchStart(p.x, p.y)).end();
+  {
+    const { page, errors } = await open('field', '', PHONE);
+    check(!(await page.evaluate(() => __game.touch)), '처음엔 터치 UI 가 아니다');
+    // 미니맵을 눌러 켠다 (큰 화면을 누르면 그 밑 포탈로 워프할 수 있어서). 카메라만 그쪽으로 갔다가 조이스틱을 밀면 돌아온다
+    await tap(page, await page.evaluate(() => __game.minimapPoint('pyramid')));
+    await sleep(500);
+    const on = await page.evaluate(() => ({ touch: __game.touch, cls: document.body.classList.contains('touch'), c: __game.controls }));
+    check(on.touch && on.cls && !!on.c.stick, '손가락을 대면 터치 UI 가 켜진다 (조이스틱)');
+
+    const s = on.c.stick;
+    const p0 = await page.evaluate(() => [__game.field.x, __game.field.y]);
+    const t = await hold(page, s, { x: s.x + s.r * 0.9, y: s.y }, 1000);
+    const p1 = await page.evaluate(() => [__game.field.x, __game.field.y]);
+    await page.screenshot({ path: fsPath(new URL('touch-field.png', OUT)) });
+    await t.end();
+    await sleep(300);
+    const p2 = await page.evaluate(() => [__game.field.x, __game.field.y, __game.field.moving]);
+    check(p1[0] - p0[0] > 30 && Math.abs(p1[1] - p0[1]) < 15, `조이스틱을 오른쪽으로 밀면 고양이가 오른쪽으로 간다 (${(p1[0] - p0[0]) | 0}, ${(p1[1] - p0[1]) | 0})`);
+    check(!p2[2], '조이스틱에서 손을 떼면 멈춘다');
+
+    await tap(page, on.c.buttons.find((b) => b.id === 'dex'));
+    check(await page.evaluate(() => __game.dexOpen), '필드의 도감 버튼을 누르면 도감');
+    const ds = await page.evaluate(() => __game.dexScreen());
+    await tap(page, ds.tabs[3]);
+    check((await page.evaluate(() => __game.dexTab)) === SPOT_IDS[3], `도감 탭을 누르면 그 낚시터 (${SPOT_IDS[3]})`);
+    const paused = await page.evaluate(async () => {
+      const a = __game.field.camX;
+      await new Promise((r) => setTimeout(r, 300));
+      return a === __game.field.camX;
+    });
+    check(paused, '도감을 보는 동안 게임이 멈춘다');
+    await sleep(600); // 그림 불러오기
+    await page.screenshot({ path: fsPath(new URL('touch-dex.png', OUT)) });
+    await tap(page, { x: 20, y: 200 });
+    check(!(await page.evaluate(() => __game.dexOpen)), '도감 바깥을 누르면 닫힌다');
+    check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
+    await page.close();
+  }
+  {
+    const { page, errors } = await open('dungeon', '', PHONE);
+    await tap(page, { x: 422, y: 60 }); // 터치 UI 켜기 (던전에선 냥펀치)
+    await sleep(900);
+    const c = await page.evaluate(() => __game.controls);
+    check(!!c.stick && c.buttons.some((b) => b.id === 'punch') && c.buttons.some((b) => b.id === 'dash'), '던전: 조이스틱 · 냥펀치 · 구르기 버튼');
+    const x0 = await page.evaluate(() => __game.cat.x);
+    const t = await hold(page, c.stick, { x: c.stick.x + c.stick.r * 0.9, y: c.stick.y }, 300);
+    // 조이스틱을 쥔 채 다른 손가락으로 냥펀치
+    const punch = c.buttons.find((b) => b.id === 'punch');
+    const punched = page.waitForFunction(() => __game.dungeon.P.punchT > 0, { polling: 'raf', timeout: 2000 }).then(() => true, () => false);
+    await tap(page, punch);
+    check(await punched, '조이스틱을 쥔 채 다른 손가락으로 냥펀치 (두 손가락)');
+    await page.screenshot({ path: fsPath(new URL('touch-dungeon.png', OUT)) });
+    await sleep(400);
+    const x1 = await page.evaluate(() => __game.cat.x);
+    await t.end();
+    check(x1 > x0, `조이스틱으로 던전 고양이가 움직인다 (x ${x0.toFixed(1)} → ${x1.toFixed(1)})`);
+    await sleep(500);
+    const dashed = page.waitForFunction(() => __game.dungeon.P.dashT > 0, { polling: 'raf', timeout: 2000 }).then(() => true, () => false);
+    const d = await page.touchscreen.touchStart(c.buttons.find((b) => b.id === 'dash').x, c.buttons.find((b) => b.id === 'dash').y);
+    check(await dashed, '구르기 버튼');
+    await d.end();
+    // 낮잠: 쓰러지고 1초 뒤 화면을 누르면 집(필드)으로
+    await page.evaluate(() => (__game.dungeon.phase = 'napped'));
+    await sleep(1300);
+    await tap(page, { x: 422, y: 200 });
+    const home = await page.waitForFunction(() => __game.scene === 'field', { timeout: 3000 }).then(() => true, () => false);
+    check(home, '낮잠 중 화면을 누르면 집에서 깨어난다');
+    check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
+    await page.close();
+  }
+  {
+    const { page, errors } = await open('fishing', '', PHONE);
+    await page.waitForFunction(() => __game.fishing.phase === 'ready', { timeout: 8000 });
+    const cast = await page.evaluate(() => __game.fishScreen(...__game.fishing.spot.defaultCast));
+    const t = await hold(page, cast, cast, 530);
+    await t.end();
+    const landed = await page.waitForFunction(() => __game.fishing.phase === 'wait', { timeout: 3000 }).then(() => true, () => false);
+    check(landed, '낚시: 누르고 있다 떼면 던진다 (터치)');
+    await page.screenshot({ path: fsPath(new URL('touch-fishing.png', OUT)) });
+    // ★1 피라미를 물리고 손가락을 대고 있기만 해도 낚인다 (장력 판·낚음 팝업이 휴대폰에서 커졌는지 화면으로 본다)
+    await page.evaluate(() => __game.bite('silver_minnow'));
+    const reel = await hold(page, cast, cast, 1200);
+    await page.screenshot({ path: fsPath(new URL('touch-fishing-reel.png', OUT)) });
+    await page.waitForFunction(() => !['bite', 'hook', 'reel'].includes(__game.fishing.phase), { timeout: 30000 }).catch(() => {});
+    await reel.end();
+    const got = await page.evaluate(() => __game.fishing.phase);
+    check(got === 'caught', `터치로 계속 감아 ★1 피라미를 낚았다 (${got})`);
+    await sleep(600);
+    await page.screenshot({ path: fsPath(new URL('touch-fishing-caught.png', OUT)) });
+    await tap(page, await page.evaluate(() => __game.fishScreen(70, 70))); // 도감 판
+    const dex = await page.evaluate(() => ({ open: __game.dexOpen, tab: __game.dexTab }));
+    check(dex.open && dex.tab === SPOT_IDS[0], `낚시터 도감 판을 누르면 그 낚시터 탭으로 도감 (${dex.tab})`);
+    await sleep(400);
+    await page.screenshot({ path: fsPath(new URL('touch-fishing-dex.png', OUT)) });
+    await tap(page, (await page.evaluate(() => __game.dexScreen())).close);
+    check(!(await page.evaluate(() => __game.dexOpen)), '도감 ✕ 를 누르면 닫힌다');
+    await tap(page, await page.evaluate(() => __game.fishScreen(__game.fishing.spot.size[0] - 50, 45))); // 돌아가기
+    const out = await page.waitForFunction(() => __game.scene === 'field', { timeout: 4000 }).then(() => true, () => false);
+    check(out, '낚시터 돌아가기 버튼 (터치)');
+    check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
+    await page.close();
+  }
+  // 키보드: B 로 도감, Esc 는 도감만 닫는다 (낚시터를 나가지 않는다)
+  {
+    const { page, errors } = await open('fishing');
+    await page.waitForFunction(() => __game.fishing.phase === 'ready', { timeout: 8000 });
+    await page.keyboard.press('KeyB');
+    const opened = await page.evaluate(() => __game.dexOpen);
+    await page.keyboard.press('Escape');
+    await sleep(500);
+    const st = await page.evaluate(() => ({ open: __game.dexOpen, scene: __game.scene }));
+    check(opened && !st.open && st.scene === 'fishing', 'B 로 도감, Esc 는 도감만 닫는다');
+    check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
+    await page.close();
+  }
+  // 화면 크기별 모습 (눈으로 보는 용): 휴대폰 세로 · 태블릿 가로/세로 — tools/out/screen-*.png
+  for (const [name, view] of [
+    ['phone-portrait', { width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true }],
+    ['tablet', { width: 1024, height: 768, deviceScaleFactor: 2, isMobile: true, hasTouch: true, isLandscape: true }],
+    ['tablet-portrait', { width: 768, height: 1024, deviceScaleFactor: 2, isMobile: true, hasTouch: true }],
+  ]) {
+    const errs = [];
+    for (const where of ['field', 'dungeon', 'fishing']) {
+      const { page, errors } = await open(where, '', view, '&touch');
+      await sleep(800);
+      await page.screenshot({ path: fsPath(new URL(`screen-${name}-${where}.png`, OUT)) });
+      if (where === 'field') {
+        await page.keyboard.press('KeyB');
+        await sleep(600);
+        await page.screenshot({ path: fsPath(new URL(`screen-${name}-dex.png`, OUT)) });
+      }
+      errs.push(...errors);
+      await page.close();
+    }
+    check(errs.length === 0, `${name} 화면: 페이지 에러 ${errs.length}건${errs.length ? ': ' + errs[0] : ''}`);
   }
 
   // 4) 왕복: 필드에서 시작 → 골목 던전 포탈(고양이마을) 앞으로 → 포탈로 걸어가 머문다 → 던전 → 나가는 칸으로 걸어 나간다 → 필드

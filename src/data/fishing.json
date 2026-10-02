@@ -21,6 +21,7 @@
   "spots": {
     "lake_island_fishing": {
       "name": "호수섬 정박지",
+      "short": "호수섬",
       "image": "fishing/lake/lake_island_fishing_bg_v2",
       "size": [1672, 941],
       "seat": [735, 482],
@@ -46,6 +47,7 @@
     },
     "ice_fishing": {
       "name": "크리스마스 얼음 호수",
+      "short": "얼음",
       "image": "fishing/ice/ice_bg_v1",
       "size": [1672, 941],
       "seat": [640, 477],
@@ -78,6 +80,7 @@
     },
     "desert_fishing": {
       "name": "피라미드 오아시스",
+      "short": "사막",
       "image": "fishing/desert/desert_bg_v1",
       "size": [1672, 941],
       "seat": [745, 490],
@@ -104,6 +107,7 @@
     },
     "sea_fishing": {
       "name": "해적섬 앞 바다",
+      "short": "바다",
       "image": "fishing/sea/sea_bg_v1",
       "size": [1672, 941],
       "seat": [730, 465],
@@ -129,6 +133,7 @@
     },
     "cave_fishing": {
       "name": "수정동굴 지하호수",
+      "short": "동굴",
       "image": "fishing/cave/cave_bg_v1",
       "size": [1672, 941],
       "seat": [735, 482],
@@ -156,6 +161,7 @@
     },
     "autumn_fishing": {
       "name": "가을 숲 연못",
+      "short": "가을",
       "image": "fishing/autumn/autumn_bg_v1",
       "size": [1672, 941],
       "seat": [735, 482],
@@ -181,6 +187,7 @@
     },
     "mangrove_fishing": {
       "name": "맹그로브 늪지",
+      "short": "맹그로브",
       "image": "fishing/mangrove/mangrove_bg_v1",
       "size": [1672, 941],
       "seat": [735, 482],

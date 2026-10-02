@@ -5,6 +5,7 @@
 import { image } from './assets.ts';
 import { FIELD, type FieldState, type Warp } from './field.ts';
 import { SPOTS } from './fishing.ts';
+import { safe, ui } from './touch.ts';
 
 const MAP = image('world/minimap');
 const [W, H] = FIELD.size;
@@ -14,10 +15,12 @@ const PICK = 9;
 
 export type Rect = { x: number; y: number; w: number; h: number };
 
-/** cssW = 화면 폭 (CSS px). 좁은 화면에선 폭의 30% 까지만 */
-export function minimapRect(cssW: number): Rect {
-  const w = Math.round(Math.min(260, cssW * 0.3));
-  return { x: cssW - w - MARGIN, y: MARGIN, w, h: Math.round((w * H) / W) };
+/** cssW, cssH = 화면 크기 (CSS px). 좁은 화면에선 폭의 30% 까지만, 휴대폰에선 HUD 배율만큼 작게, 노치는 비켜서 */
+export function minimapRect(cssW: number, cssH: number): Rect {
+  const k = ui(cssW, cssH);
+  const s = safe();
+  const w = Math.round(Math.min(260 * k, cssW * 0.3));
+  return { x: cssW - s.r - w - MARGIN * k, y: s.t + MARGIN * k, w, h: Math.round((w * H) / W) };
 }
 
 /** 월드 좌표 → 미니맵 위 CSS 좌표 */

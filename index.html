@@ -2,18 +2,32 @@
 <html lang="ko">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>고양이는 실패하지 않아 — M0</title>
+    <!-- 모바일: 확대/축소·더블탭 확대 막기, 노치 영역까지 그리기 (UI 는 safe-area 만큼 비켜 그린다) -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <title>고양이는 실패하지 않아</title>
     <style>
-      html, body { margin: 0; height: 100%; overflow: hidden; }
-      body { background: linear-gradient(#cfe49a, #aacd78); }
-      canvas { display: block; }
+      html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: none; }
+      body {
+        background: linear-gradient(#cfe49a, #aacd78);
+        -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent;
+      }
+      /* 캔버스 위에서는 브라우저가 스크롤·확대를 하지 않는다 (터치는 전부 게임 조작) */
+      canvas { display: block; touch-action: none; }
       #help {
-        position: fixed; left: 12px; bottom: 12px;
+        position: fixed; left: calc(12px + env(safe-area-inset-left)); bottom: calc(12px + env(safe-area-inset-bottom));
         font: 13px/1.6 system-ui, sans-serif; color: #5b4a3f;
         background: #fffaf0cc; border-radius: 12px; padding: 8px 12px;
-        pointer-events: none; user-select: none;
+        pointer-events: none;
       }
+      /* 터치: 아래 가운데 (왼쪽 조이스틱 · 오른쪽 버튼 사이), 작게 */
+      body.touch #help {
+        left: 50%; transform: translateX(-50%); max-width: 46vw;
+        font-size: 11.5px; line-height: 1.45; text-align: center; padding: 6px 10px;
+      }
+      /* 세로 화면에선 가운데가 좁아 안내줄을 숨긴다 (가로로 돌리라는 안내가 대신 뜬다) */
+      @media (orientation: portrait) { body.touch #help { display: none; } }
     </style>
   </head>
   <body>

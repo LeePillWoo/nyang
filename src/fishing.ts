@@ -48,6 +48,8 @@ export const FISH = fishDefs as Record<string, FishDef>;
 /** 낚시터 (fishing.json spots) — 좌표는 그 배경 그림 픽셀 */
 export type SpotDef = {
   name: string;
+  /** 도감 탭에 쓰는 짧은 이름 */
+  short: string;
   /** 배경 (src/assets/ 기준, 확장자 없이) */
   image: string;
   size: number[];

@@ -9,6 +9,7 @@ import { drawEmote } from './emote.ts';
 import { drawFx, FX_SHEETS, type FxSheet } from './fx.ts';
 import { ROOMS, type Room } from './iso.ts';
 import { drawFrame, type Sheet } from './sheet.ts';
+import { safe, ui } from './touch.ts';
 
 const COLS = 6;
 
@@ -40,6 +41,8 @@ export type DungeonView = {
   /** G 키 격자 */
   grid: boolean;
   trace?: TraceFn;
+  /** 터치 화면 — 낮잠 안내를 '화면을 눌러' 로 */
+  touch?: boolean;
 };
 
 /** cw, ch 는 캔버스 실제 픽셀 */
@@ -147,7 +150,7 @@ export function drawDungeon(ctx: CanvasRenderingContext2D, cw: number, ch: numbe
 
   drawPops(ctx, d);
   if (v.grid) drawGrid(ctx, R);
-  drawHud(ctx, cw, ch, d, v.fps);
+  drawHud(ctx, cw, ch, d, v);
 }
 
 function blob(ctx: CanvasRenderingContext2D, sx: number, sy: number, r: number) {
@@ -191,14 +194,20 @@ function enemyHpBar(ctx: CanvasRenderingContext2D, e: Enemy, sx: number, sy: num
   ctx.fillRect(sx - w / 2, y, (w * Math.max(0, e.hp)) / e.def.hp, 7);
 }
 
-function drawHud(ctx: CanvasRenderingContext2D, cw: number, ch: number, d: Dungeon, fps: number) {
+/** CSS px 기준. 휴대폰에선 HUD 배율(ui)만큼 작게, 노치는 비켜서 */
+function drawHud(ctx: CanvasRenderingContext2D, cw: number, ch: number, d: Dungeon, v: DungeonView) {
   const P = d.P;
+  const fps = v.fps;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   const s = Math.min(devicePixelRatio, 2);
+  const sf = safe();
+  const k = ui(cw / s, ch / s);
   ctx.save();
   ctx.scale(s, s);
-  const W = cw / s;
-  const H = ch / s;
+  ctx.translate(sf.l, sf.t);
+  ctx.scale(k, k);
+  const W = (cw / s - sf.l - sf.r) / k;
+  const H = (ch / s - sf.t - sf.b) / k;
 
   ctx.fillStyle = 'rgba(255,250,240,0.82)';
   ctx.beginPath();
@@ -231,16 +240,17 @@ function drawHud(ctx: CanvasRenderingContext2D, cw: number, ch: number, d: Dunge
   ctx.fillStyle = '#4a3b33';
   ctx.fillText(`${fps.toFixed(0)} fps`, W - 84, 28);
   ctx.fillText(`적 ${d.enemies.filter((e) => e.state !== 'pop').length}`, W - 84, 50);
-  // 방 이름
+  // 방 이름 — 가운데, 좁은 화면(세로)에선 체력 판(14..250) 오른쪽으로 비킨다
   ctx.textAlign = 'center';
   ctx.font = 'bold 15px system-ui, sans-serif';
   const nw = ctx.measureText(d.room.def.name).width + 28;
+  const nx = Math.max(W / 2 - nw / 2, 260);
   ctx.fillStyle = 'rgba(255,250,240,0.85)';
   ctx.beginPath();
-  ctx.roundRect(W / 2 - nw / 2, 14, nw, 30, 15);
+  ctx.roundRect(nx, 14, nw, 30, 15);
   ctx.fill();
   ctx.fillStyle = '#5b4a3f';
-  ctx.fillText(d.room.def.name, W / 2, 34);
+  ctx.fillText(d.room.def.name, nx + nw / 2, 34);
   ctx.textAlign = 'left';
 
   if (d.phase !== 'playing') {
@@ -249,7 +259,7 @@ function drawHud(ctx: CanvasRenderingContext2D, cw: number, ch: number, d: Dunge
     ctx.fillStyle = 'rgba(70,52,42,0.85)';
     ctx.fillText(d.phase === 'cleared' ? '방 클리어!' : '낮잠…', W / 2, H / 2 - 8);
     ctx.font = '20px system-ui, sans-serif';
-    ctx.fillText(d.phase === 'cleared' ? '노란 매트로 나가기' : 'R 키로 집에서 깨어나기', W / 2, H / 2 + 30);
+    ctx.fillText(d.phase === 'cleared' ? '노란 매트로 나가기' : v.touch ? '화면을 눌러 집에서 깨어나기' : 'R 키로 집에서 깨어나기', W / 2, H / 2 + 30);
     ctx.textAlign = 'left';
   }
   ctx.restore();

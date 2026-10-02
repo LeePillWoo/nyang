@@ -324,7 +324,8 @@ export function drawField(
   /** 지도를 끌어 둘러보는 중이면 카메라가 고양이 대신 이곳을 본다 */
   look: { x: number; y: number } | null = null,
 ) {
-  const sc = Math.max(cw / V0, ch / V1);
+  // 화면 넓이 view 를 꽉 채우되, 세로 화면에선 폭 480 은 보이게 (안 그러면 고양이 둘레 200px 만 크게 보인다)
+  const sc = Math.min(Math.max(cw / V0, ch / V1), cw / 480);
   const vw = cw / sc;
   const vh = ch / sc;
   const cx = vw >= W ? W / 2 : Math.min(W - vw / 2, Math.max(vw / 2, look ? look.x : s.camX));

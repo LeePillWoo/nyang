@@ -27,11 +27,25 @@ import { emotesReady, quiet, say, saying, tickEmote, type EmoteId } from './emot
 import { ENEMY_DEFS, type Kind } from './enemy.ts';
 import { biomeAt, drawField, fieldFx, fieldReady, fieldView, terrainAt, terrainReady } from './field-draw.ts';
 import { backFrom, FIELD, inWarp, makeFieldState, updateField, type FieldEvent, type FieldState, type Warp } from './field.ts';
-import { drawFishing, fishingButtonAt, fishingFx, fishingHelp, fishingReady, fishingView, resetFishingFx } from './fishing-draw.ts';
+import {
+  dexHit,
+  dexLayout,
+  dexReady,
+  drawDex,
+  drawFishing,
+  fishingButtonAt,
+  fishingFx,
+  fishingHelp,
+  fishingReady,
+  fishingView,
+  resetFishingFx,
+  type FishingButton,
+} from './fishing-draw.ts';
 import { again, debugBite, makeFishing, SPOTS, updateFishing, type Dex, type FishEvent, type FishingState } from './fishing.ts';
 import { ROOMS } from './iso.ts';
 import { drawMinimap, fromMini, inMinimap, minimapPick, minimapRect, toMini } from './minimap.ts';
 import { loadSheet, type Sheet } from './sheet.ts';
+import { buttonAt, controls, drawControls, drawRotateHint, onStick, safe, stickVector, ui, type ButtonId } from './touch.ts';
 
 const canvas = document.createElement('canvas');
 const ctx = canvas.getContext('2d')!;
@@ -70,8 +84,18 @@ function traceDraw(who: string, sh: Sheet, row: number, col: number, sx: number,
 let punchQueued = false;
 addEventListener('keydown', (e) => {
   unlockAudio();
-  keys.add(e.code);
   if (e.code === 'Space') e.preventDefault();
+  // 도감 (B) — 열려 있는 동안은 다른 키를 먹는다 (Esc 는 도감만 닫는다)
+  if (e.code === 'KeyB' && !e.repeat && (dexOpen || dexAllowed())) {
+    if (dexOpen) closeDex();
+    else openDex();
+    return;
+  }
+  if (dexOpen) {
+    if (e.code === 'Escape') closeDex();
+    return;
+  }
+  keys.add(e.code);
   if (e.code === 'KeyG') debug = !debug;
   if (e.code === 'KeyT') showTerrain = !showTerrain;
   if (e.code === 'KeyM') showMap = !showMap;
@@ -100,24 +124,60 @@ addEventListener('keyup', (e) => {
 });
 addEventListener('blur', () => {
   keys.clear();
-  fishKey = fishMouse = false;
+  fishKey = false;
+  fishPtr = null;
+  stick = null;
+  pressing.clear();
 });
 
-// ── 낚시 입력 ── 마우스를 누르고 있기 = Space 를 누르고 있기. 좌표는 낚시 배경 그림 좌표
+// ── 낚시 입력 ── 화면을 누르고 있기 = Space 를 누르고 있기. 좌표는 낚시 배경 그림 좌표
 const fishIn = { x: 0, y: 0, down: false, pressed: false, released: false };
-let fishMouse = false;
+/** 낚시에서 누르고 있는 손가락·마우스 (pointerId) */
+let fishPtr: number | null = null;
 let fishKey = false;
-let fishHover: 'again' | 'leave' | null = null;
-const toFishing = (e: MouseEvent) => ({
-  x: (pos(e).x * pxRatio() - fishingView.ox) / fishingView.sc,
-  y: (pos(e).y * pxRatio() - fishingView.oy) / fishingView.sc,
+let fishHover: FishingButton = null;
+const toFishing = (p: { x: number; y: number }) => ({
+  x: (p.x * pxRatio() - fishingView.ox) / fishingView.sc,
+  y: (p.y * pxRatio() - fishingView.oy) / fishingView.sc,
 });
+
+// ── 터치 ── 손가락을 한 번이라도 대면(또는 ?touch) 조이스틱·버튼을 띄운다. 손가락마다(pointerId) 따로 쫓는다
+let touchOn = query.has('touch');
+if (touchOn) document.body.classList.add('touch');
+/** 조이스틱을 쥔 손가락과 그 위치 (CSS px) */
+let stick: { id: number; x: number; y: number } | null = null;
+/** 버튼을 누르고 있는 손가락 → 버튼 */
+const pressing = new Map<number, ButtonId>();
+const ctl = () => controls(innerWidth, innerHeight, scene, touchOn);
+
+// ── 물고기 도감 ── 필드 도감 버튼 · 낚시터 도감 판 · B 키. 열려 있는 동안 게임은 멈춘다
+let dexOpen = false;
+let dexTab = Object.keys(SPOTS)[0];
+const dexAllowed = () => !fadeTo && (scene === 'field' || (scene === 'fishing' && dexReady(fishing)));
+function openDex() {
+  if (scene === 'fishing') dexTab = fishing.spotId;
+  dexOpen = true;
+  // 누르고 있던 것은 놓은 걸로
+  keys.clear();
+  fishKey = false;
+  fishPtr = null;
+  stick = null;
+  drag = null;
+  mapDrag = null;
+  help.hidden = true; // 안내줄이 도감 카드를 덮지 않게
+}
+function closeDex() {
+  dexOpen = false;
+  sayHelp();
+}
 // ── 필드 둘러보기 ── 큰 화면을 끌면 지도가 밀리고, 미니맵을 누르거나 끌면 카메라가 그쪽으로 슬라이드한다.
 // 포탈(빛 원)을 누르면(끌지 않고) 고양이가 그 포탈로 워프. 둘러보는 중에 방향키를 누르면 카메라가 고양이에게 돌아온다.
 /** 카메라가 보는 곳 (null = 고양이를 따라감). t = 슬라이드 목표, home = 고양이에게 돌아가는 중 */
 let look: { x: number; y: number; tx: number; ty: number; home: boolean } | null = null;
-let drag: { x: number; y: number; moved: boolean } | null = null;
-let mapDrag = false;
+/** 큰 화면을 끄는 손가락·마우스 */
+let drag: { id: number; x: number; y: number; moved: boolean } | null = null;
+/** 미니맵을 끄는 손가락·마우스 */
+let mapDrag: number | null = null;
 const DRAG_PX = 5;
 const pxRatio = () => Math.min(devicePixelRatio, 2);
 /** 화면(CSS px) → 필드 월드 좌표 */
@@ -146,80 +206,129 @@ function portalAt(px: number, py: number) {
     ) ?? null
   );
 }
-/** 캔버스 기준 마우스 위치 (CSS px). 캔버스 밖에서 버튼을 떼도 맞게 */
-const pos = (e: MouseEvent) => {
+/** 캔버스 기준 포인터 위치 (CSS px) */
+const pos = (e: PointerEvent) => {
   const r = canvas.getBoundingClientRect();
   return { x: e.clientX - r.left, y: e.clientY - r.top };
 };
-const onMap = (e: MouseEvent) => scene === 'field' && showMap && inMinimap(minimapRect(innerWidth), pos(e).x, pos(e).y);
-const mapPoint = (e: MouseEvent) => {
-  const [x, y] = fromMini(minimapRect(innerWidth), pos(e).x, pos(e).y);
+type Pt = { x: number; y: number };
+const mapRect = () => minimapRect(innerWidth, innerHeight);
+const onMap = (p: Pt) => scene === 'field' && showMap && inMinimap(mapRect(), p.x, p.y);
+const mapPoint = (p: Pt) => {
+  const [x, y] = fromMini(mapRect(), p.x, p.y);
   slideTo(x, y);
 };
-canvas.addEventListener('mousedown', (e) => {
+// 마우스·손가락·펜을 포인터 이벤트 하나로 받는다. 누른 포인터를 캔버스가 붙잡아서(capture) 밖에서 떼도 여기로 온다
+canvas.addEventListener('pointerdown', (e) => {
   unlockAudio();
+  if (e.pointerType === 'touch' && !touchOn) {
+    touchOn = true;
+    document.body.classList.add('touch');
+    sayHelp();
+  }
+  canvas.setPointerCapture(e.pointerId);
+  const p = pos(e);
+  if (dexOpen) {
+    const hit = dexHit(innerWidth, innerHeight, p.x, p.y);
+    if (hit === 'close') closeDex();
+    else if (hit) dexTab = hit.tab;
+    return;
+  }
   if (scene === 'fishing') {
-    const p = toFishing(e);
-    const btn = fishingButtonAt(fishing, p.x, p.y);
+    if (fishPtr !== null) return; // 두 번째 손가락은 무시
+    const f = toFishing(p);
+    const btn = fishingButtonAt(fishing, f.x, f.y);
     if (btn === 'leave') backToField();
     else if (btn === 'again') again(fishing);
+    else if (btn === 'dex') openDex();
     else {
-      Object.assign(fishIn, p);
-      fishMouse = true;
+      Object.assign(fishIn, f);
+      fishPtr = e.pointerId;
       fishIn.pressed = true;
     }
     return;
   }
-  if (scene !== 'field') {
-    punchQueued = true;
+  const c = ctl();
+  const b = buttonAt(c, p.x, p.y);
+  if (b) {
+    pressing.set(e.pointerId, b.id);
+    if (b.id === 'punch') punchQueued = true;
+    else if (b.id === 'dex' && dexAllowed()) openDex();
     return;
   }
-  if (onMap(e)) {
-    mapDrag = true;
-    mapPoint(e);
-  } else drag = { x: pos(e).x, y: pos(e).y, moved: false };
+  if (!stick && onStick(c, p.x, p.y)) {
+    stick = { id: e.pointerId, ...p };
+    return;
+  }
+  if (scene === 'dungeon') {
+    // 낮잠: 손가락으로 누르면 집에서 깨어난다 (키보드는 R). 쓰러지자마자 연타에 넘어가지 않게 1초 뒤부터
+    if (dungeon.phase === 'napped') {
+      if (e.pointerType !== 'mouse' && performance.now() - mood.napAt > 1000) backToField();
+    } else punchQueued = true;
+    return;
+  }
+  if (onMap(p)) {
+    mapDrag = e.pointerId;
+    mapPoint(p);
+  } else if (!drag) drag = { id: e.pointerId, ...p, moved: false };
 });
-canvas.addEventListener('mousemove', (e) => {
+canvas.addEventListener('pointermove', (e) => {
+  const p = pos(e);
+  if (stick?.id === e.pointerId) {
+    Object.assign(stick, p);
+    return;
+  }
+  if (dexOpen) return;
   if (scene === 'fishing') {
-    const p = toFishing(e);
-    Object.assign(fishIn, p);
-    fishHover = fishingButtonAt(fishing, p.x, p.y);
+    if (fishPtr !== null && fishPtr !== e.pointerId) return;
+    const f = toFishing(p);
+    Object.assign(fishIn, f);
+    fishHover = fishingButtonAt(fishing, f.x, f.y);
     canvas.style.cursor = fishHover ? 'pointer' : '';
     return;
   }
   if (scene !== 'field') return;
-  if (mapDrag) mapPoint(e);
-  else if (drag) {
-    const dx = pos(e).x - drag.x;
-    const dy = pos(e).y - drag.y;
+  if (mapDrag === e.pointerId) mapPoint(p);
+  else if (drag?.id === e.pointerId) {
+    const dx = p.x - drag.x;
+    const dy = p.y - drag.y;
     if (!drag.moved && Math.hypot(dx, dy) < DRAG_PX) return;
     drag.moved = true;
-    drag.x = pos(e).x;
-    drag.y = pos(e).y;
+    drag.x = p.x;
+    drag.y = p.y;
     const k = pxRatio() / fieldView.sc;
     const from = look ?? toWorld(innerWidth / 2, innerHeight / 2);
     slideTo(from.x - dx * k, from.y - dy * k, true);
   }
-  const overMap = onMap(e);
-  mapHover = overMap ? minimapPick(minimapRect(innerWidth), pos(e).x, pos(e).y) : null;
-  canvas.style.cursor = drag?.moved ? 'grabbing' : overMap || portalAt(pos(e).x, pos(e).y) ? 'pointer' : 'grab';
+  const overMap = onMap(p);
+  mapHover = overMap ? minimapPick(mapRect(), p.x, p.y) : null;
+  if (e.pointerType === 'mouse')
+    canvas.style.cursor = drag?.moved ? 'grabbing' : overMap || buttonAt(ctl(), p.x, p.y) || portalAt(p.x, p.y) ? 'pointer' : 'grab';
 });
-addEventListener('mouseup', (e) => {
-  if (fishMouse) {
-    fishMouse = false;
+function release(e: PointerEvent) {
+  if (stick?.id === e.pointerId) stick = null;
+  pressing.delete(e.pointerId);
+  if (fishPtr === e.pointerId) {
+    fishPtr = null;
     fishIn.released = true;
   }
-  if (drag && !drag.moved && scene === 'field') {
-    const w = portalAt(pos(e).x, pos(e).y);
-    if (w) warpTo(w);
+  if (drag?.id === e.pointerId) {
+    // 끌지 않고 뗐으면 포탈 누르기 = 워프
+    if (!drag.moved && scene === 'field' && e.type === 'pointerup') {
+      const w = portalAt(pos(e).x, pos(e).y);
+      if (w) warpTo(w);
+    }
+    drag = null;
   }
-  drag = null;
-  mapDrag = false;
-});
+  if (mapDrag === e.pointerId) mapDrag = null;
+  if (e.pointerType !== 'mouse') mapHover = null; // 손가락은 떼면 가리킨 이름도 지운다
+}
+canvas.addEventListener('pointerup', release);
+canvas.addEventListener('pointercancel', release);
 /** 매 프레임: 슬라이드 · 방향키를 누르면 고양이에게 돌아가기 */
 function stepLook(dt: number, moving: boolean) {
   if (!look) return;
-  if (moving && !drag && !mapDrag) look.home = true;
+  if (moving && !drag && mapDrag === null) look.home = true;
   if (look.home) Object.assign(look, ((c) => ({ tx: c.x, ty: c.y }))(clampCam(field.camX, field.camY)));
   const k = 1 - Math.exp(-10 * dt);
   look.x += (look.tx - look.x) * k;
@@ -229,11 +338,15 @@ function stepLook(dt: number, moving: boolean) {
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
 const held = (...codes: string[]) => codes.some((c) => keys.has(c));
-/** 화면 기준 방향 입력 -1..1 */
-const input = () => ({
-  mx: (held('KeyD', 'ArrowRight') ? 1 : 0) - (held('KeyA', 'ArrowLeft') ? 1 : 0),
-  my: (held('KeyS', 'ArrowDown') ? 1 : 0) - (held('KeyW', 'ArrowUp') ? 1 : 0),
-});
+/** 화면 기준 방향 입력 -1..1 — 키보드 + 조이스틱 */
+function input() {
+  const v = stick ? stickVector(ctl(), stick.x, stick.y) : { mx: 0, my: 0 };
+  const clamp = (a: number) => Math.max(-1, Math.min(1, a));
+  return {
+    mx: clamp((held('KeyD', 'ArrowRight') ? 1 : 0) - (held('KeyA', 'ArrowLeft') ? 1 : 0) + v.mx),
+    my: clamp((held('KeyS', 'ArrowDown') ? 1 : 0) - (held('KeyW', 'ArrowUp') ? 1 : 0) + v.my),
+  };
+}
 
 /** 몬스터 시트 — 방에 들어갈 때 그 방 몬스터 것만 불러온다 (51종을 처음에 다 받으면 20MB) */
 const sheets = {} as Record<Kind, Sheet>;
@@ -279,7 +392,9 @@ function saveDex(d: Dex) {
     // 저장이 막힌 창(시크릿 등)이면 이번 판만 기억한다
   }
 }
-let fishing: FishingState = makeFishing(startSpot, loadDex());
+/** 도감 — 한 번 읽어 낚시터들과 도감 화면이 같이 쓴다 (낚으면 바로 보인다) */
+const dex = loadDex();
+let fishing: FishingState = makeFishing(startSpot, dex);
 [fishIn.x, fishIn.y] = fishing.spot.defaultCast;
 if (trace)
   Object.assign(window, {
@@ -294,8 +409,20 @@ if (trace)
       /** 미니맵에서 이정표 점의 화면 위치 (CSS px) */
       minimapPoint: (id: string) => {
         const w = FIELD.warps.find((v) => v.id === id)!;
-        const [x, y] = toMini(minimapRect(innerWidth), w.at[0], w.at[1]);
+        const [x, y] = toMini(mapRect(), w.at[0], w.at[1]);
         return { x, y };
+      },
+      /** 조이스틱·버튼 자리 (CSS px) */
+      get controls() { return ctl(); },
+      get touch() { return touchOn; },
+      get dexOpen() { return dexOpen; },
+      get dexTab() { return dexTab; },
+      dex,
+      /** 도감 화면의 탭 i · 닫기 버튼 가운데 (CSS px) */
+      dexScreen: () => {
+        const L = dexLayout(innerWidth, innerHeight);
+        const mid = (r: { x: number; y: number; w: number; h: number }) => ({ x: L.ox + (r.x + r.w / 2) * L.k, y: L.oy + (r.y + r.h / 2) * L.k });
+        return { tabs: L.tabs.map(mid), close: mid(L.close) };
       },
       get showMap() { return showMap; },
       get look() { return look; },
@@ -387,7 +514,7 @@ function fishingEvent(e: FishEvent) {
     case 'caught':
       sfxCatch();
       say(e.catch.isNew ? 'delight' : 'pride', 2.4);
-      saveDex(fishing.dex);
+      saveDex(dex);
       break;
     case 'fail':
       if (e.reason === 'snap') sfxSnap();
@@ -417,6 +544,8 @@ const mood = {
   lives: 0,
   scared: false,
   phase: '' as string,
+  /** 낮잠에 든 때 (performance.now) */
+  napAt: 0,
 };
 function fieldMood(dt: number, now: number) {
   const b = field.mode === 'walk' || field.mode === 'axe' ? biomeAt(field.x, field.y) : '';
@@ -460,7 +589,10 @@ function dungeonMood() {
   } else if (P.hp >= PLAYER.maxHp * 0.3) mood.scared = false;
   if (dungeon.phase !== mood.phase) {
     if (dungeon.phase === 'cleared') say('delight', 3);
-    else if (dungeon.phase === 'napped') say('sleep', 99);
+    else if (dungeon.phase === 'napped') {
+      say('sleep', 99);
+      mood.napAt = performance.now();
+    }
     mood.phase = dungeon.phase;
   }
 }
@@ -499,7 +631,7 @@ const enterFishing = (to: string) =>
     scene = 'fishing';
     roomId = to;
     canvas.style.cursor = '';
-    fishing = makeFishing(to, loadDex());
+    fishing = makeFishing(to, dex);
     [fishIn.x, fishIn.y] = fishing.spot.defaultCast; // 마우스를 안 움직이고 Space 로 던지면 여기로
     resetFishingFx();
     quiet();
@@ -522,7 +654,8 @@ const backToField = () =>
     scene = 'field';
     field = makeFieldState(backFrom(roomId), terrainAt);
     look = null;
-    fishMouse = fishKey = false;
+    fishKey = false;
+    fishPtr = null;
     canvas.style.cursor = '';
     quiet();
     sayHelp();
@@ -550,8 +683,8 @@ function frame(now: number) {
     }
   } else if (fade > 0) fade = Math.max(0, fade - dt / FADE);
 
-  // 덮이는 동안은 멈춘다
-  if (!fadeTo) {
+  // 덮이는 동안·도감을 보는 동안은 멈춘다
+  if (!fadeTo && !dexOpen) {
     if (scene === 'field') {
       const { mx, my } = input();
       stepLook(dt, mx !== 0 || my !== 0);
@@ -561,7 +694,7 @@ function frame(now: number) {
       fieldMood(dt, now / 1000);
       if (w) enterPortal(w.to);
     } else if (scene === 'fishing') {
-      fishIn.down = fishMouse || fishKey;
+      fishIn.down = fishPtr !== null || fishKey;
       const before = fishing.phase;
       updateFishing(fishing, fishIn, dt);
       fishIn.pressed = fishIn.released = false;
@@ -575,7 +708,8 @@ function frame(now: number) {
         sfxReel();
       }
     } else {
-      const out = updateDungeon(dungeon, { ...input(), punch: punchQueued, dash: keys.has('Space') }, dt);
+      const dash = keys.has('Space') || [...pressing.values()].includes('dash');
+      const out = updateDungeon(dungeon, { ...input(), punch: punchQueued, dash }, dt);
       dungeon.events.forEach(dungeonSound);
       dungeonMood();
       if (out === 'exit') backToField();
@@ -584,8 +718,10 @@ function frame(now: number) {
     tickEmote(dt);
   }
   if (scene === 'field') drawFieldScene();
-  else if (scene === 'fishing') drawFishing(ctx, canvas.width, canvas.height, fishing, { t: last / 1000, dt: lastDt, hover: fishHover });
-  else drawDungeon(ctx, canvas.width, canvas.height, dungeon, catSheet, { t: last / 1000, dt: lastDt, fps, grid: debug, trace: trace ? traceDraw : undefined });
+  else if (scene === 'fishing') drawFishing(ctx, canvas.width, canvas.height, fishing, { t: last / 1000, dt: lastDt, hover: fishHover, touch: touchOn });
+  else
+    drawDungeon(ctx, canvas.width, canvas.height, dungeon, catSheet, { t: last / 1000, dt: lastDt, fps, grid: debug, trace: trace ? traceDraw : undefined, touch: touchOn });
+  drawOverlay();
   drawFade();
   requestAnimationFrame(frame);
 }
@@ -595,8 +731,10 @@ function drawFieldScene() {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   drawField(ctx, canvas.width, canvas.height, field, { cat: catSheet, axe: axeSheet, boat: boatSheet, snow: snowSheet }, last / 1000, lastDt, showTerrain, look);
-  const s = Math.min(devicePixelRatio, 2);
-  ctx.setTransform(s, 0, 0, s, 0, 0);
+  const s = pxRatio();
+  const k = ui(innerWidth, innerHeight);
+  const sf = safe();
+  ctx.setTransform(s * k, 0, 0, s * k, s * sf.l, s * sf.t);
   ctx.font = 'bold 15px system-ui, sans-serif';
   const w = ctx.measureText(FIELD.name).width + 28;
   ctx.fillStyle = 'rgba(255,250,240,0.85)';
@@ -605,11 +743,25 @@ function drawFieldScene() {
   ctx.fill();
   ctx.fillStyle = '#5b4a3f';
   ctx.fillText(FIELD.name, 28, 36);
+  ctx.setTransform(s, 0, 0, s, 0, 0);
   if (showMap) {
     const sc = fieldView.sc;
     const view = { x: -fieldView.ox / sc, y: -fieldView.oy / sc, w: canvas.width / sc, h: canvas.height / sc };
-    drawMinimap(ctx, minimapRect(innerWidth), field, view, mapHover, last / 1000);
+    drawMinimap(ctx, mapRect(), field, view, mapHover, last / 1000);
   }
+}
+
+/** 장면 위에 뜨는 것 — 조이스틱·버튼, 세로 화면 안내, 도감 (CSS px) */
+function drawOverlay() {
+  const s = pxRatio();
+  ctx.setTransform(s, 0, 0, s, 0, 0);
+  if (dexOpen) {
+    drawDex(ctx, innerWidth, innerHeight, dex, dexTab, last / 1000);
+    return;
+  }
+  const c = ctl();
+  drawControls(ctx, c, stick && stickVector(c, stick.x, stick.y), new Set(pressing.values()));
+  if (touchOn && innerHeight > innerWidth) drawRotateHint(ctx, innerWidth);
 }
 
 /** 장면 전환 덮개 */
@@ -623,14 +775,21 @@ function drawFade() {
 
 const help = document.getElementById('help')!;
 const HELP = {
-  field: 'WASD 이동 · 숲은 도끼로, 물은 배로 · 이정표 앞 포탈에 잠시 서 있으면 던전 · 지도 끌기·미니맵으로 둘러보기, 포탈 클릭 = 워프 · M 미니맵 · T 지형 보기',
+  field: 'WASD 이동 · 숲은 도끼로, 물은 배로 · 이정표 앞 포탈에 잠시 서 있으면 던전 · 지도 끌기·미니맵으로 둘러보기, 포탈 클릭 = 워프 · B 도감 · M 미니맵 · T 지형 보기',
   dungeon: 'WASD 이동 · 클릭/J 냥펀치 · Space 구르기 · 빛나는 칸으로 나가기 · G 격자',
 };
+const HELP_TOUCH = {
+  field: '왼쪽 조이스틱으로 이동 · 숲은 도끼로, 물은 배로 · 포탈에 잠시 서 있으면 던전·낚시터 · 화면을 끌어 둘러보고 포탈을 누르면 워프',
+  dungeon: '조이스틱 이동 · 냥펀치 · 구르기 · 빛나는 칸으로 나가기',
+};
 function sayHelp() {
-  help.textContent = scene === 'fishing' ? fishingHelp(fishing) : HELP[scene];
+  const t = scene === 'fishing' ? fishingHelp(fishing, touchOn) : (touchOn ? HELP_TOUCH : HELP)[scene];
+  help.textContent = t;
+  help.hidden = !t;
 }
 const step = (t: string) => {
   help.textContent = t + ' 불러오는 중…';
+  help.hidden = false;
 };
 
 (async () => {
