@@ -91,7 +91,7 @@ function failText(reason: FailReason, hint: FailHint) {
     return hint === 'approach'
       ? '아직 다가오는 중이었어요!'
       : hint === 'dunk'
-        ? '헛잠김이었어요! 쏙 잠겨서 안 올라올 때 채요'
+        ? '헛잠김이었어요! 팍 잠기며 번쩍할 때 채요'
         : hint === 'flurry'
           ? '따다닥 연타는 맛보기예요, 조금 더!'
           : hint === 'nudge'
@@ -754,7 +754,7 @@ export function fishingHelp(s: FishingState, touch = false) {
 // ── 물고기 도감 카드 ── 전체 도감 화면(book-draw.ts)의 물고기 쪽이 쓴다. 좌표는 도감의 디자인 좌표.
 const PATTERN_NAME: Record<string, string> = { peck: '톡톡', flurry: '연타', nudge: '살살 끌기', slam: '한방', fake: '헛잠김', hesitant: '망설임' };
 /** 무게: 1kg 밑은 g, 넘으면 kg */
-export const grams = (g: number) => (g < 1000 ? `${Math.round(g)} g` : `${(g / 1000).toFixed(g < 10000 ? 2 : 1)} kg`);
+const grams = (g: number) => (g < 1000 ? `${Math.round(g)} g` : `${(g / 1000).toFixed(g < 10000 ? 2 : 1)} kg`);
 const FIGHT_NAME: Record<string, string> = { steady: '꾸준', dart: '잔걸음', zigzag: '지그재그', heavy: '묵직', jump: '점프' };
 
 /** 시트 칸을 첫 칸의 내용 크기로 box 안에 맞춰 (x, y) 가운데에 — 칸마다 같은 배율·같은 자리라 꿈틀대는 게 자연스럽다 */

@@ -96,7 +96,7 @@ export function statText(k: keyof Stats, v: number) {
 
 // ── 화면 상태 ──
 type Pick = { at: 'bag'; i: number } | { at: 'slot'; slot: Slot } | null;
-export const bagView = { pick: null as Pick, sure: false, msg: '', msgT: 0 };
+const bagView = { pick: null as Pick, sure: false, msg: '', msgT: 0 };
 /** 열 때마다 처음 상태로 */
 export function resetBagView() {
   Object.assign(bagView, { pick: null, sure: false, msg: '', msgT: 0 });

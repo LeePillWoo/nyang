@@ -160,9 +160,9 @@ export const sfxNibble = (strength = 1) => {
 };
 /** 퐁 — 헛잠김 (반쯤 잠겼다 떠오름) */
 export const sfxDunk = () => tone('sine', 560, 300, 0.12, 0.1);
-/** 스르륵 — 찌가 옆으로 끌려갈 때 */
+/** 스르륵 — 물고기가 찌를 살살 끌 때 (간 보기) */
 export const sfxDrag = () => burst('bandpass', 1400, 1.4, 0.12, 0.45, 500);
-/** 퐁! — 찌가 쏙 잠길 때 */
+/** 퐁! — 찌가 팍 잠길 때 (진짜 입질) */
 export function sfxBite() {
   tone('sine', 480, 120, 0.26, 0.2);
   burst('lowpass', 1200, 0.8, 0.12, 0.18, 300);

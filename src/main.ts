@@ -370,7 +370,7 @@ function input() {
   };
 }
 
-/** 몬스터 시트 — 방에 들어갈 때 그 방 몬스터 것만 불러온다 (51종을 처음에 다 받으면 20MB) */
+/** 몬스터 시트 — 방에 들어갈 때 그 방 몬스터 것만 불러온다 (65종을 처음에 다 받으면 25MB) */
 const sheets = {} as Record<Kind, Sheet>;
 const loading = new Map<Kind, Promise<Sheet>>();
 function enemySheet(k: Kind) {

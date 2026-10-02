@@ -2,8 +2,8 @@
  * 낚시 로직 (GDD 10장 낚시 확장) — 고정 화면, 고양이는 움직이지 않는다. 좌표는 낚시 배경 그림 픽셀.
  *
  *   준비 → 조준 (누르고 있으면 링이 줄었다 커졌다, 가장 작을 때 떼면 정확히 날아간다)
- *   → 던지기 → 기다리기 (그림자 물고기가 찌를 보고 다가와 톡톡 — 이때 채면 "너무 빨랐다")
- *   → 입질 (찌가 쏙 잠김 — 종마다 정해진 시간 안에 눌러야 챔질, 빨리 누를수록 완벽한 챔질)
+ *   → 던지기 → 기다리기 (그림자 물고기가 찌를 보고 다가와 톡톡·살살 끌기 등으로 애태운다 — 이때 채면 "너무 빨랐다")
+ *   → 입질 (찌가 팍 잠기며 번쩍 — 종마다 정해진 시간 안에 눌러야 챔질, 빨리 누를수록 완벽한 챔질)
  *   → 당기기 (누르고 있으면 감긴다. 물고기가 날뛸 때 계속 감으면 줄이 끊어지고, 오래 놓으면 바늘이 빠진다)
  *   → 낚음 / 놓침
  *
@@ -79,7 +79,7 @@ export type SpotDef = {
 export const SPOTS = data.spots as unknown as Record<string, SpotDef>;
 export const RULES = data.rules;
 /** 가라앉은 물건 — 물고기 AI 를 그대로 쓰되 천천히 떠다니고, 다가오면 바로 물고(한방), 날뛰지 않고 금방 지친다 */
-export const SALVAGE: FishDef = {
+const SALVAGE: FishDef = {
   name: '가라앉은 물건',
   stars: 0,
   biome: '',
@@ -183,7 +183,7 @@ const SHAPE_K: Record<string, number> = { slender: 0.0065, ribbon: 0.005, torped
 /** 이 길이의 보통 무게 (g) */
 export const weightOf = (kind: string, cm: number) => (SHAPE_K[FISH[kind]?.shadow] ?? 0.012) * cm ** 3;
 /** 힘겨루기 무게감: 작은 개체 0.7 ~ 월척 1.3 */
-export const heft = (f: Fish) => 0.7 + 0.6 * f.k;
+const heft = (f: Fish) => 0.7 + 0.6 * f.k;
 /** 힘: 어종의 사나움(pull) × 무게감 — 0.35 밑은 가볍게 끌려오고, 0.75 넘으면 날뛸 때 놓아야 한다 */
 export const strength = (f: Fish) => f.def.pull * heft(f);
 /** 예전 도감(최고 길이만 있던)을 채운다 */
@@ -593,7 +593,7 @@ export const mouth = (f: Fish) => ({ x: f.x + f.hx * fishLen(f) * 0.42, y: f.y +
  * 얼마나 애태울지 (초) — 짧게 25% (0.3~1.1초) · 보통 45% (1.5~4초) · 길게 30% (4.5~9초).
  * 톡톡이 많은 종(nibbles 가 큰 메기·버봇)은 더 길게, 성미 급한 종(송어)은 조금 짧게.
  */
-export function teaseTime(s: FishingState, f: Fish) {
+function teaseTime(s: FishingState, f: Fish) {
   const r = s.rng();
   const t = r < 0.25 ? 0.3 + s.rng() * 0.8 : r < 0.7 ? 1.5 + s.rng() * 2.5 : 4.5 + s.rng() * 4.5;
   return t * (0.7 + 0.12 * f.def.nibbles[1]);

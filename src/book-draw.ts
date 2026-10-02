@@ -44,7 +44,7 @@ const ITEM_TABS: Tab[] = (
     ['collect', '수집품', (t: ItemType) => t === 'relic' || t === 'mystery'],
   ] as const
 ).map(([id, name, ok]) => ({ id, name, ids: Object.keys(ITEMS).filter((k) => ok(ITEMS[k].type)) }));
-export const BOOK_TABS: Record<BookCat, Tab[]> = { fish: SPOT_TABS, monster: MON_TABS, item: ITEM_TABS };
+const BOOK_TABS: Record<BookCat, Tab[]> = { fish: SPOT_TABS, monster: MON_TABS, item: ITEM_TABS };
 const CAT_NAME: Record<BookCat, string> = { fish: '🐟 물고기', monster: '👾 몬스터', item: '🎒 아이템' };
 const CATS: BookCat[] = ['fish', 'monster', 'item'];
 
