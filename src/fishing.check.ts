@@ -247,8 +247,8 @@ function untilBite(s: FishingState, seconds = 20) {
 }
 
 /** 입질에서 바로 채고 당기기로. 이후 hold 로 당긴다 */
-function hooked(kind: string, seed: number) {
-  const s = makeFishing(SPOT, {}, seeded(seed));
+function hooked(kind: string, seed: number, gear = { reel: 0, line: 0 }) {
+  const s = makeFishing(SPOT, {}, seeded(seed), gear);
   empty(s);
   debugBite(s, kind);
   // 실제처럼 찌에서 멀리 떨어진 곳에서 끌어오게 물고기를 옮긴다
@@ -310,6 +310,27 @@ function hooked(kind: string, seed: number) {
     else assert.ok(holdWin <= 1, tag);
     console.log('  ' + tag);
   }
+}
+
+// 낚시 장비(가방의 낚싯대·릴): 감기 % 만큼 빨리 감기고, 줄 강도 % 만큼 끊어지기까지 오래 버틴다
+{
+  const until = (kind: string, gear: { reel: number; line: number }) => {
+    const s = hooked(kind, 11, gear);
+    let t = 0;
+    while (s.phase === 'reel' && t < 60) {
+      updateFishing(s, at(0, 0, true), DT);
+      t += DT;
+    }
+    return { t, phase: s.phase, fail: s.fail };
+  };
+  const base = until('silver_minnow', { reel: 0, line: 0 });
+  const fast = until('silver_minnow', { reel: 50, line: 0 });
+  assert.ok(base.phase === 'caught' && fast.phase === 'caught' && fast.t < base.t * 0.85, `감기 +50%: ${base.t.toFixed(2)}초 → ${fast.t.toFixed(2)}초`);
+  const strong = Object.keys(SPOTS[SPOT].fish).find((k) => FISH[k].stars >= 3)!;
+  const snap = until(strong, { reel: 0, line: 0 });
+  const tough = until(strong, { reel: 0, line: 200 });
+  assert.equal(snap.fail, 'snap');
+  assert.ok(tough.t > snap.t, `줄 강도 +200%: ${FISH[strong].name} 끊어지기까지 ${snap.t.toFixed(2)}초 → ${tough.t.toFixed(2)}초 (${tough.phase} ${tough.fail ?? ''})`);
 }
 
 // 너무 오래 놓고 있으면 바늘이 빠진다

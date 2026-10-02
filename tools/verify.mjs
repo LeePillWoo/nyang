@@ -593,6 +593,117 @@ try {
     check(errs.length === 0, `${name} 화면: 페이지 에러 ${errs.length}건${errs.length ? ': ' + errs[0] : ''}`);
   }
 
+  // 3-7) 가방 · 드롭 (실제 키·마우스): 실제 냥펀치로 쓰러뜨리면 냥코인·아이템이 떨어지고, 방을 깨면 날아와 가방에 →
+  //  다가가면 줍는다(알림) → I 로 가방 → 칸 누르고 장착(끼던 건 가방으로) · 벗기 · 다쳤을 때 회복약 · 버리기는 두 번 →
+  //  장비 공격력이 냥펀치에 → 새로 고쳐도 남는다 → 휴대폰: 필드 가방 버튼. 화면은 tools/out/bag-*.png
+  console.log('\n[가방 · 드롭]');
+  {
+    const { page, errors } = await open('dungeon');
+    await page.evaluate(() => localStorage.removeItem('nyang.bag.v1'));
+    await page.reload({ waitUntil: 'load' });
+    await page.waitForFunction(() => window.__sheets, { timeout: 60000 });
+    // 몬스터를 한 대에 쓰러지게 하고 고양이 앞으로 데려와 J 로 때린다
+    await page.evaluate(() => __game.dungeon.enemies.forEach((e) => (e.hp = 1)));
+    let lootShot = false;
+    for (let i = 0; i < 60 && (await page.evaluate(() => __game.dungeon.phase)) === 'playing'; i++) {
+      await page.evaluate(() => {
+        const d = __game.dungeon;
+        const e = d.enemies.find((v) => v.state !== 'pop');
+        if (e) Object.assign(e, { x: d.P.x + d.P.faceX * 0.9, z: d.P.z + d.P.faceZ * 0.9 });
+      });
+      await page.keyboard.press('KeyJ');
+      await sleep(120);
+      if (!lootShot && (await page.evaluate(() => __game.dungeon.loot.length > 1))) {
+        lootShot = true;
+        await page.screenshot({ path: fsPath(new URL('bag-drops.png', OUT)) });
+      }
+    }
+    check(lootShot, '실제 냥펀치로 쓰러뜨리면 냥코인·아이템이 떨어진다');
+    await sleep(1500);
+    const cleared = await page.evaluate(() => ({ phase: __game.dungeon.phase, loot: __game.dungeon.loot.length, coins: __game.bag.coins }));
+    check(cleared.phase === 'cleared' && cleared.loot === 0 && cleared.coins > 0, `방을 깨면 남은 게 날아와 가방에 (냥코인 ${cleared.coins})`);
+
+    const ids = ['equipment_12', 'curios_01', 'curios_14'];
+    await page.evaluate((ids) => {
+      const d = __game.dungeon;
+      for (const id of ids) d.loot.push({ id, n: 1, x: d.P.x + 0.6, z: d.P.z, h: 0, vh: 0, vx: 0, vz: 0, t: 1 });
+    }, ids);
+    await sleep(500);
+    await page.screenshot({ path: fsPath(new URL('bag-toasts.png', OUT)) });
+    const got = await page.evaluate((ids) => ids.map((id) => __game.bag.slots.some((s) => s?.id === id)), ids);
+    check(got.every(Boolean), '다가가면 아이템을 줍는다 (주운 것 알림)');
+
+    await page.evaluate(() => (__game.dungeon.P.hp = 40));
+    await page.keyboard.press('KeyI');
+    check(await page.evaluate(() => __game.bagOpen), 'I 로 가방을 연다 (게임은 멈춘다)');
+    const scr = () => page.evaluate(() => __game.bagScreen());
+    const click = async (p) => {
+      await page.mouse.move(p.x, p.y);
+      await page.mouse.down();
+      await page.mouse.up();
+    };
+    const idx = (id) => page.evaluate((id) => __game.bag.slots.findIndex((s) => s?.id === id), id);
+    await click((await scr()).cells[await idx('equipment_12')]);
+    await sleep(100);
+    await page.screenshot({ path: fsPath(new URL('bag-desktop-pick.png', OUT)) });
+    await click((await scr()).main);
+    const eq = await page.evaluate(() => ({ w: __game.bag.equip.weapon, old: __game.bag.slots.some((s) => s?.id === 'equipment_01') }));
+    check(eq.w === 'equipment_12' && eq.old, '해적 커틀러스를 눌러 장착 → 끼던 나뭇가지 검은 가방으로');
+    await sleep(100);
+    await page.screenshot({ path: fsPath(new URL('bag-desktop.png', OUT)) });
+    await click((await scr()).main); // 장착하면 장비 칸이 골라져 있다 → 벗기
+    check(!(await page.evaluate(() => __game.bag.equip.weapon)), '장비 칸을 눌러 벗기');
+    await click((await scr()).cells[await idx('equipment_12')]);
+    await click((await scr()).main);
+    await click((await scr()).cells[await idx('curios_01')]);
+    await click((await scr()).main);
+    const hp = await page.evaluate(() => __game.dungeon.P.hp);
+    check(hp === 80, `다쳤을 때 작은 회복 물약을 먹으면 체력 40 → ${hp}`);
+    await click((await scr()).cells[await idx('curios_14')]);
+    await click((await scr()).drop);
+    const kept = (await idx('curios_14')) >= 0;
+    await click((await scr()).drop);
+    check(kept && (await idx('curios_14')) < 0, '버리기는 한 번 더 눌러야 버린다');
+    await page.keyboard.press('Escape');
+    check(!(await page.evaluate(() => __game.bagOpen)), 'Esc 로 가방을 닫는다');
+
+    // 장비 공격력 +8 이 냥펀치에: 10 + 8 = 18
+    await page.keyboard.press('KeyR');
+    await sleep(300);
+    await page.evaluate(() => {
+      const d = __game.dungeon;
+      d.enemies = d.enemies.slice(0, 1);
+      Object.assign(d.enemies[0], { x: d.P.x + d.P.faceX * 0.9, z: d.P.z + d.P.faceZ * 0.9, hp: 99 });
+    });
+    await page.keyboard.press('KeyJ');
+    await sleep(250);
+    const dmg = await page.evaluate(() => __game.dungeon.pops.map((q) => q.text));
+    check(dmg.includes('18'), `장비 공격력이 냥펀치에 (피해 ${dmg.join(',')})`);
+
+    const before = await page.evaluate(() => JSON.stringify([__game.bag.coins, Object.entries(__game.bag.equip).sort(), __game.bag.slots]));
+    await page.reload({ waitUntil: 'load' });
+    await page.waitForFunction(() => window.__sheets, { timeout: 60000 });
+    const after = await page.evaluate(() => JSON.stringify([__game.bag.coins, Object.entries(__game.bag.equip).sort(), __game.bag.slots]));
+    check(before === after, '새로 고쳐도 가방·장비·냥코인이 남아 있다');
+    check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
+    await page.close();
+  }
+  for (const [name, view] of [
+    ['phone', PHONE],
+    ['phone-portrait', { width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true }],
+  ]) {
+    const { page, errors } = await open('field', '', view, '&touch');
+    await tap(page, (await page.evaluate(() => __game.controls)).buttons.find((b) => b.id === 'bag'));
+    const opened = await page.evaluate(() => __game.bagOpen);
+    const cell = (await page.evaluate(() => __game.bagScreen())).cells[0];
+    await tap(page, cell);
+    await sleep(200);
+    await page.screenshot({ path: fsPath(new URL(`bag-${name}.png`, OUT)) });
+    await tap(page, (await page.evaluate(() => __game.bagScreen())).close);
+    check(opened && !(await page.evaluate(() => __game.bagOpen)) && errors.length === 0, `${name}: 필드 가방 버튼으로 열고 ✕ 로 닫기 · 에러 ${errors.length}건`);
+    await page.close();
+  }
+
   // 4) 왕복: 필드에서 시작 → 골목 던전 포탈(고양이마을) 앞으로 → 포탈로 걸어가 머문다 → 던전 → 나가는 칸으로 걸어 나간다 → 필드
   console.log('\n[필드 ↔ 던전 왕복]');
   {

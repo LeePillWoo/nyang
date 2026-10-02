@@ -5,7 +5,7 @@ import { image } from './assets.ts';
 import atlas from './data/fishing-atlas.json' with { type: 'json' };
 import { drawEmote } from './emote.ts';
 import { FISH, fishLen, mouth, RULES, SPOTS, type Dex, type FailHint, type FailReason, type Fish, type FishEvent, type FishingState } from './fishing.ts';
-import { safe } from './touch.ts';
+import { fitText, safe } from './touch.ts';
 
 /** 칸마다 [x, y, w, h, 내용 x, y, w, h] — 고양이는 뒤에 [발 x, y, 낚싯대 끝 x, y] (칸 기준) */
 type St = { name: string; fps: number; loop: boolean; frames: number[][] };
@@ -715,13 +715,6 @@ export function dexHit(w: number, h: number, x: number, y: number): 'close' | { 
   return i >= 0 ? { tab: SPOT_IDS[i] } : null;
 }
 
-/** 칸 폭을 넘으면 글자를 줄인다 */
-function fitText(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, maxW: number, px: number, bold = '') {
-  ctx.font = `${bold}${px}px system-ui, sans-serif`;
-  const w = ctx.measureText(text).width;
-  if (w > maxW) ctx.font = `${bold}${Math.floor((px * maxW) / w)}px system-ui, sans-serif`;
-  ctx.fillText(text, x, y);
-}
 
 /** 시트 칸을 첫 칸의 내용 크기로 box 안에 맞춰 (x, y) 가운데에 — 칸마다 같은 배율·같은 자리라 꿈틀대는 게 자연스럽다 */
 function fitSprite(ctx: CanvasRenderingContext2D, img: CanvasImageSource | null, st: St, f: number[], x: number, y: number, box: number, alpha: number) {

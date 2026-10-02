@@ -203,9 +203,12 @@ export type FishingState = {
   dex: Dex;
   events: FishEvent[];
   rng: () => number;
+  /** 낚시 장비 (가방 장비의 %) — reel: 감는 속도, line: 줄이 끊어지기까지 버티는 시간 */
+  gear: Gear;
 };
+export type Gear = { reel: number; line: number };
 
-const between = (s: FishingState, [a, b]: number[]) => a + (b - a) * s.rng();
+const between =(s: FishingState, [a, b]: number[]) => a + (b - a) * s.rng();
 const randInt = (s: FishingState, [a, b]: number[]) => a + Math.floor(s.rng() * (b - a + 1));
 
 // ── 물 ── 물 영역은 네 꼭짓점 다각형 (fishing.json water)
@@ -377,7 +380,7 @@ function swimFish(s: FishingState, f: Fish, dt: number) {
 }
 
 // ── 상태 ──
-export function makeFishing(spotId: string, dex: Dex = {}, rng: () => number = Math.random): FishingState {
+export function makeFishing(spotId: string, dex: Dex = {}, rng: () => number = Math.random, gear: Gear = { reel: 0, line: 0 }): FishingState {
   const spot = SPOTS[spotId];
   if (!spot) throw new Error('낚시터 없음: ' + spotId);
   const s: FishingState = {
@@ -433,6 +436,7 @@ export function makeFishing(spotId: string, dex: Dex = {}, rng: () => number = M
     dex,
     events: [],
     rng,
+    gear,
   };
   for (let i = 0; i < spot.fishCount; i++) spawnFish(s, undefined, undefined, 1);
   s.events.length = 0; // 처음부터 있던 전설 물고기는 '나타났다' 연출을 하지 않는다
@@ -841,7 +845,7 @@ function reel(s: FishingState, input: FishInput, dt: number) {
   let vy = 0;
   if (reeling) {
     // 힘센(무거운) 물고기일수록 천천히 감긴다
-    const sp = R.reelSpeed * (1.15 - 0.5 * d.pull) * (running ? 0.2 : 1) * (s.tired ? 1.5 : 1);
+    const sp = R.reelSpeed * (1.15 - 0.5 * d.pull) * (running ? 0.2 : 1) * (s.tired ? 1.5 : 1) * (1 + s.gear.reel / 100);
     vx += (lx / ld) * sp;
     vy += (ly / ld) * sp;
   }
@@ -870,7 +874,7 @@ function reel(s: FishingState, input: FishInput, dt: number) {
   }
 
   s.over = s.tension >= 1 ? s.over + dt : Math.max(0, s.over - dt * 2);
-  if (s.over > R.snapGrace) return failWith(s, 'snap');
+  if (s.over > R.snapGrace * (1 + s.gear.line / 100)) return failWith(s, 'snap');
   s.slack = s.tension < R.slackBelow ? s.slack + dt : Math.max(0, s.slack - dt * 2);
   if (s.slack > R.slackTime) return failWith(s, 'slack');
   if (ld < R.landRadius) land(s);

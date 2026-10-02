@@ -17,7 +17,39 @@ export function safe() {
   return { t: parseFloat(s.paddingTop) || 0, r: parseFloat(s.paddingRight) || 0, b: parseFloat(s.paddingBottom) || 0, l: parseFloat(s.paddingLeft) || 0 };
 }
 
-export type ButtonId = 'punch' | 'dash' | 'dex';
+/** 칸 폭을 넘으면 글자를 줄인다 */
+export function fitText(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, maxW: number, px: number, bold = '') {
+  ctx.font = `${bold}${px}px system-ui, sans-serif`;
+  const w = ctx.measureText(text).width;
+  if (w > maxW) ctx.font = `${bold}${Math.floor((px * maxW) / w)}px system-ui, sans-serif`;
+  ctx.fillText(text, x, y);
+}
+
+/** 폭 maxW 로 줄바꿈 (띄어쓰기에서, 한 낱말이 너무 길면 글자에서). ctx.font 를 먼저 맞춰 둔다 */
+export function wrapText(ctx: CanvasRenderingContext2D, text: string, maxW: number): string[] {
+  const lines: string[] = [];
+  let line = '';
+  for (const word of text.split(' ')) {
+    const next = line ? line + ' ' + word : word;
+    if (ctx.measureText(next).width <= maxW) {
+      line = next;
+      continue;
+    }
+    if (line) lines.push(line);
+    line = '';
+    for (const ch of word) {
+      if (ctx.measureText(line + ch).width > maxW && line) {
+        lines.push(line);
+        line = '';
+      }
+      line += ch;
+    }
+  }
+  if (line) lines.push(line);
+  return lines;
+}
+
+export type ButtonId = 'punch' | 'dash' | 'dex' | 'bag';
 export type Button = { id: ButtonId; x: number; y: number; r: number; label: string };
 /** k = HUD 배율 (그리기용) */
 export type Controls = { stick: { x: number; y: number; r: number } | null; buttons: Button[]; k: number };
@@ -31,8 +63,14 @@ export function controls(w: number, h: number, scene: Scene, touch: boolean): Co
   const k = ui(w, h);
   const s = safe();
   const buttons: Button[] = [];
-  // 필드: 지역 이름표(14, 14, 높이 34) 밑 도감 버튼 — 마우스로도 누른다
-  if (scene === 'field') buttons.push({ id: 'dex', x: s.l + (14 + DEX.w / 2) * k, y: s.t + (56 + DEX.h / 2) * k, r: (DEX.w / 2) * k, label: '📖 도감' });
+  // 필드: 지역 이름표(14, 14, 높이 34) 밑 도감 · 가방 버튼, 던전: 체력 판(14, 14, 높이 78) 밑 가방 버튼 — 마우스로도 누른다
+  const pill = (id: ButtonId, col: number, top: number, label: string) =>
+    buttons.push({ id, x: s.l + (14 + col * (DEX.w + 8) + DEX.w / 2) * k, y: s.t + (top + DEX.h / 2) * k, r: (DEX.w / 2) * k, label });
+  if (scene === 'field') {
+    pill('dex', 0, 56, '📖 도감');
+    pill('bag', 1, 56, '🎒 가방');
+  }
+  if (scene === 'dungeon') pill('bag', 0, 100, '🎒 가방');
   if (!touch || scene === 'fishing') return { stick: null, buttons, k };
   // 엄지로 누르는 것들은 휴대폰에서도 너무 작아지지 않게
   const tk = Math.max(0.85, k);
@@ -52,7 +90,7 @@ export function controls(w: number, h: number, scene: Scene, touch: boolean): Co
 /** 둥근 버튼은 조금 넉넉하게, 도감 알약은 그 모양 그대로 */
 export const buttonAt = (c: Controls, x: number, y: number) =>
   c.buttons.find((b) =>
-    b.id === 'dex' ? Math.abs(x - b.x) <= b.r && Math.abs(y - b.y) <= (b.r * DEX.h) / DEX.w : Math.hypot(x - b.x, y - b.y) <= b.r * 1.2,
+    b.id === 'dex' || b.id === 'bag' ? Math.abs(x - b.x) <= b.r && Math.abs(y - b.y) <= (b.r * DEX.h) / DEX.w : Math.hypot(x - b.x, y - b.y) <= b.r * 1.2,
   ) ?? null;
 /** 조이스틱 둘레를 넉넉하게 잡는다 (엄지가 조금 빗나가도) */
 export const onStick = (c: Controls, x: number, y: number) => !!c.stick && Math.hypot(x - c.stick.x, y - c.stick.y) <= c.stick.r * 1.8;
@@ -92,7 +130,7 @@ export function drawControls(ctx: CanvasRenderingContext2D, c: Controls, knob: {
   ctx.textAlign = 'center';
   for (const b of c.buttons) {
     const on = pressed.has(b.id);
-    if (b.id === 'dex') {
+    if (b.id === 'dex' || b.id === 'bag') {
       // 도감: 이름표 같은 알약
       const w = DEX.w * k;
       const h = DEX.h * k;

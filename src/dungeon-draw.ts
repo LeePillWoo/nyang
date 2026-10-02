@@ -1,9 +1,11 @@
 // 던전 그리기 — 방 배경, 몬스터·고양이·화살·이펙트, 데미지 숫자, 감정, HUD, 나가는 곳, 격자(G 키).
 // 로직은 dungeon.ts. 여기는 상태를 읽어서 그리기만 한다 (표시용 배율 dispScale 만 갱신).
 import { image } from './assets.ts';
+import { drawCoin, drawIcon, RARE } from './bag-draw.ts';
+import { ITEMS } from './bag.ts';
 import { CAT_FPS, CAT_ROW } from './cat.ts';
 import { CELL } from './collide.ts';
-import { PLAYER, POP_LIFE, POP_OUT, type Dungeon } from './dungeon.ts';
+import { maxHp, PLAYER, POP_LIFE, POP_OUT, TOAST_LIFE, type Dungeon } from './dungeon.ts';
 import { enemyFrame, type Enemy } from './enemy.ts';
 import { drawEmote } from './emote.ts';
 import { drawFx, FX_SHEETS, type FxSheet } from './fx.ts';
@@ -130,6 +132,28 @@ export function drawDungeon(ctx: CanvasRenderingContext2D, cw: number, ch: numbe
     },
   });
 
+  // 바닥에 떨어진 냥코인·아이템 — 튀어 오르고, 멈추면 살짝 둥실. 귀한 건 빛이 돈다
+  for (const l of d.loot) {
+    const { sx, sy } = toScreen(l.x, l.z);
+    items.push({
+      sy,
+      go: () => {
+        const bob = l.h > 0 ? 0 : Math.sin(v.t * 3 + l.x) * 3;
+        const y = sy - 20 - l.h * 70 + bob;
+        blob(ctx, sx, sy, l.id === 'coin' ? 14 : 20);
+        if (l.id === 'coin') return drawCoin(ctx, sx, y, 17);
+        const rare = ITEMS[l.id]?.rare ?? 1;
+        if (rare >= 3) {
+          ctx.fillStyle = RARE[rare].color + '55';
+          ctx.beginPath();
+          ctx.arc(sx, y, 34 + Math.sin(v.t * 5) * 4, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        drawIcon(ctx, l.id, sx, y - 8, 58);
+      },
+    });
+  }
+
   items.sort((a, b) => a.sy - b.sy);
   for (const it of items) it.go();
 
@@ -220,7 +244,7 @@ function drawHud(ctx: CanvasRenderingContext2D, cw: number, ch: number, d: Dunge
   ctx.fill();
   ctx.fillStyle = '#ef6b5e';
   ctx.beginPath();
-  ctx.roundRect(60, 25, (176 * Math.max(0, P.hp)) / PLAYER.maxHp, 18, 9);
+  ctx.roundRect(60, 25, (176 * Math.max(0, P.hp)) / maxHp(d), 18, 9);
   ctx.fill();
 
   ctx.font = '15px system-ui, sans-serif';
@@ -233,6 +257,47 @@ function drawHud(ctx: CanvasRenderingContext2D, cw: number, ch: number, d: Dunge
   for (let i = 0; i < PLAYER.startLives; i++) {
     ctx.globalAlpha = i < P.lives ? 1 : 0.2;
     ctx.fillText('\u{1F43E}', 60 + i * 27, 78);
+  }
+  ctx.globalAlpha = 1;
+
+  // 먹은 것 효과 (가방 버튼 밑): 아이콘 + 남은 초
+  let y = 146;
+  if (d.bag.buffs.length) {
+    d.bag.buffs.forEach((f, i) => {
+      const x = 14 + i * 50;
+      ctx.fillStyle = 'rgba(255,250,240,0.85)';
+      ctx.beginPath();
+      ctx.roundRect(x, y, 44, 44, 10);
+      ctx.fill();
+      drawIcon(ctx, f.id, x + 22, y + 18, 28);
+      ctx.fillStyle = '#5b4a3f';
+      ctx.font = 'bold 12px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(`${Math.ceil(f.left)}초`, x + 22, y + 41);
+      ctx.textAlign = 'left';
+    });
+    y += 52;
+  }
+  // 주운 것 알림 — 들어올 땐 옆에서 미끄러져 오고, 끝날 때 흐려진다
+  for (const q of d.toasts) {
+    const a = Math.min(1, q.t / 0.15, (TOAST_LIFE - q.t) / 0.5);
+    const slide = (1 - Math.min(1, q.t / 0.2)) * -30;
+    const full = q.id === 'full';
+    const text = full ? '가방이 가득 찼어요' : `${q.id === 'coin' ? '냥코인' : ITEMS[q.id].name} +${q.n}`;
+    ctx.globalAlpha = Math.max(0, a);
+    ctx.font = 'bold 15px system-ui, sans-serif';
+    const tw = ctx.measureText(text).width + (full ? 24 : 54);
+    ctx.fillStyle = full ? 'rgba(239,107,94,0.92)' : 'rgba(255,250,240,0.9)';
+    ctx.beginPath();
+    ctx.roundRect(14 + slide, y, tw, 34, 17);
+    ctx.fill();
+    if (!full) {
+      if (q.id === 'coin') drawCoin(ctx, 34 + slide, y + 17, 10);
+      else drawIcon(ctx, q.id, 34 + slide, y + 17, 26);
+    }
+    ctx.fillStyle = full ? '#fff' : '#5b4a3f';
+    ctx.fillText(text, (full ? 26 : 52) + slide, y + 23);
+    y += 40;
   }
   ctx.globalAlpha = 1;
 

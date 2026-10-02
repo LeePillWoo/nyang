@@ -182,3 +182,14 @@ export function sfxCatch() {
   tone('sine', 880, 880, 0.16, 0.14, 0.1);
   tone('sine', 1320, 1320, 0.18, 0.3, 0.2);
 }
+
+// ── 줍기 ──
+/** 짤랑 — 냥코인 */
+export function sfxCoin() {
+  tone('square', 1320, 1320, 0.035, 0.05);
+  tone('square', 1760, 1760, 0.035, 0.09, 0.05);
+}
+/** 뾱 — 아이템 */
+export const sfxPickup = () => tone('triangle', 520, 1040, 0.14, 0.12);
+/** 둥 — 가방이 가득 참 */
+export const sfxFull = () => tone('sine', 300, 200, 0.14, 0.22);

@@ -4,7 +4,10 @@
  * 소리는 events 로 내보내고 main.ts 가 재생한다 (필드의 field.ts / field-draw.ts 와 같은 모양).
  *
  * 플레이어 스탯은 src/data/player.json, 방(배경·바닥·충돌 맵·몬스터 배치)은 src/data/rooms.json.
+ * 장비 능력치(가방 bag.ts)가 공격·체력·방어·이동·행운에 더해진다. 쓰러진 몬스터는 냥코인·아이템을 떨어뜨리고,
+ * 고양이가 다가가면 빨려 와 가방에 들어간다 (방을 깨면 남은 게 전부 날아온다).
  */
+import { addItem, makeBag, rollDrops, stats, type Bag } from './bag.ts';
 import { CELL, resolveCircle } from './collide.ts';
 import player from './data/player.json' with { type: 'json' };
 import {
@@ -36,10 +39,17 @@ const SHAKE_HURT_MIN_DMG = 12;
 const SHAKE_LIFE_LOST = 24;
 
 export type Pop = { x: number; z: number; text: string; t: number; dx: number; hurt: boolean; h: number };
+/** 바닥에 떨어진 것. id 'coin' = 냥코인 n 개. h = 공중 높이(m), t = 떨어진 뒤 시간 (0.45초 지나야 주울 수 있다) */
+export type Loot = { id: string; n: number; x: number; z: number; h: number; vh: number; vx: number; vz: number; t: number };
+/** 주운 것 알림 (화면 왼쪽). id 'full' = 가방이 가득 참 */
+export type Toast = { id: string; n: number; t: number };
+export const TOAST_LIFE = 2.4;
+/** 이만큼 가까우면 빨려 온다 (m) */
+const MAGNET = 1.8;
 export type Arrow = { x: number; z: number; dx: number; dz: number; speed: number; dmg: number; life: number };
 export type Phase = 'playing' | 'cleared' | 'napped';
 /** 소리용 사건. 한 프레임 동안만 남는다 */
-export type DungeonEvent = { type: 'hit'; finish: boolean } | { type: 'pop' } | { type: 'hurt' };
+export type DungeonEvent = { type: 'hit'; finish: boolean } | { type: 'pop' } | { type: 'hurt' } | { type: 'loot'; coin: boolean } | { type: 'full' };
 /** 화면 기준 입력. mx, my 는 -1..1 */
 export type DungeonInput = { mx: number; my: number; punch: boolean; dash: boolean };
 
@@ -84,7 +94,14 @@ export type Dungeon = {
   sheets: Record<Kind, Sheet>;
   world: World;
   room: Room;
+  /** 가방 — main 과 같은 것을 쓴다 (주운 게 바로 들어간다) */
+  bag: Bag;
+  loot: Loot[];
+  toasts: Toast[];
 };
+
+/** 장비·먹은 것까지 더한 최대 체력 */
+export const maxHp = (d: Dungeon) => player.maxHp + stats(d.bag).hp;
 
 const tile = (tx: number, tz: number) => ({ x: (tx + 0.5) * CELL, z: (tz + 0.5) * CELL });
 
@@ -97,7 +114,7 @@ const shakeBy = (d: Dungeon, v: number) => {
 };
 
 /** sheets: 몬스터 종류별 스프라이트 시트 (몬스터가 들고 다닌다. node 체크에선 아무 값이나) */
-export function makeDungeon(sheets: Record<Kind, Sheet>, roomId = 'alley'): Dungeon {
+export function makeDungeon(sheets: Record<Kind, Sheet>, roomId = 'alley', bag: Bag = makeBag()): Dungeon {
   const d = {
     P: makePlayer(),
     enemies: [],
@@ -109,6 +126,9 @@ export function makeDungeon(sheets: Record<Kind, Sheet>, roomId = 'alley'): Dung
     events: [],
     sheets,
     room: room(roomId),
+    bag,
+    loot: [],
+    toasts: [],
   } as unknown as Dungeon;
   d.world = {
     px: 0,
@@ -126,7 +146,9 @@ export function resetDungeon(d: Dungeon, roomId = d.room.id) {
   d.room = room(roomId);
   d.world.grid = d.room.grid;
   const c = tile(Math.floor(d.room.gridW / 2), Math.floor(d.room.gridH / 2));
-  Object.assign(d.P, makePlayer(), { x: c.x, z: c.z });
+  Object.assign(d.P, makePlayer(), { x: c.x, z: c.z, hp: maxHp(d) });
+  d.loot = [];
+  d.toasts = [];
   d.enemies = d.room.def.spawns.map(([k, tx, tz]) => {
     const p = tile(tx as number, tz as number);
     return makeEnemy(k as Kind, d.sheets[k as Kind], p.x, p.z);
@@ -142,6 +164,7 @@ export function resetDungeon(d: Dungeon, roomId = d.room.id) {
 export function hitPlayer(d: Dungeon, dmg: number, fx: number, fz: number) {
   const P = d.P;
   if (d.phase !== 'playing' || P.invT > 0 || P.dashT > 0) return; // 구르기 중 무적
+  dmg = Math.max(1, dmg - stats(d.bag).def); // 방어만큼 덜 아프다 (최소 1)
   P.hp -= dmg;
   P.hurtT = 0.3;
   addPop(d, P.x, P.z, dmg, true, player.size);
@@ -162,9 +185,71 @@ export function hitPlayer(d: Dungeon, dmg: number, fx: number, fz: number) {
     P.hp = 0;
     d.phase = 'napped';
   } else {
-    P.hp = player.maxHp * player.reviveHp;
+    P.hp = maxHp(d) * player.reviveHp;
     P.invT = player.reviveIframe;
   }
+}
+
+/** 쓰러진 몬스터가 냥코인·아이템을 흩뿌린다 */
+function dropLoot(d: Dungeon, e: Enemy) {
+  const r = rollDrops(e.kind, e.def.hp, stats(d.bag).luck);
+  const out = [...(r.coins ? [{ id: 'coin', n: r.coins }] : []), ...r.items.map((id) => ({ id, n: 1 }))];
+  out.forEach((o, i) => {
+    const a = Math.random() * Math.PI * 2;
+    const v = 1.2 + i * 0.5;
+    d.loot.push({ ...o, x: e.x, z: e.z, h: 0.4, vh: 3.2, vx: Math.cos(a) * v, vz: Math.sin(a) * v, t: 0 });
+  });
+}
+
+/** 줍기: 가방에 넣고 알림. 못 넣은 만큼 남긴다 */
+function take(d: Dungeon, l: Loot) {
+  const left = l.id === 'coin' ? ((d.bag.coins += l.n), 0) : addItem(d.bag, l.id, l.n);
+  const got = l.n - left;
+  if (got > 0) {
+    const last = d.toasts[d.toasts.length - 1];
+    if (last && last.id === l.id && last.t < 0.8) last.n += got;
+    else d.toasts.push({ id: l.id, n: got, t: 0 });
+    d.events.push({ type: 'loot', coin: l.id === 'coin' });
+  }
+  if (left > 0) {
+    if (!d.toasts.some((q) => q.id === 'full' && q.t < TOAST_LIFE)) {
+      d.toasts.push({ id: 'full', n: 0, t: 0 });
+      d.events.push({ type: 'full' });
+    }
+    l.t = -1.5; // 잠깐 빨려 오지 않게
+  }
+  l.n = left;
+}
+
+/** 떨어진 것: 튀어 오르고 미끄러지다 멈춘다. 가까우면(방을 깼으면 어디서든) 고양이에게 빨려 와 주워진다 */
+function updateLoot(d: Dungeon, dt: number) {
+  const P = d.P;
+  for (const l of d.loot) {
+    l.t += dt;
+    l.vh -= 14 * dt;
+    l.h += l.vh * dt;
+    if (l.h < 0) {
+      l.h = 0;
+      l.vh = Math.abs(l.vh) > 1.5 ? -l.vh * 0.35 : 0;
+    }
+    const dist = Math.hypot(P.x - l.x, P.z - l.z);
+    if (l.t > 0.45 && (dist < MAGNET || d.phase === 'cleared')) {
+      const sp = Math.min(dist / dt, 9 + (MAGNET / Math.max(dist, 0.3)) * 2);
+      l.vx = ((P.x - l.x) / (dist || 1)) * sp;
+      l.vz = ((P.z - l.z) / (dist || 1)) * sp;
+      if (dist < 0.45) take(d, l);
+    } else {
+      const f = Math.exp(-3 * dt);
+      l.vx *= f;
+      l.vz *= f;
+    }
+    const p = resolveCircle(d.room.grid, l.x + l.vx * dt, l.z + l.vz * dt, 0.15);
+    l.x = p.x;
+    l.z = p.z;
+  }
+  d.loot = d.loot.filter((l) => l.n > 0);
+  for (const q of d.toasts) q.t += dt;
+  d.toasts = d.toasts.filter((q) => q.t < TOAST_LIFE).slice(-5);
 }
 
 const onExit = (r: Room, x: number, z: number) =>
@@ -220,15 +305,17 @@ export function updateDungeon(d: Dungeon, input: DungeonInput, dt: number): 'exi
     if (!P.punchHit && punch.time - P.punchT >= punch.hitAt) {
       P.punchHit = true;
       const targets = punchTargets(d.enemies, P.x, P.z, P.faceX, P.faceZ, punch.range, PUNCH_ARC);
+      const dmg = punch.damage + stats(d.bag).atk;
       let finish = false;
       for (const e of targets) {
-        damageEnemy(e, punch.damage, P.x, P.z);
-        addPop(d, e.x, e.z, punch.damage, false, e.def.size);
+        damageEnemy(e, dmg, P.x, P.z);
+        addPop(d, e.x, e.z, dmg, false, e.def.size);
         const down = e.state === 'pop';
         addFx(d, e.x, e.z, down ? ((d.room.def.popFx as FxId) ?? 'burst') : 'spark', down ? 333 : 219);
         if (down) {
           finish = true;
           d.events.push({ type: 'pop' });
+          dropLoot(d, e);
         }
       }
       if (targets.length) d.events.push({ type: 'hit', finish });
@@ -239,7 +326,7 @@ export function updateDungeon(d: Dungeon, input: DungeonInput, dt: number): 'exi
   let vx = 0;
   let vz = 0;
   if (alive) {
-    const slow = P.punchT > 0 ? punch.moveSlow : 1;
+    const slow = (P.punchT > 0 ? punch.moveSlow : 1) * Math.max(0.5, 1 + stats(d.bag).speed / 100);
     vx = len > 0 ? (mx + my) * Math.SQRT1_2 * player.speed * slow : 0;
     vz = len > 0 ? (my - mx) * Math.SQRT1_2 * player.speed * slow : 0;
     if (P.dashT > 0) {
@@ -285,7 +372,10 @@ export function updateDungeon(d: Dungeon, input: DungeonInput, dt: number): 'exi
   for (const f of d.fxs) f.t += dt;
   d.fxs = d.fxs.filter((f) => f.t < FX_LIFE);
   d.shake = Math.max(0, d.shake - dt * 46);
+  P.hp = Math.min(P.hp, maxHp(d)); // 체력 장비를 벗으면
 
   if (d.phase === 'playing' && d.enemies.length === 0) d.phase = 'cleared';
+  updateLoot(d, dt);
+  if (leave) for (const l of d.loot) take(d, l); // 나가면서 남은 것도 챙긴다
   return leave ? 'exit' : null;
 }
