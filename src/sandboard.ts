@@ -7,10 +7,12 @@
 export const SAND = {
   length: 900,
   vMin: 13,
-  vMax: 22,
-  accel: 0.6,
-  /** 좌우 조작 속도 (가로 자리/초) */
-  steer: 2.4,
+  vMax: 24,
+  accel: 2.4,
+  /** 좌우: 최고 가로 속도(가로 자리/초) · 누르면 이 시간 상수로 붙고 · 떼면 이 시간 상수로 미끄러지다 선다 (드리프트) */
+  steer: 2.6,
+  steerIn: 0.1,
+  steerOut: 0.13,
   edge: 0.92,
   /** 고양이 가로 반폭 · 앞뒤로 닿는 거리(m) */
   catR: 0.09,
@@ -107,9 +109,10 @@ export type SandState = {
   landT: number;
   /** 넘어져 있는 남은 시간 */
   dizzy: number;
-  /** 지금 누르는 좌우(-1, 0, 1) · 그쪽으로 누른 시간 (드리프트 모션) */
+  /** 가로 속도(가로 자리/초) · 기울기 -1..1 (가로 속도 / 최고) · 기울어진 쪽(-1, 0, 1) */
+  vx: number;
+  lean: number;
   steer: number;
-  steerT: number;
   flip: number;
   t: number;
   hearts: number;
@@ -136,7 +139,7 @@ const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v
 
 export function makeSandboard(rng: () => number = Math.random): SandState {
   const s: SandState = {
-    d: 0, x: 0, v: SAND.vMin, air: 0, airMax: 1, landT: 9, dizzy: 0, steer: 0, steerT: 0, flip: 1, t: 0,
+    d: 0, x: 0, v: SAND.vMin, air: 0, airMax: 1, landT: 9, dizzy: 0, vx: 0, lean: 0, steer: 0, flip: 1, t: 0,
     hearts: SAND.hearts, shield: 0, magnet: 0, boost: 0, phase: 'play', fell: false, coins: 0, crashes: 0, score: 0,
     obs: [], fx: [], pops: [], nextAt: 30, events: [], rng,
   };
@@ -235,11 +238,20 @@ export function updateSandboard(s: SandState, input: SandInput, dt: number) {
     fx(s, 'jump_puff');
     s.events.push({ type: 'jump' });
   }
-  const steer = s.dizzy > 0 ? 0 : Math.sign(clamp(input.mx, -1, 1));
-  s.steerT = steer === s.steer ? s.steerT + dt : 0;
-  s.steer = steer;
-  if (steer !== 0) s.flip = steer;
-  s.x = clamp(s.x + (s.dizzy > 0 ? 0 : clamp(input.mx, -1, 1)) * SAND.steer * dt, -SAND.edge, SAND.edge);
+  // 좌우는 관성으로: 누르면 가로 속도가 붙고, 떼면 모래 위를 미끄러지다 선다. 가장자리에선 멈춘다
+  const want = s.dizzy > 0 ? 0 : clamp(input.mx, -1, 1) * SAND.steer;
+  s.vx += (want - s.vx) * (1 - Math.exp(-dt / (want !== 0 ? SAND.steerIn : SAND.steerOut)));
+  s.x += s.vx * dt;
+  if (s.x >= SAND.edge) {
+    s.x = SAND.edge;
+    s.vx = Math.min(0, s.vx);
+  } else if (s.x <= -SAND.edge) {
+    s.x = -SAND.edge;
+    s.vx = Math.max(0, s.vx);
+  }
+  s.lean = clamp(s.vx / SAND.steer, -1, 1);
+  s.steer = Math.abs(s.lean) > 0.12 ? Math.sign(s.lean) : 0;
+  if (s.steer !== 0) s.flip = s.steer;
   s.d += s.v * dt;
 
   for (const ob of s.obs) {
@@ -310,6 +322,7 @@ export function updateSandboard(s: SandState, input: SandInput, dt: number) {
         }
         s.v = Math.max(SAND.vMin * 0.5, s.v * SAND.crash);
         s.dizzy = SAND.dizzy;
+        s.vx = 0;
         s.air = 0;
         s.crashes++;
         s.hearts--;

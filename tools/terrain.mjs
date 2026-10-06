@@ -1,487 +1,305 @@
-// node tools/terrain.mjs — 필드 그림 색으로 지형 마스크 초안을 만든다.
+// node tools/terrain.mjs [--force] [--preview] — 개방 구역(field.json open) 조각들의 지형 마스크를 그림 색으로 만든다.
 //
-// 결과: src/assets/field-terrain.png (필드 그림과 같은 크기). 채널 하나에 지형 하나:
-//   R = 막힘 (암석·절벽. 집·분수대는 걷기)   흰색 = 막힘
-//   G = 숲 (도끼)                             흰색 = 숲
-//   B = 물 (배)                               흰색 = 물
-//   A = 다리 — 투명하게 지운 곳이 다리 (걸어서도, 배로도 지나간다)
+// 결과: src/assets/world/masks/mask_rR_cC.png (조각과 같은 크기). 채널 하나에 지형 하나 (src/field-draw.ts 가 읽는 형식):
+//   R = 막힘  — 생성기는 칠하지 않는다 (사용자 결정 2026-10-06: 절벽·바위도 막지 않는다. 손으로 칠하면 여전히 막힌다)
+//   G = 숲 (도끼)   B = 물 (배)   A = 다리 — 투명한 곳 (있던 마스크의 다리는 그대로 가져온다. 손으로 칠한 것이라 생성기는 만들지 않는다)
 //   셋 다 검정·불투명 = 걷기.  겹치면 다리 > 막힘 > 물 > 숲.
-//   A 를 거꾸로(투명 = 다리) 쓰는 건, 편집기·브라우저가 투명한 픽셀의 RGB 를 버리기 때문이다.
-// 초안이라 경계는 거칠다. 그림 편집기에서 필드 위에 겹쳐 놓고 고치면 된다.
-// 시작점·워프·던전에서 나오는 자리 주변은 무조건 걷기로 둔다 (src/data/field.json 에서 읽는다).
-// 마스크가 이미 있으면 덮어쓰지 않고 멈춘다 (새 초안이 필요할 때만 --force). 확인만 할 땐 --preview.
-//
-// 미리보기: tools/out/terrain-preview.png (필드 위에 마스크를 반투명으로 겹친 것),
-//          tools/out/terrain-channels.png (채널별 흑백, --preview 일 때)
+// 규칙:
+//   - 개방 구역 조각들을 한 장으로 이어 붙여 반 해상도(칸 하나 = 원본 2px)에서 판정한다 — 조각 경계에 걸친 섬·배도 한 덩어리로 본다.
+//   - 높은 구조물(바위·배·나무·집)이 물이나 숲을 가리면 그 밑은 원래 지형이다 (사용자 요청):
+//       물·숲을 닫기(팽창 → 침식)로 메워 폭이 좁은 끼어듦을 지우고, 바다 한가운데 풀·모래가 거의 없는 작은 덩어리(바위섬·배)는 물로 본다.
+//     나무 널빤지(선착장)는 닫기에 안 먹힌다 — 걸어 들어갈 수 있어야 한다.
+//   - 작은 물(분수·웅덩이·오아시스 · 반 해상도 4000칸 = 원본 약 126×126 미만)은 배를 탈 물이 아니다 → 걷기.
+//     다리로 끊긴 강은 다리 너머 물과 한 덩어리로 센다 (다리 사이 강 토막이 작은 물로 지워지지 않게).
+//   - 작은 숲 조각(600칸 미만 — 야자수 몇 그루·소나무 두어 그루)은 숲이 아니다 → 걷기 (잠깐 스치며 도끼를 꺼내지 않게).
+//   - 시작점·워프·돌아올 자리 둘레(원본 30px)는 무조건 걷기.
+// 마스크가 이미 칠해져 있으면 덮어쓰지 않고 멈춘다 (--force). --preview 는 지금 마스크로 미리보기만 (마스크는 그대로).
+// 미리보기: tools/out/terrain-preview.png (그림 위에 숲 분홍 · 물 하늘색 · 막힘 빨강 · 다리 노랑)
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import puppeteer from 'puppeteer-core';
 
-const SRC = new URL('../src/assets/field.webp', import.meta.url);
-const OUT = new URL('../src/assets/field-terrain.png', import.meta.url);
-const PREVIEW = new URL('./out/terrain-preview.png', import.meta.url);
-const CHANNELS = new URL('./out/terrain-channels.png', import.meta.url);
+const ROOT = new URL('../', import.meta.url);
+const TILES = new URL('src/assets/world/tiles/', ROOT);
+const MASKS = new URL('src/assets/world/masks/', ROOT);
+const PREVIEW = new URL('tools/out/terrain-preview.png', ROOT);
+const field = JSON.parse(fs.readFileSync(new URL('src/data/field.json', ROOT), 'utf8'));
+const [COLS, ROWS] = field.grid;
+const [FW, FH] = field.size;
+const tileW = (c) => (c === COLS - 1 ? FW - Math.floor((FW * c) / COLS) : Math.floor((FW * (c + 1)) / COLS) - Math.floor((FW * c) / COLS));
+const tileY = (r) => Math.floor((FH * r) / ROWS);
+const tileH = (r) => (r === ROWS - 1 ? FH - tileY(r) : tileY(r + 1) - tileY(r));
+const open = field.open;
+const rr = [open.r[0], open.r[1]];
+const cc = [open.c[0], open.c[1]];
+const X0 = Math.floor((FW * cc[0]) / COLS);
+const Y0 = tileY(rr[0]);
+const W = Math.floor((FW * (cc[1] + 1)) / COLS) - X0;
+const H = tileY(rr[1]) + tileH(rr[1]) - Y0;
+const preview = process.argv.includes('--preview');
+const force = process.argv.includes('--force');
 
 const CHROME =
   process.env.CHROME_PATH ??
   ['C:/Program Files/Google/Chrome/Application/chrome.exe', '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '/usr/bin/google-chrome'].find((p) =>
     fs.existsSync(p),
   );
+const tiles = [];
+for (let r = rr[0]; r <= rr[1]; r++)
+  for (let c = cc[0]; c <= cc[1]; c++) {
+    const name = `r${r}_c${c}`;
+    const mask = new URL(`mask_${name}.png`, MASKS);
+    tiles.push({
+      name,
+      x: Math.floor((FW * c) / COLS) - X0,
+      y: tileY(r) - Y0,
+      w: tileW(c),
+      h: tileH(r),
+      tile: fs.readFileSync(new URL(`tile_${name}.webp`, TILES)).toString('base64'),
+      mask: fs.existsSync(mask) ? fs.readFileSync(mask).toString('base64') : null,
+    });
+  }
+// 막혀서는 안 되는 곳 (이어 붙인 그림 기준 좌표)
+const keep = [field.start, ...field.warps.flatMap((w) => [w.at, w.back])].map(([x, y]) => [x - X0, y - Y0]).filter(([x, y]) => x >= 0 && y >= 0 && x < W && y < H);
 
 const browser = await puppeteer.launch({ executablePath: CHROME, headless: true });
 const page = await browser.newPage();
-const b64 = fs.readFileSync(SRC).toString('base64');
+page.on('console', (m) => console.log('   ', m.text()));
 
-// node tools/terrain.mjs --preview : 마스크는 건드리지 않고 지금 마스크로 미리보기만 다시 만든다 (직접 고친 뒤 확인용)
-if (process.argv.includes('--preview')) {
-  const mask64 = fs.readFileSync(OUT).toString('base64');
-  const out = await page.evaluate(async (b64, mask64) => {
+const result = await page.evaluate(
+  async (tiles, keep, W, H, preview) => {
     const load = async (src) => {
       const im = new Image();
       im.src = src;
       await im.decode();
       return im;
     };
-    const im = await load('data:image/webp;base64,' + b64);
-    const mk = await load('data:image/png;base64,' + mask64);
-    const W = im.naturalWidth;
-    const H = im.naturalHeight;
-    const c = document.createElement('canvas');
-    c.width = W;
-    c.height = H;
-    const g = c.getContext('2d', { willReadFrequently: true });
-    g.imageSmoothingEnabled = false;
-    g.drawImage(mk, 0, 0, W, H);
-    const m = g.getImageData(0, 0, W, H);
-
-    // 채널별 흑백 보기 (2×2: R 막힘 · G 숲 / B 물 · A 다리). A 는 투명 = 다리라 뒤집어 보여 준다
-    const HW = W >> 1;
-    const HH = H >> 1;
-    const ch = document.createElement('canvas');
-    ch.width = HW * 2;
-    ch.height = HH * 2;
-    const chg = ch.getContext('2d');
-    const panels = [
-      ['R 막힘 (암석·절벽)', 0, false],
-      ['G 숲', 1, false],
-      ['B 물', 2, false],
-      ['A 다리 (투명한 곳 = 흰색으로 표시)', 3, true],
-    ];
-    panels.forEach(([label, k, invert], n) => {
-      const img = chg.createImageData(HW, HH);
-      for (let y = 0; y < HH; y++)
-        for (let x = 0; x < HW; x++) {
-          const v = m.data[((y * 2) * W + x * 2) * 4 + k];
-          const g2 = invert ? 255 - v : v;
-          img.data.set([g2, g2, g2, 255], (y * HW + x) * 4);
-        }
-      chg.putImageData(img, (n % 2) * HW, (n >> 1) * HH);
-      chg.fillStyle = '#e33';
-      chg.font = 'bold 22px sans-serif';
-      chg.fillText(label, (n % 2) * HW + 12, (n >> 1) * HH + 30);
-    });
-    chg.strokeStyle = '#e33';
-    chg.lineWidth = 2;
-    chg.strokeRect(0, 0, HW, HH);
-    chg.strokeRect(HW, 0, HW, HH);
-    chg.strokeRect(0, HH, HW, HH);
-    chg.strokeRect(HW, HH, HW, HH);
-
-    const count = [0, 0, 0, 0, 0];
-    // 게임(src/field-draw.ts)과 같은 판정
-    for (let i = 0; i < W * H; i++) {
-      const r = m.data[i * 4];
-      const gg = m.data[i * 4 + 1];
-      const b = m.data[i * 4 + 2];
-      const a = m.data[i * 4 + 3];
-      const t = a < 128 ? 4 : r >= 128 ? 3 : b >= 128 ? 2 : gg >= 128 ? 1 : 0;
-      count[t]++;
-      const tint = [null, [255, 0, 170, 110], [0, 210, 255, 90], [255, 30, 30, 150], [255, 230, 0, 170]][t];
-      m.data.set(tint ?? [0, 0, 0, 0], i * 4);
+    const cv = (w, h) => {
+      const c = document.createElement('canvas');
+      c.width = w;
+      c.height = h;
+      return c;
+    };
+    // 이어 붙인 그림 (원본 크기) + 있던 마스크 (다리 채널을 가져온다)
+    const full = cv(W, H);
+    const fg = full.getContext('2d', { willReadFrequently: true });
+    const old = cv(W, H);
+    const og = old.getContext('2d', { willReadFrequently: true });
+    og.imageSmoothingEnabled = false;
+    for (const t of tiles) {
+      fg.drawImage(await load('data:image/webp;base64,' + t.tile), t.x, t.y, t.w, t.h);
+      if (t.mask) og.drawImage(await load('data:image/png;base64,' + t.mask), t.x, t.y, t.w, t.h);
     }
-    g.putImageData(m, 0, 0);
-    const p = document.createElement('canvas');
-    p.width = W;
-    p.height = H;
-    const pg = p.getContext('2d');
-    pg.drawImage(im, 0, 0);
-    pg.drawImage(c, 0, 0);
+    const oldPx = og.getImageData(0, 0, W, H).data;
+
+    // 반 해상도 판정
+    const w = Math.ceil(W / 2);
+    const h = Math.ceil(H / 2);
+    const N = w * h;
+    const half = cv(w, h);
+    const hg = half.getContext('2d', { willReadFrequently: true });
+    hg.imageSmoothingQuality = 'high';
+    hg.drawImage(full, 0, 0, w, h);
+    const px = hg.getImageData(0, 0, w, h).data;
+    // 있던 마스크의 다리 (반 해상도: 네 칸 중 하나라도 투명이면 다리)
+    const bridge = new Uint8Array(w * h);
+    for (let y = 0; y < h; y++)
+      for (let x = 0; x < w; x++)
+        for (const [dx, dy] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
+          const X = x * 2 + dx;
+          const Y = y * 2 + dy;
+          if (X < W && Y < H && oldPx[(Y * W + X) * 4 + 3] < 128) bridge[y * w + x] = 1;
+        }
+
+    let cls;
+    const count = [0, 0, 0, 0, 0];
+    if (!preview) {
+      const water = new Uint8Array(N);
+      const tree = new Uint8Array(N);
+      const natural = new Uint8Array(N); // 풀·모래·흙길 — 섬다운 땅
+      const wood = new Uint8Array(N); // 나무 널빤지 (선착장) — 물이 삼키지 않는다
+      for (let i = 0; i < N; i++) {
+        const r = px[i * 4];
+        const g = px[i * 4 + 1];
+        const b = px[i * 4 + 2];
+        const L = 0.3 * r + 0.59 * g + 0.11 * b;
+        const sat = Math.max(r, g, b) - Math.min(r, g, b);
+        water[i] = b > r + 35 && b > g - 25 && b > 110 ? 1 : 0;
+        // 나무: 초록이 앞서고 풀밭보다 어둡거나 푸른 기가 돈다. 진한 청록 침엽수는 따로.
+        // 단풍(주황·노랑·빨강 캐노피)은 집·해바라기와 색이 겹쳐 잡지 않는다 — 가을 숲은 걷기
+        tree[i] = (g > r + 8 && g > b + 5 && (L < 135 || r < g * 0.55)) || (L < 115 && g > r + 5 && g >= b - 15) ? 1 : 0;
+        const grass = g > r + 8 && g > b + 20 && L >= 135;
+        const sand = r >= g && g > b && r - b > 45 && L > 150 && g > r * 0.78;
+        natural[i] = grass || sand || tree[i] ? 1 : 0;
+        wood[i] = r > g && g > b && r - b > 50 && L > 70 && L <= 170 && g < r * 0.82 && sat > 40 ? 1 : 0;
+      }
+
+      // 사각 반경 rad 의 팽창/침식 (가로 한 번, 세로 한 번). 가장자리 밖은 자기 값으로 본다
+      const morph = (src, rad, grow) => {
+        const tmp = new Uint8Array(N);
+        const out = new Uint8Array(N);
+        for (let y = 0; y < h; y++)
+          for (let x = 0; x < w; x++) {
+            let v = grow ? 0 : 1;
+            for (let k = -rad; k <= rad; k++) {
+              const xx = Math.min(w - 1, Math.max(0, x + k));
+              v = grow ? v | src[y * w + xx] : v & src[y * w + xx];
+            }
+            tmp[y * w + x] = v;
+          }
+        for (let y = 0; y < h; y++)
+          for (let x = 0; x < w; x++) {
+            let v = grow ? 0 : 1;
+            for (let k = -rad; k <= rad; k++) {
+              const yy = Math.min(h - 1, Math.max(0, y + k));
+              v = grow ? v | tmp[yy * w + x] : v & tmp[yy * w + x];
+            }
+            out[y * w + x] = v;
+          }
+        return out;
+      };
+      const opening = (m, r) => morph(morph(m, r, false), r, true);
+      const closing = (m, r) => morph(morph(m, r, true), r, false);
+      // 4방향 덩어리 나누기: cb(덩어리 칸 목록, 가장자리에 닿았나)
+      const components = (m, cb) => {
+        const seen = new Uint8Array(N);
+        for (let s0 = 0; s0 < N; s0++) {
+          if (!m[s0] || seen[s0]) continue;
+          const comp = [s0];
+          seen[s0] = 1;
+          let edge = false;
+          for (let k = 0; k < comp.length; k++) {
+            const i = comp[k];
+            const x = i % w;
+            const y = (i / w) | 0;
+            if (x === 0 || y === 0 || x === w - 1 || y === h - 1) edge = true;
+            for (const j of [i - 1, i + 1, i - w, i + w])
+              if (j >= 0 && j < N && !seen[j] && m[j] && Math.abs((j % w) - x) <= 1) {
+                seen[j] = 1;
+                comp.push(j);
+              }
+          }
+          cb(comp, edge);
+        }
+      };
+
+      // 물: 파란 점(지붕·차양)은 버리고 작은 구멍(거품·연잎)은 메운다
+      let wet = closing(opening(water, 2), 3);
+      // 작은 물(분수·웅덩이·오아시스)은 걷기. 다리는 물과 이어진 것으로 보고 센다
+      const wetOrBridge = new Uint8Array(N);
+      for (let i = 0; i < N; i++) wetOrBridge[i] = wet[i] | bridge[i];
+      components(wetOrBridge, (comp) => {
+        if (comp.length < 4000) for (const i of comp) wet[i] = 0;
+      });
+      // 높은 구조물이 물을 가린 곳: 폭 좁은(원본 40px 미만) 끼어듦은 물로 메운다. 널빤지는 그대로
+      const closed = closing(wet, 10);
+      for (let i = 0; i < N; i++) if (closed[i] && !wet[i] && !wood[i]) wet[i] = 1;
+      // 바다 속 작은 덩어리(원본 300×300 안)가 풀·모래가 아니면 바위섬·배 — 물로 본다
+      const land = new Uint8Array(N);
+      for (let i = 0; i < N; i++) land[i] = wet[i] || bridge[i] ? 0 : 1;
+      let islets = 0;
+      components(land, (comp, edge) => {
+        if (edge || comp.length > 22500) return;
+        let nat = 0;
+        for (const i of comp) nat += natural[i];
+        if (nat < comp.length * 0.25) {
+          islets++;
+          for (const i of comp) wet[i] = 1;
+        }
+      });
+      console.log(`바위섬·배 ${islets}개를 물로`);
+
+      // 숲: 주변 (2R+1)² 안에 나무 픽셀이 45% 넘으면 숲 (들판의 나무 한 그루는 숲이 아니다). 구조물이 가린 구멍은 닫기로 메운다
+      const R = 12;
+      const sum = new Float64Array((w + 1) * (h + 1));
+      for (let y = 0; y < h; y++)
+        for (let x = 0; x < w; x++)
+          sum[(y + 1) * (w + 1) + x + 1] = tree[y * w + x] + sum[y * (w + 1) + x + 1] + sum[(y + 1) * (w + 1) + x] - sum[y * (w + 1) + x];
+      const dense = new Uint8Array(N);
+      for (let y = 0; y < h; y++)
+        for (let x = 0; x < w; x++) {
+          const x0 = Math.max(0, x - R);
+          const y0 = Math.max(0, y - R);
+          const x1 = Math.min(w, x + R + 1);
+          const y1 = Math.min(h, y + R + 1);
+          const s = sum[y1 * (w + 1) + x1] - sum[y0 * (w + 1) + x1] - sum[y1 * (w + 1) + x0] + sum[y0 * (w + 1) + x0];
+          dense[y * w + x] = s / ((x1 - x0) * (y1 - y0)) >= 0.45 ? 1 : 0;
+        }
+      const forest = closing(opening(dense, 2), 6);
+      components(forest, (comp) => {
+        if (comp.length < 600) for (const i of comp) forest[i] = 0;
+      });
+
+      const inKeep = new Uint8Array(N);
+      for (const [kx, ky] of keep)
+        for (let y = Math.max(0, (ky >> 1) - 15); y <= Math.min(h - 1, (ky >> 1) + 15); y++)
+          for (let x = Math.max(0, (kx >> 1) - 15); x <= Math.min(w - 1, (kx >> 1) + 15); x++)
+            if (Math.hypot(x - kx / 2, y - ky / 2) <= 15) inKeep[y * w + x] = 1;
+
+      cls = new Uint8Array(N);
+      for (let i = 0; i < N; i++) cls[i] = inKeep[i] ? 0 : wet[i] ? 2 : forest[i] ? 1 : 0;
+    }
+
+    // 원본 크기 마스크: 반 해상도 판정 + 있던 마스크의 다리(투명). 미리보기면 있던 마스크 그대로
+    const out = cv(W, H);
+    const g = out.getContext('2d', { willReadFrequently: true });
+    const img = g.createImageData(W, H);
+    const tint = cv(W, H);
+    const tg = tint.getContext('2d');
+    const timg = tg.createImageData(W, H);
+    const colors = [null, [255, 0, 170, 110], [0, 210, 255, 100], [255, 40, 40, 140], [255, 230, 0, 160]];
+    for (let y = 0; y < H; y++)
+      for (let x = 0; x < W; x++) {
+        const o = (y * W + x) * 4;
+        let t;
+        if (preview) t = oldPx[o + 3] < 128 ? 4 : oldPx[o] >= 128 ? 3 : oldPx[o + 2] >= 128 ? 2 : oldPx[o + 1] >= 128 ? 1 : 0;
+        else {
+          t = cls[(y >> 1) * w + (x >> 1)];
+          if (oldPx[o + 3] < 128) t = 4; // 손으로 칠한 다리는 그대로
+        }
+        count[t]++;
+        img.data[o] = t === 3 ? 255 : 0;
+        img.data[o + 1] = t === 1 ? 255 : 0;
+        img.data[o + 2] = t === 2 ? 255 : 0;
+        img.data[o + 3] = t === 4 ? 0 : 255;
+        if (colors[t]) timg.data.set(colors[t], o);
+      }
+    g.putImageData(img, 0, 0);
+    tg.putImageData(timg, 0, 0);
+    // 미리보기: 그림 + 색
+    const pv = cv(W, H);
+    const pg = pv.getContext('2d');
+    pg.drawImage(full, 0, 0);
+    pg.drawImage(tint, 0, 0);
+    // 조각마다 잘라 PNG 로
+    const masks = {};
+    if (!preview)
+      for (const t of tiles) {
+        const c = cv(t.w, t.h);
+        c.getContext('2d').drawImage(out, t.x, t.y, t.w, t.h, 0, 0, t.w, t.h);
+        masks[t.name] = c.toDataURL('image/png').split(',')[1];
+      }
     const pct = (n) => ((100 * n) / (W * H)).toFixed(1) + '%';
-    return { png: p.toDataURL('image/png').split(',')[1], channels: ch.toDataURL('image/png').split(',')[1], stats: `물 ${pct(count[2])} · 숲 ${pct(count[1])} · 막힘 ${pct(count[3])} · 다리 ${pct(count[4])}` };
-  }, b64, mask64);
-  fs.mkdirSync(new URL('./out/', import.meta.url), { recursive: true });
-  fs.writeFileSync(PREVIEW, Buffer.from(out.png, 'base64'));
-  fs.writeFileSync(CHANNELS, Buffer.from(out.channels, 'base64'));
-  await browser.close();
-  console.log(`preview ${fileURLToPath(PREVIEW)}  (${out.stats}) — 마스크는 그대로`);
-  console.log(`channels ${fileURLToPath(CHANNELS)}`);
+    return { masks, preview: pv.toDataURL('image/png').split(',')[1], stats: `물 ${pct(count[2])} · 숲 ${pct(count[1])} · 막힘 ${pct(count[3])} · 다리 ${pct(count[4])}` };
+  },
+  tiles,
+  keep,
+  W,
+  H,
+  preview,
+);
+await browser.close();
+fs.mkdirSync(new URL('tools/out/', ROOT), { recursive: true });
+fs.writeFileSync(PREVIEW, Buffer.from(result.preview, 'base64'));
+if (preview) {
+  console.log(`preview ${fileURLToPath(PREVIEW)}  (${result.stats}) — 마스크는 그대로`);
   process.exit(0);
 }
-// 직접 다듬은 마스크를 실수로 덮어쓰지 않게 — 이미 있으면 --force 없이는 멈춘다
-if (fs.existsSync(OUT) && !process.argv.includes('--force')) {
-  await browser.close();
-  console.error(`${fileURLToPath(OUT)} 이 이미 있다. 덮어쓰면 직접 고친 내용이 사라진다.`);
-  console.error('미리보기만: node tools/terrain.mjs --preview   /   정말 새 초안으로: node tools/terrain.mjs --force');
+// 직접 다듬은 마스크를 실수로 덮어쓰지 않게 — 칠해진 마스크가 있으면 --force 없이는 멈춘다 (빈 마스크는 괜찮다)
+const painted = tiles.filter((t) => t.mask && Buffer.from(t.mask, 'base64').length > 2000).map((t) => t.name);
+if (painted.length && !force) {
+  console.error(`칠해진 마스크가 있다 (${painted.join(', ')}). 덮어쓰면 직접 고친 내용(다리 빼고)이 사라진다 — 정말이면 --force`);
   process.exit(1);
 }
-const field = JSON.parse(fs.readFileSync(new URL('../src/data/field.json', import.meta.url), 'utf8'));
-// 막혀서는 안 되는 곳: 시작점, 워프, 던전에서 나오는 자리
-const keep = [field.start, ...field.warps.flatMap((w) => [w.at, w.back])];
-
-const { mask, preview, stats } = await page.evaluate(async (b64, keep) => {
-  const im = new Image();
-  im.src = 'data:image/webp;base64,' + b64;
-  await im.decode();
-  const W = im.naturalWidth;
-  const H = im.naturalHeight;
-  // 반 해상도에서 판정한다 (칸 하나 = 원본 2px). 평균 색이 노이즈를 줄여 준다.
-  const w = Math.ceil(W / 2);
-  const h = Math.ceil(H / 2);
-  const c = document.createElement('canvas');
-  c.width = w;
-  c.height = h;
-  const g = c.getContext('2d', { willReadFrequently: true });
-  g.imageSmoothingQuality = 'high';
-  g.drawImage(im, 0, 0, w, h);
-  const px = g.getImageData(0, 0, w, h).data;
-
-  const N = w * h;
-  const water = new Uint8Array(N);
-  const tree = new Uint8Array(N);
-  const path = new Uint8Array(N);
-  const rock = new Uint8Array(N);
-  const roof = new Uint8Array(N);
-  for (let i = 0; i < N; i++) {
-    const r = px[i * 4];
-    const gg = px[i * 4 + 1];
-    const b = px[i * 4 + 2];
-    const L = 0.3 * r + 0.59 * gg + 0.11 * b;
-    const sat = Math.max(r, gg, b) - Math.min(r, gg, b);
-    // 암벽·바위: 따뜻한 회베이지 (실측 채도 6~45, 초록/빨강 0.84~1.02). 광장 돌바닥·돌다리도 같은 색이라
-    // 여기서는 후보만 잡고, 아래에서 울퉁불퉁함과 다리 규칙으로 가른다
-    rock[i] = sat < 48 && gg > r * 0.84 && gg < r * 1.03 && L > 95 && L < 240 ? 1 : 0;
-    // 지붕: 주황. 실측 빨강−파랑 115~137 (선착장 나무 101~105), 노란 해바라기는 초록이 높아 빠진다
-    roof[i] = (r > 180 && r - b > 112 && gg < r * 0.75 && gg > b) || (r > 170 && r - b > 90 && gg < r * 0.6) ? 1 : 0;
-    water[i] = b > r + 35 && b > gg - 25 && b > 110 ? 1 : 0;
-    // 나무: 초록이 앞서고, 풀밭보다 어둡거나 푸른 기가 돈다 (풀밭은 밝은 연두)
-    // 진한 청록 침엽수는 파랑이 초록만큼 높아서 따로 잡는다
-    tree[i] = (gg > r + 8 && gg > b + 5 && (L < 135 || r < gg * 0.55)) || (L < 115 && gg > r + 5 && gg >= b - 15) ? 1 : 0;
-    // 흙길·모래: 붉은 기 > 초록 > 파랑, 밝다
-    // (주황 지붕도 붉은 기 > 초록 > 파랑이라 초록 비율로 뺀다: 흙길·모래 0.8 이상, 지붕 0.75 미만)
-    path[i] = r >= gg && gg > b && r - b > 45 && L > 150 && gg > r * 0.78 ? 1 : 0;
-  }
-
-  // 사각 반경 rad 의 팽창/침식 (가로 한 번, 세로 한 번)
-  const morph = (src, rad, grow) => {
-    const tmp = new Uint8Array(N);
-    const out = new Uint8Array(N);
-    for (let y = 0; y < h; y++)
-      for (let x = 0; x < w; x++) {
-        let v = grow ? 0 : 1;
-        for (let k = -rad; k <= rad; k++) {
-          const xx = Math.min(w - 1, Math.max(0, x + k));
-          v = grow ? v | src[y * w + xx] : v & src[y * w + xx];
-        }
-        tmp[y * w + x] = v;
-      }
-    for (let y = 0; y < h; y++)
-      for (let x = 0; x < w; x++) {
-        let v = grow ? 0 : 1;
-        for (let k = -rad; k <= rad; k++) {
-          const yy = Math.min(h - 1, Math.max(0, y + k));
-          v = grow ? v | tmp[yy * w + x] : v & tmp[yy * w + x];
-        }
-        out[y * w + x] = v;
-      }
-    return out;
-  };
-  const open = (m, r) => morph(morph(m, r, false), r, true);
-  const close = (m, r) => morph(morph(m, r, true), r, false);
-
-  // 물: 작은 파란 조각은 버리고(차양·지붕), 물속 작은 구멍(거품·말뚝·연잎)은 메운다. 다리는 남는 폭.
-  const wet = close(open(water, 2), 3);
-
-  // 숲: 주변 (2R+1)² 안에 나무 픽셀이 45% 넘으면 숲. 들판의 나무 한 그루로는 숲이 안 된다.
-  const R = 12;
-  const sum = new Float64Array((w + 1) * (h + 1));
-  for (let y = 0; y < h; y++)
-    for (let x = 0; x < w; x++)
-      sum[(y + 1) * (w + 1) + x + 1] = tree[y * w + x] + sum[y * (w + 1) + x + 1] + sum[(y + 1) * (w + 1) + x] - sum[y * (w + 1) + x];
-  const dense = new Uint8Array(N);
-  for (let y = 0; y < h; y++)
-    for (let x = 0; x < w; x++) {
-      const x0 = Math.max(0, x - R);
-      const y0 = Math.max(0, y - R);
-      const x1 = Math.min(w, x + R + 1);
-      const y1 = Math.min(h, y + R + 1);
-      const s = sum[y1 * (w + 1) + x1] - sum[y0 * (w + 1) + x1] - sum[y1 * (w + 1) + x0] + sum[y0 * (w + 1) + x0];
-      dense[y * w + x] = s / ((x1 - x0) * (y1 - y0)) >= 0.45 ? 1 : 0;
-    }
-  const forest = open(dense, 2);
-
-  // 막힘: 바위는 작은 조각을 버리고(자갈·표지판) 틈을 메운다.
-  // 지붕은 아래로 벽 높이(원본 약 24px)만큼 늘려 집 전체를 덮는다 — 그림에서 집 밑동은 지붕 아래에 있다
-  // 울퉁불퉁함: 주변 9×9 칸(원본 18px) 밝기 표준편차. 암벽·바위는 그림자와 금으로 크고, 광장 바닥은 평평하다
-  const lum = new Float32Array(N);
-  for (let i = 0; i < N; i++) lum[i] = 0.3 * px[i * 4] + 0.59 * px[i * 4 + 1] + 0.11 * px[i * 4 + 2];
-  const rough = new Uint8Array(N);
-  for (let y = 0; y < h; y++)
-    for (let x = 0; x < w; x++) {
-      if (!rock[y * w + x]) continue;
-      let s = 0;
-      let s2 = 0;
-      let n = 0;
-      for (let dy = -4; dy <= 4; dy++)
-        for (let dx = -4; dx <= 4; dx++) {
-          const xx = x + dx;
-          const yy = y + dy;
-          if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
-          const v = lum[yy * w + xx];
-          s += v;
-          s2 += v * v;
-          n++;
-        }
-      rough[y * w + x] = Math.sqrt(Math.max(0, s2 / n - (s / n) ** 2)) > 16 ? 1 : 0;
-    }
-  // 얼룩덜룩하면 보이지 않는 돌멩이에 걸리듯 툭툭 멈춘다 → 점은 지우고 틈은 메워 덩어리로 만든다.
-  // (흙길은 막힘보다 우선이라 메워도 길은 안 막힌다)
-  const stone = open(close(open(rough, 1), 3), 2);
-  // 다리: 한 축 양쪽이 물이고(난간·아치가 두꺼워 원본 48px 까지 본다) 수직 축 양 끝이 물이 아니면 다리다 (걷기).
-  // 바다 한가운데 바위는 사방이 물이라 다리가 아니다.
-  // 계단: 한 축 양쪽이 흙길이면 길 사이에 놓인 돌계단이다 (걷기). 길 한쪽에 붙은 바위는 그대로 막힌다.
-  const isWet = (x, y) => x >= 0 && y >= 0 && x < w && y < h && wet[y * w + x] === 1;
-  const reach = (x, y, dx, dy) => {
-    for (let k = 1; k <= 24; k++) if (isWet(x + dx * k, y + dy * k)) return true;
-    return false;
-  };
-  const road = (x, y, dx, dy) => {
-    for (let k = 1; k <= 12; k++) {
-      const xx = x + dx * k;
-      const yy = y + dy * k;
-      if (xx >= 0 && yy >= 0 && xx < w && yy < h && path[yy * w + xx]) return true;
-    }
-    return false;
-  };
-  const axes = [[[1, 0], [0, 1]], [[0, 1], [1, 0]], [[1, 1], [1, -1]], [[1, -1], [1, 1]]];
-  for (let y = 0; y < h; y++)
-    for (let x = 0; x < w; x++) {
-      const i = y * w + x;
-      if (!stone[i]) continue;
-      for (const [[ax, ay], [bx, by]] of axes)
-        if (
-          (reach(x, y, ax, ay) && reach(x, y, -ax, -ay) && !isWet(x + bx * 10, y + by * 10) && !isWet(x - bx * 10, y - by * 10)) ||
-          (road(x, y, ax, ay) && road(x, y, -ax, -ay))
-        ) {
-          stone[i] = 0;
-          break;
-        }
-    }
-  // 집: 지붕 밝은 면은 색으로 다 안 잡혀서, 한 집에서 잡힌 조각들을 묶어(원본 10px 안이면 한 덩어리)
-  // 그 조각들을 감싸는 사각형을 벽 높이(원본 24px)만큼 아래로 늘려 집 전체를 막는다
-  const house = new Uint8Array(N);
-  const rf = open(roof, 1);
-  const blob = morph(rf, 5, true);
-  const seen = new Uint8Array(N);
-  for (let s0 = 0; s0 < N; s0++) {
-    if (!blob[s0] || seen[s0]) continue;
-    let x0 = w, y0 = h, x1 = -1, y1 = -1, n = 0;
-    const stack = [s0];
-    seen[s0] = 1;
-    while (stack.length) {
-      const i = stack.pop();
-      const x = i % w;
-      const y = (i / w) | 0;
-      if (rf[i]) {
-        n++;
-        if (x < x0) x0 = x;
-        if (x > x1) x1 = x;
-        if (y < y0) y0 = y;
-        if (y > y1) y1 = y;
-      }
-      for (const j of [i - 1, i + 1, i - w, i + w])
-        if (j >= 0 && j < N && !seen[j] && blob[j] && Math.abs((j % w) - x) <= 1) {
-          seen[j] = 1;
-          stack.push(j);
-        }
-    }
-    if (n < 25) continue; // 지붕이라기엔 작다 (화분·간판)
-    for (let y = y0; y <= Math.min(h - 1, y1 + 12); y++) for (let x = x0; x <= x1; x++) house[y * w + x] = 1;
-  }
-  // 막는 건 암석·절벽뿐이다. 집·분수대는 걷기 (사용자 결정).
-  // - 집: 크림색 벽·창틀이 울퉁불퉁한 회색이라 바위 규칙에 걸린다 → 집 영역은 바위에서 뺀다
-  // - 작은 물: 분수대·파란 차양은 배를 탈 물이 아니다 → 걷기, 그 둘레 돌도 바위에서 뺀다.
-  //   단 절벽에 붙은 작은 물(폭포)은 절벽이다 → 막힘
-  const houses = close(morph(house, 1, true), 2);
-  const rocks = new Uint8Array(N);
-  for (let i = 0; i < N; i++) rocks[i] = stone[i] && !path[i] && !houses[i] ? 1 : 0;
-  const rockSolid = close(rocks, 2);
-  const nearRock = morph(rockSolid, 3, true);
-  const pondWalk = new Uint8Array(N);
-  const pondBlock = new Uint8Array(N);
-  {
-    const seen = new Uint8Array(N);
-    for (let s0 = 0; s0 < N; s0++) {
-      if (!wet[s0] || seen[s0]) continue;
-      const comp = [s0];
-      seen[s0] = 1;
-      for (let k = 0; k < comp.length; k++) {
-        const i = comp[k];
-        const x = i % w;
-        for (const j of [i - 1, i + 1, i - w, i + w])
-          if (j >= 0 && j < N && !seen[j] && wet[j] && Math.abs((j % w) - x) <= 1) {
-            seen[j] = 1;
-            comp.push(j);
-          }
-      }
-      if (comp.length >= 1500) continue; // 반 해상도 1500칸 = 원본 6000px² 넘으면 배를 타는 물
-      const cliff = comp.filter((i) => nearRock[i]).length > comp.length * 0.3;
-      for (const i of comp) (cliff ? pondBlock : pondWalk)[i] = 1;
-    }
-  }
-  const fountain = morph(pondWalk, 8, true); // 분수 테두리 돌은 바위가 아니다
-  for (let i = 0; i < N; i++) if (fountain[i]) rockSolid[i] = 0;
-  const inKeep = new Uint8Array(N);
-  for (const [kx, ky] of keep)
-    for (let y = Math.max(0, (ky >> 1) - 15); y <= Math.min(h - 1, (ky >> 1) + 15); y++)
-      for (let x = Math.max(0, (kx >> 1) - 15); x <= Math.min(w - 1, (kx >> 1) + 15); x++)
-        if (Math.hypot(x - kx / 2, y - ky / 2) <= 15) inKeep[y * w + x] = 1;
-
-  // 다리: 배가 내리지 않고 지나가는 좁은 땅. 모양만으로는 좁은 풀밭과 구별이 안 돼서 색도 본다.
-  //  - 한 축으로 양쪽(원본 48px 안)이 배 타는 물이고
-  //  - 수직 축 양 끝(원본 20px)은 물이 아니고 (양쪽 땅을 잇는다. 사방이 물인 바다 바위는 다리가 아니다)
-  //  - 초록이 아니다 (풀·나무가 아닌 나무판자·돌)
-  const sea = new Uint8Array(N);
-  for (let i = 0; i < N; i++) sea[i] = wet[i] && !pondWalk[i] && !pondBlock[i] ? 1 : 0;
-  const seaAt = (x, y) => x >= 0 && y >= 0 && x < w && y < h && sea[y * w + x] === 1;
-  const seaWithin = (x, y, dx, dy) => {
-    for (let k = 1; k <= 24; k++) if (seaAt(x + dx * k, y + dy * k)) return true;
-    return false;
-  };
-  const span = new Uint8Array(N);
-  for (let y = 0; y < h; y++)
-    for (let x = 0; x < w; x++) {
-      const i = y * w + x;
-      if (sea[i]) continue;
-      const r = px[i * 4];
-      const gg = px[i * 4 + 1];
-      if (gg > r + 8) continue; // 풀·나무
-      for (const [[ax, ay], [bx, by]] of axes)
-        if (seaWithin(x, y, ax, ay) && seaWithin(x, y, -ax, -ay) && !seaAt(x + bx * 10, y + by * 10) && !seaAt(x - bx * 10, y - by * 10)) {
-          span[i] = 1;
-          break;
-        }
-    }
-  // 덩어리마다 걸러낸다: 작아야 하고(반 해상도 900칸 = 원본 3600px² 이하),
-  // 서로 떨어진(원본 30px 이상) 두 곳에서 땅에 닿아야 한다 — 땅과 땅을 잇는 게 다리다.
-  // 바다 바위는 땅에 안 닿고, 등대·방파제는 한쪽에서만 닿는다.
-  const cand = close(open(span, 1), 2);
-  const bridge = new Uint8Array(N);
-  {
-    const seen = new Uint8Array(N);
-    const landAt = (j) => !sea[j] && !cand[j];
-    for (let s0 = 0; s0 < N; s0++) {
-      if (!cand[s0] || seen[s0]) continue;
-      const comp = [s0];
-      seen[s0] = 1;
-      const touch = [];
-      for (let k = 0; k < comp.length; k++) {
-        const i = comp[k];
-        const x = i % w;
-        for (const j of [i - 1, i + 1, i - w, i + w]) {
-          if (j < 0 || j >= N || Math.abs((j % w) - x) > 1) continue;
-          if (cand[j] && !seen[j]) {
-            seen[j] = 1;
-            comp.push(j);
-          } else if (landAt(j)) touch.push(j);
-        }
-      }
-      if (comp.length < 20 || comp.length > 900 || !touch.length) continue;
-      let far = 0;
-      const t0 = touch[0];
-      for (const j of touch) far = Math.max(far, Math.hypot((j % w) - (t0 % w), ((j / w) | 0) - ((t0 / w) | 0)));
-      // 첫 접점에서 가장 먼 접점까지가 15칸 넘으면 양 끝이 땅에 닿은 것
-      if (far < 15) continue;
-      for (const i of comp) bridge[i] = 1;
-    }
-  }
-
-  // 합치기: (보호 구역은 걷기) > 큰 물 > 폭포(막힘) > 다리 > 분수·길(걷기) > 암석·절벽 > 숲 > 걷기
-  const cls = new Uint8Array(N);
-  let nWater = 0;
-  let nForest = 0;
-  let nBlock = 0;
-  let nBridge = 0;
-  for (let i = 0; i < N; i++) {
-    cls[i] = inKeep[i]
-      ? 0
-      : sea[i]
-        ? 2
-        : pondBlock[i]
-          ? 3
-          : bridge[i]
-            ? 4
-            : pondWalk[i] || path[i]
-              ? 0
-              : rockSolid[i]
-                ? 3
-                : forest[i]
-                  ? 1
-                  : 0;
-    if (cls[i] === 2) nWater++;
-    if (cls[i] === 1) nForest++;
-    if (cls[i] === 3) nBlock++;
-    if (cls[i] === 4) nBridge++;
-  }
-
-  // 원본 크기로 (최근접) 색 칠하기
-  const mc = document.createElement('canvas');
-  mc.width = W;
-  mc.height = H;
-  const mg = mc.getContext('2d');
-  const md = mg.createImageData(W, H);
-  // 채널 하나에 지형 하나: R 막힘 · G 숲 · B 물 · A 다리(투명 = 다리). 걷기는 셋 다 0, 불투명
-  const pack = [
-    [0, 0, 0, 255], // 걷기
-    [0, 255, 0, 255], // 숲
-    [0, 0, 255, 255], // 물
-    [255, 0, 0, 255], // 막힘
-    [0, 0, 0, 0], // 다리
-  ];
-  for (let y = 0; y < H; y++)
-    for (let x = 0; x < W; x++) md.data.set(pack[cls[(y >> 1) * w + (x >> 1)]], (y * W + x) * 4);
-  mg.putImageData(md, 0, 0);
-
-  const pc = document.createElement('canvas');
-  pc.width = W;
-  pc.height = H;
-  const pg = pc.getContext('2d');
-  pg.drawImage(im, 0, 0);
-  // 한눈에 보이게: 숲 = 분홍, 물 = 하늘색, 막힘 = 빨강, 다리 = 노랑 반투명
-  const ov = pg.createImageData(W, H);
-  const tint = [null, [255, 0, 170, 110], [0, 210, 255, 90], [255, 30, 30, 150], [255, 230, 0, 170]];
-  for (let y = 0; y < H; y++)
-    for (let x = 0; x < W; x++) {
-      const t = tint[cls[(y >> 1) * w + (x >> 1)]];
-      if (!t) continue;
-      const o = (y * W + x) * 4;
-      ov.data.set(t, o);
-    }
-  const oc = document.createElement('canvas');
-  oc.width = W;
-  oc.height = H;
-  oc.getContext('2d').putImageData(ov, 0, 0);
-  pg.drawImage(oc, 0, 0);
-
-  return {
-    mask: mc.toDataURL('image/png').split(',')[1],
-    preview: pc.toDataURL('image/png').split(',')[1],
-    stats: { water: ((100 * nWater) / N).toFixed(1) + '%', forest: ((100 * nForest) / N).toFixed(1) + '%', block: ((100 * nBlock) / N).toFixed(1) + '%', bridge: ((100 * nBridge) / N).toFixed(2) + '%' },
-  };
-}, b64, keep);
-
-fs.writeFileSync(OUT, Buffer.from(mask, 'base64'));
-fs.mkdirSync(new URL('./out/', import.meta.url), { recursive: true });
-fs.writeFileSync(PREVIEW, Buffer.from(preview, 'base64'));
-await browser.close();
-console.log(`saved ${fileURLToPath(OUT)} (${(fs.statSync(OUT).size / 1024) | 0}KB)  물 ${stats.water} · 숲 ${stats.forest} · 막힘 ${stats.block} · 다리 ${stats.bridge}`);
-console.log(`preview ${fileURLToPath(PREVIEW)}`);
+for (const [name, b64] of Object.entries(result.masks)) fs.writeFileSync(new URL(`mask_${name}.png`, MASKS), Buffer.from(b64, 'base64'));
+console.log(`마스크 ${Object.keys(result.masks).length}장 (${result.stats})  미리보기 ${fileURLToPath(PREVIEW)}`);

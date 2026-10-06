@@ -70,7 +70,7 @@ const until = (s: SandState, f: () => boolean, input = still, max = 10) => {
   const rock2 = ahead(j, 'wood_barrier', 6);
   updateSandboard(j, { mx: 0, jump: true }, DT);
   assert.ok(j.air > 0 && j.events.some((e) => e.type === 'jump') && j.fx.some((f) => f.id === 'jump_puff'));
-  until(j, () => j.d > rock2.d + 2);
+  until(j, () => j.d > rock2.d + 2 && j.air <= 0);
   assert.ok(!rock2.hit && j.crashes === 0, '점프하면 울타리를 넘는다');
   assert.ok(j.fx.some((f) => f.id === 'land_burst'), '내려오면 착지 효과');
 
@@ -165,6 +165,21 @@ const until = (s: SandState, f: () => boolean, input = still, max = 10) => {
   assert.ok(s.phase === 'done' && s.fell && fin?.type === 'finish' && fin.fell && fin.score === s.coins, '하트 0 → 넘어져 끝');
 }
 
+// 6-1) 드리프트: 누르면 가로 속도가 붙고, 떼면 잠깐 미끄러지다 선다 (한 레인 안). 가장자리에선 멈춘다
+{
+  const s = fresh();
+  for (let t = 0; t < 0.3; t += DT) updateSandboard(s, { mx: 1, jump: false }, DT);
+  assert.ok(s.vx > SAND.steer * 0.9 && s.lean > 0.9 && s.steer === 1, `누르면 가로 속도가 붙는다 (${s.vx.toFixed(2)})`);
+  const x0 = s.x;
+  updateSandboard(s, still, DT);
+  assert.ok(s.x > x0, '떼도 바로 서지 않는다');
+  for (let t = 0; t < 1; t += DT) updateSandboard(s, still, DT);
+  const slid = s.x - x0;
+  assert.ok(slid > 0.1 && slid < 0.45 && Math.abs(s.vx) < 0.01 && s.steer === 0, `미끄러지다 선다 (${slid.toFixed(2)})`);
+  for (let t = 0; t < 2; t += DT) updateSandboard(s, { mx: 1, jump: false }, DT);
+  assert.ok(s.x === SAND.edge && s.vx === 0, '가장자리에선 멈춘다');
+}
+
 // 7) 완주: 빈 레인으로 피하고, 낮은 건 점프로 넘는 간단한 조종으로 끝까지. 무사하면 보너스. 끝난 뒤엔 멈춘다
 {
   const drive = (seed: number) => {
@@ -176,7 +191,8 @@ const until = (s: SandState, f: () => boolean, input = still, max = 10) => {
         .map((l) => ({ l, bad: threats.filter((o) => Math.abs(o.x - l) < OBS[o.kind].r + 0.16).length + Math.abs(l - s.x) * 0.01 }))
         .sort((p, q) => p.bad - q.bad)[0].l;
       const near = threats.some((o) => o.d - s.d < 6 && Math.abs(o.x - s.x) < OBS[o.kind].r + SAND.catR + 0.02 && OBS[o.kind].role === 'hit');
-      updateSandboard(s, { mx: Math.abs(lane - s.x) < 0.03 ? 0 : Math.sign(lane - s.x), jump: near && s.air <= 0 }, DT);
+      const pred = s.x + s.vx * SAND.steerOut; // 떼면 이만큼 더 미끄러진다
+      updateSandboard(s, { mx: Math.abs(lane - pred) < 0.03 ? 0 : Math.sign(lane - pred), jump: near && s.air <= 0 }, DT);
       t += DT;
     }
     return { s, t };

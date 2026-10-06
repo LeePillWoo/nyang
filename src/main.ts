@@ -572,10 +572,11 @@ if (trace)
         const d = Math.min(devicePixelRatio, 2);
         return { x: (mazeView.ox + (cx + 0.5) * mazeView.px) / d, y: (mazeView.oy + (cz + 0.5) * mazeView.px) / d };
       },
-      /** 샌드보드 가로 자리 x · 거리 dd 의 화면 위치 (CSS px) */
+      /** 샌드보드 가로 자리 x · 거리 dd 의 화면 위치 (CSS px, 원근 — sandboard-draw.ts 와 같은 식) */
       sandScreen: (x: number, dd: number) => {
         const d = Math.min(devicePixelRatio, 2);
-        return { x: (sandView.cx + x * sandView.half) / d, y: (sandView.y0 - (dd - sand.d) * sandView.ppm) / d };
+        const q = 1 / (1 + (dd - sand.d) / sandView.D);
+        return { x: (sandView.cx + x * sandView.half * q) / d, y: (sandView.y0 - sandView.ppm * sandView.D * Math.log(1 + (dd - sand.d) / sandView.D)) / d };
       },
       /** 미니게임 버튼(돌아가기 · 다시 · 카드의 돌아가기) 가운데 (CSS px) */
       miniScreen: () => {

@@ -16,7 +16,7 @@ const OUT = new URL('./out/', import.meta.url);
 const fsPath = (u) => fileURLToPath(u);
 const readJson = (rel) => JSON.parse(fs.readFileSync(new URL(rel, import.meta.url), 'utf8'));
 const FIELD = readJson('../src/data/field.json');
-const { OBS: SAND_OBS } = await import('../src/sandboard.ts');
+const { OBS: SAND_OBS, SAND: { steerOut: SAND_STEER_OUT } } = await import('../src/sandboard.ts');
 /** 개방 구역(field.json open) 안의 워프 — 잠긴 구역 밖 워프는 갈 수 없는 게 맞다 */
 const inOpen = (x, y) => {
   const c = Math.min(FIELD.grid[0] - 1, Math.floor((x * FIELD.grid[0]) / FIELD.size[0]));
@@ -92,8 +92,9 @@ const fieldPos = () => ({ x: __game.field.x, y: __game.field.y });
  * 필드는 2배 확대라 고양이가 작아서 한 번 더 2배로 키워 붙인다.
  */
 async function fieldBurst(page, until, file, release = []) {
-  await page.waitForFunction(until, { polling: 'raf', timeout: 15000 });
+  const caught = await page.waitForFunction(until, { polling: 'raf', timeout: 15000 }).then(() => true, () => false);
   for (const k of release) await page.keyboard.up(k); // 순간을 잡았으면 더 가지 않게 키를 뗀다
+  if (!caught) return check(false, `연속 촬영 ${file.pathname.split('/').pop()}: 15초 안에 그 순간이 오지 않았다`);
   const shots = [];
   for (let i = 0; i < 12; i++) {
     const meta = await page.evaluate(() => ({ ...__game.catScreen, mode: __game.field.mode, chop: __game.field.chopping > 0 }));
@@ -967,12 +968,13 @@ try {
       const s = await page.evaluate((roles) => {
         const s = __game.sandboard;
         const bad = (o) => ['hit', 'tall', 'pit'].includes(roles[o.kind][0]) && !o.hit;
-        return { phase: s.phase, x: s.x, d: s.d, t: s.t, air: s.air, obs: s.obs.filter((o) => bad(o) && o.d > s.d && o.d < s.d + 22).map((o) => [o.x, o.d, roles[o.kind][1], roles[o.kind][0]]) };
+        return { phase: s.phase, x: s.x, vx: s.vx, d: s.d, t: s.t, air: s.air, obs: s.obs.filter((o) => bad(o) && o.d > s.d && o.d < s.d + 22).map((o) => [o.x, o.d, roles[o.kind][1], roles[o.kind][0]]) };
       }, roles);
       if (s.phase !== 'play') break;
       const lanes = [-0.8, -0.4, 0, 0.4, 0.8];
       const lane = lanes.map((l) => ({ l, bad: s.obs.filter(([x, , r]) => Math.abs(x - l) < r + 0.2).length + Math.abs(l - s.x) * 0.01 })).sort((a, b) => a.bad - b.bad)[0].l;
-      const want = Math.abs(lane - s.x) < 0.04 ? null : lane > s.x ? 'KeyD' : 'KeyA';
+      const pred = s.x + s.vx * SAND_STEER_OUT; // 떼면 이만큼 더 미끄러진다 (드리프트)
+      const want = Math.abs(lane - pred) < 0.04 ? null : lane > pred ? 'KeyD' : 'KeyA';
       if (want !== held) {
         if (held) await page.keyboard.up(held);
         if (want) await page.keyboard.down(want);
@@ -1204,7 +1206,7 @@ try {
       const at = await page.evaluate(() => ({ ...{ x: __game.field.x, y: __game.field.y }, t: __game.terrain(__game.field.x, __game.field.y) }));
       const gap = Math.hypot(at.x - wall.x, at.y - wall.y);
       check(at.t !== 3 && gap < wall.d, `암벽·바위로 밀고 들어가면 가장자리에서 멈춘다 (목표 ${wall.x},${wall.y} 까지 ${wall.d | 0} → ${gap | 0}px 에서 멈춤)`);
-    } else check(false, '지형 마스크에 막힌 곳이 없다');
+    } else console.log('       막힌 곳 없음 — 절벽·바위도 걷는다 (사용자 결정 2026-10-06). 손으로 R 을 칠하면 여기서 다시 검사한다');
 
     // 다리: 배로 강을 따라가다 다리를 만나도 내리지 않고 지나간다 (필드 그림 픽셀 좌표, 양방향).
     // 마스크를 고치다 다리(노랑)를 끊으면 여기서 잡힌다
@@ -1230,9 +1232,9 @@ try {
       const after = await page.evaluate(() => ({ mode: __game.field.mode, modes: __modes }));
       check(across && after.mode === 'boat' && !after.modes.includes('unboard'), `${name} — 배로 그대로 지나간다 (${after.modes.join(' → ')})`);
     }
-    // 돌다리 연속 촬영
+    // 돌다리 연속 촬영 (출발점은 위 '돌다리: 위 강 → 아래 강' 횡단과 같은 자리)
     await page.evaluate(() => {
-      Object.assign(__game.field, { x: 1100 + 1672, y: 463 + 941, camX: 1100 + 1672, camY: 463 + 941, mode: 'boat', modeT: 1 });
+      Object.assign(__game.field, { x: 1110 + 1672, y: 470 + 941, camX: 1110 + 1672, camY: 470 + 941, mode: 'boat', modeT: 1 });
       window.__bridged = false;
     });
     await page.keyboard.down('KeyS');
