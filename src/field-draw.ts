@@ -1,6 +1,6 @@
 import { AXE_FPS, AXE_ROW, BOAT_FPS, BOAT_ROW, CAT_FPS, CAT_ROW, SNOW_FPS, SNOW_ROW } from './cat.ts';
 import { drawEmote } from './emote.ts';
-import { BLOCK, BRIDGE, FIELD, FOREST, WALK, WATER, type FieldEvent, type FieldState, type Terrain, type Warp } from './field.ts';
+import { BLOCK, BRIDGE, FIELD, FOREST, isOpen, WALK, warpLocked, WATER, type FieldEvent, type FieldState, type Terrain, type Warp } from './field.ts';
 import { drawFrame, type Sheet } from './sheet.ts';
 
 export type FieldSheets = { cat: Sheet; axe: Sheet; boat: Sheet; snow: Sheet };
@@ -351,6 +351,21 @@ export function drawField(
       const tc = tint(tl);
       if (tc) ctx.drawImage(tc, tl.x, tl.y);
     }
+  // 미개방 구역은 어둡게 덮고, 개방 구역 가장자리에 흐르는 점선
+  ctx.fillStyle = 'rgba(22, 28, 46, 0.62)';
+  for (const tl of seen) if (!isOpen(tl.x + 1, tl.y + 1)) ctx.fillRect(tl.x, tl.y, tl.w, tl.h);
+  {
+    const o = FIELD.open;
+    const x0 = tileX(o.c[0]);
+    const y0 = tileY(o.r[0]);
+    ctx.save();
+    ctx.setLineDash([10, 8]);
+    ctx.lineDashOffset = -t * 24;
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
+    ctx.strokeRect(x0, y0, tileX(o.c[1] + 1) - x0, tileY(o.r[1] + 1) - y0);
+    ctx.restore();
+  }
 
   for (const w of FIELD.warps) drawWarp(ctx, w, t, w === s.warp && s.armed ? s.dwell / w.dwell : 0);
 
@@ -443,12 +458,17 @@ function drawWarp(ctx: CanvasRenderingContext2D, w: Warp, t: number, progress: n
   };
 
   ctx.save();
-  if (!w.to) ctx.globalAlpha = 0.45;
-  const beam = ctx.createLinearGradient(x, y, x, y - 46);
-  beam.addColorStop(0, `rgba(190, 240, 255, ${0.35 + 0.2 * pulse})`);
-  beam.addColorStop(1, 'rgba(190, 240, 255, 0)');
-  ctx.fillStyle = beam;
-  ctx.fillRect(x - rx * 0.8, y - 46, rx * 1.6, 46);
+  // 미개방 구역의 포탈은 자물쇠, 연결 전 포탈은 흐리게
+  const locked = warpLocked(w);
+  if (locked) ctx.globalAlpha = 0.5;
+  else if (!w.to) ctx.globalAlpha = 0.45;
+  if (!locked) {
+    const beam = ctx.createLinearGradient(x, y, x, y - 46);
+    beam.addColorStop(0, `rgba(190, 240, 255, ${0.35 + 0.2 * pulse})`);
+    beam.addColorStop(1, 'rgba(190, 240, 255, 0)');
+    ctx.fillStyle = beam;
+    ctx.fillRect(x - rx * 0.8, y - 46, rx * 1.6, 46);
+  }
 
   ctx.fillStyle = `rgba(160, 230, 255, ${0.3 + 0.15 * pulse})`;
   ellipse(1);
@@ -469,13 +489,14 @@ function drawWarp(ctx: CanvasRenderingContext2D, w: Warp, t: number, progress: n
     ctx.stroke();
   }
 
+  const label = locked ? '🔒 ' + w.label : w.label;
   ctx.font = 'bold 9px system-ui, sans-serif';
   ctx.textAlign = 'center';
   ctx.lineJoin = 'round';
   ctx.lineWidth = 3;
   ctx.strokeStyle = 'rgba(60, 45, 35, 0.8)';
-  ctx.strokeText(w.label, x, y + ry + 11);
+  ctx.strokeText(label, x, y + ry + 11);
   ctx.fillStyle = '#fffaf0';
-  ctx.fillText(w.label, x, y + ry + 11);
+  ctx.fillText(label, x, y + ry + 11);
   ctx.restore();
 }

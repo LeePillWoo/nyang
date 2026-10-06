@@ -49,11 +49,11 @@ export function wrapText(ctx: CanvasRenderingContext2D, text: string, maxW: numb
   return lines;
 }
 
-export type ButtonId = 'punch' | 'dash' | 'dex' | 'bag';
+export type ButtonId = 'punch' | 'dash' | 'dex' | 'bag' | 'jump';
 export type Button = { id: ButtonId; x: number; y: number; r: number; label: string };
 /** k = HUD 배율 (그리기용) */
 export type Controls = { stick: { x: number; y: number; r: number } | null; buttons: Button[]; k: number };
-export type Scene = 'field' | 'dungeon' | 'fishing';
+export type Scene = 'field' | 'dungeon' | 'fishing' | 'maze' | 'sandboard';
 
 /** 도감 버튼 (알약) 크기 — Button.r 은 폭의 절반 */
 const DEX = { w: 84, h: 36 };
@@ -77,13 +77,14 @@ export function controls(w: number, h: number, scene: Scene, touch: boolean): Co
   const r = Math.round(60 * tk);
   const pad = 26 * tk;
   const stick = { x: s.l + pad + r, y: h - s.b - pad - r, r };
+  const pr = Math.round(48 * tk);
+  const px = w - s.r - pad - pr;
+  const py = h - s.b - pad - pr;
   if (scene === 'dungeon') {
-    const pr = Math.round(48 * tk);
-    const px = w - s.r - pad - pr;
-    const py = h - s.b - pad - pr;
     buttons.push({ id: 'punch', x: px, y: py, r: pr, label: '냥펀치' });
     buttons.push({ id: 'dash', x: px - pr * 1.95, y: py + pr * 0.28, r: pr * 0.72, label: '구르기' });
   }
+  if (scene === 'sandboard') buttons.push({ id: 'jump', x: px, y: py, r: pr, label: '점프' });
   return { stick, buttons, k };
 }
 

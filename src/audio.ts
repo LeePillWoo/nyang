@@ -191,3 +191,6 @@ export function sfxCoin() {
 export const sfxPickup = () => tone('triangle', 520, 1040, 0.14, 0.12);
 /** 둥 — 가방이 가득 참 */
 export const sfxFull = () => tone('sine', 300, 200, 0.14, 0.22);
+
+/** 폴짝 — 샌드보드 점프 */
+export const sfxJump = () => tone('triangle', 420, 880, 0.12, 0.16);

@@ -3,7 +3,7 @@
 // 배경은 조각 36장을 1/8 로 줄인 한 장 (src/assets/world/minimap.webp, tools/assets.mjs 가 만든다).
 // 좌표는 CSS 픽셀 (캔버스 실제 픽셀이 아니라) — 마우스 좌표와 바로 맞댄다.
 import { image } from './assets.ts';
-import { FIELD, type FieldState, type Warp } from './field.ts';
+import { FIELD, warpLocked, type FieldState, type Warp } from './field.ts';
 import { SPOTS } from './fishing.ts';
 import { safe, ui } from './touch.ts';
 
@@ -63,6 +63,25 @@ export function drawMinimap(ctx: CanvasRenderingContext2D, r: Rect, s: FieldStat
     ctx.fillStyle = '#9cc9dd';
     ctx.fillRect(r.x, r.y, r.w, r.h);
   }
+  // 미개방 구역은 어둡게, 개방 구역 테두리는 점선
+  {
+    const o = FIELD.open;
+    const [COLS, ROWS] = FIELD.grid;
+    const ox0 = r.x + (o.c[0] / COLS) * r.w;
+    const oy0 = r.y + (o.r[0] / ROWS) * r.h;
+    const ox1 = r.x + ((o.c[1] + 1) / COLS) * r.w;
+    const oy1 = r.y + ((o.r[1] + 1) / ROWS) * r.h;
+    ctx.fillStyle = 'rgba(22, 28, 46, 0.62)';
+    ctx.fillRect(r.x, r.y, r.w, oy0 - r.y);
+    ctx.fillRect(r.x, oy1, r.w, r.y + r.h - oy1);
+    ctx.fillRect(r.x, oy0, ox0 - r.x, oy1 - oy0);
+    ctx.fillRect(ox1, oy0, r.x + r.w - ox1, oy1 - oy0);
+    ctx.setLineDash([3, 3]);
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = 'rgba(255,255,255,0.75)';
+    ctx.strokeRect(ox0, oy0, ox1 - ox0, oy1 - oy0);
+    ctx.setLineDash([]);
+  }
 
   // 지금 화면
   const [vx, vy] = toMini(r, view.x, view.y);
@@ -73,9 +92,10 @@ export function drawMinimap(ctx: CanvasRenderingContext2D, r: Rect, s: FieldStat
   for (const w of FIELD.warps) {
     const [mx, my] = toMini(r, w.at[0], w.at[1]);
     const big = w === hover;
+    const locked = warpLocked(w);
     ctx.beginPath();
-    ctx.arc(mx, my, big ? 5 : w.to ? 3.2 : 2.4, 0, Math.PI * 2);
-    ctx.fillStyle = SPOTS[w.to] ? '#6fd3ff' : w.to === 'shop' ? '#ff8fc8' : w.to ? '#ffd84a' : 'rgba(225,225,225,0.9)';
+    ctx.arc(mx, my, big ? 5 : w.to && !locked ? 3.2 : 2.4, 0, Math.PI * 2);
+    ctx.fillStyle = locked ? 'rgba(150,150,160,0.8)' : SPOTS[w.to] ? '#6fd3ff' : w.to === 'shop' ? '#ff8fc8' : w.to === 'maze' || w.to === 'sandboard' ? '#b48cff' : w.to ? '#ffd84a' : 'rgba(225,225,225,0.9)';
     ctx.fill();
     ctx.lineWidth = 1.2;
     ctx.strokeStyle = 'rgba(70,52,42,0.9)';
@@ -94,7 +114,7 @@ export function drawMinimap(ctx: CanvasRenderingContext2D, r: Rect, s: FieldStat
 
   // 가리킨 이정표 이름 — 미니맵 아래에
   if (hover) {
-    const label = hover.to ? hover.label : `${hover.label} (준비 중)`;
+    const label = warpLocked(hover) ? `🔒 ${hover.label} (미개방)` : hover.to ? hover.label : `${hover.label} (준비 중)`;
     ctx.font = 'bold 12px system-ui, sans-serif';
     ctx.textAlign = 'center';
     const tw = ctx.measureText(label).width + 16;

@@ -4,7 +4,7 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build --base=./",
     "preview": "vite preview",
-    "check": "node src/collide.check.ts && node src/enemy.check.ts && node src/field.check.ts && node src/dungeon.check.ts && node src/fishing.check.ts && node src/bag.check.ts",
+    "check": "node src/collide.check.ts && node src/enemy.check.ts && node src/field.check.ts && node src/dungeon.check.ts && node src/fishing.check.ts && node src/bag.check.ts && node src/maze.check.ts && node src/sandboard.check.ts",
     "verify": "npm run build && node tools/verify.mjs"
   },
   "type": "module",

@@ -16,6 +16,7 @@ import {
   sfxFull,
   sfxHit,
   sfxHurt,
+  sfxJump,
   sfxNibble,
   sfxPlop,
   sfxPickup,
@@ -32,7 +33,7 @@ import { makeDungeon, maxHp, resetDungeon, updateDungeon, type Dungeon, type Dun
 import { emotesReady, quiet, say, saying, tickEmote, type EmoteId } from './emote.ts';
 import { ENEMY_DEFS, type Kind } from './enemy.ts';
 import { biomeAt, drawField, fieldFx, fieldReady, fieldView, terrainAt, terrainReady } from './field-draw.ts';
-import { backFrom, FIELD, inWarp, makeFieldState, updateField, type FieldEvent, type FieldState, type Warp } from './field.ts';
+import { backFrom, FIELD, inWarp, makeFieldState, updateField, warpLocked, type FieldEvent, type FieldState, type Warp } from './field.ts';
 import {
   dexReady,
   drawFishing,
@@ -47,6 +48,11 @@ import {
 import { again, debugBite, makeFishing, normalizeDex, SPOTS, updateFishing, type Dex, type FishEvent, type FishingState } from './fishing.ts';
 import { ROOMS } from './iso.ts';
 import { drawMinimap, fromMini, inMinimap, minimapPick, minimapRect, toMini } from './minimap.ts';
+import { drawMaze, mazeView } from './maze-draw.ts';
+import { makeMaze, updateMaze, type MazeEvent, type MazeState } from './maze.ts';
+import { miniButtonAt, miniLayout, type MiniButton } from './mini-draw.ts';
+import { drawSandboard, resetSandFx, sandView } from './sandboard-draw.ts';
+import { makeSandboard, updateSandboard, type SandEvent, type SandState } from './sandboard.ts';
 import { loadSheet, type Sheet } from './sheet.ts';
 import { buttonAt, controls, drawControls, drawRotateHint, onStick, safe, stickVector, ui, type ButtonId } from './touch.ts';
 
@@ -85,6 +91,8 @@ function traceDraw(who: string, sh: Sheet, row: number, col: number, sx: number,
   trace.push({ t: performance.now(), who, row, col, clamped: col >= r.length, flip, sx, sy, left: Math.min(a, b), right: Math.max(a, b), ...extra });
 }
 let punchQueued = false;
+/** 샌드보드 점프 (이번 프레임) */
+let jumpQueued = false;
 addEventListener('keydown', (e) => {
   unlockAudio();
   if (e.code === 'Space') e.preventDefault();
@@ -117,6 +125,11 @@ addEventListener('keydown', (e) => {
       fishIn.pressed = true;
     }
   }
+  if (scene === 'maze' || scene === 'sandboard') {
+    if (e.code === 'Escape') backToField();
+    else if (e.code === 'KeyR' && !e.repeat) restartMini();
+    else if (scene === 'sandboard' && (e.code === 'Space' || e.code === 'KeyW' || e.code === 'ArrowUp') && !e.repeat) jumpQueued = true;
+  }
 });
 addEventListener('keyup', (e) => {
   keys.delete(e.code);
@@ -139,6 +152,9 @@ const fishIn = { x: 0, y: 0, down: false, pressed: false, released: false };
 let fishPtr: number | null = null;
 let fishKey = false;
 let fishHover: FishingButton = null;
+/** 미니게임(미로 · 샌드보드) 버튼 위에 마우스 */
+let miniHover: MiniButton = null;
+const miniDone = () => (scene === 'maze' ? maze.phase === 'done' : sand.phase === 'done');
 const toFishing = (p: { x: number; y: number }) => ({
   x: (p.x * pxRatio() - fishingView.ox) / fishingView.sc,
   y: (p.y * pxRatio() - fishingView.oy) / fishingView.sc,
@@ -213,7 +229,7 @@ function portalAt(px: number, py: number) {
   const p = toWorld(px, py);
   return (
     FIELD.warps.find(
-      (w) => Math.abs(p.x - w.at[0]) < w.r * 1.4 && p.y > w.at[1] - 46 && p.y < w.at[1] + w.r * FIELD.vertical + 14,
+      (w) => !warpLocked(w) && Math.abs(p.x - w.at[0]) < w.r * 1.4 && p.y > w.at[1] - 46 && p.y < w.at[1] + w.r * FIELD.vertical + 14,
     ) ?? null
   );
 }
@@ -269,6 +285,24 @@ canvas.addEventListener('pointerdown', (e) => {
     }
     return;
   }
+  if (scene === 'maze' || scene === 'sandboard') {
+    const btn = miniButtonAt(innerWidth, innerHeight, p.x, p.y, miniDone());
+    if (btn === 'leave') return backToField();
+    if (btn === 'again') return restartMini();
+    const c = ctl();
+    const b = buttonAt(c, p.x, p.y);
+    if (b) {
+      pressing.set(e.pointerId, b.id);
+      if (b.id === 'jump') jumpQueued = true;
+      return;
+    }
+    if (!stick && onStick(c, p.x, p.y)) {
+      stick = { id: e.pointerId, ...p };
+      return;
+    }
+    if (scene === 'sandboard') jumpQueued = true; // 화면 아무 데나 누르면 점프
+    return;
+  }
   const c = ctl();
   const b = buttonAt(c, p.x, p.y);
   if (b) {
@@ -307,6 +341,11 @@ canvas.addEventListener('pointermove', (e) => {
     Object.assign(fishIn, f);
     fishHover = fishingButtonAt(fishing, f.x, f.y);
     canvas.style.cursor = fishHover ? 'pointer' : '';
+    return;
+  }
+  if (scene === 'maze' || scene === 'sandboard') {
+    miniHover = miniButtonAt(innerWidth, innerHeight, p.x, p.y, miniDone());
+    if (e.pointerType === 'mouse') canvas.style.cursor = miniHover ? 'pointer' : '';
     return;
   }
   if (scene !== 'field') return;
@@ -392,11 +431,23 @@ let dungeon: Dungeon;
 
 // 장면: 필드(시작) ↔ 던전 · 낚시터. ?dungeon 이면 골목 던전에서, ?dungeon=<방 id> 면 그 방에서,
 // ?fishing 이면 호수섬 낚시터에서 바로 시작한다 (검증용)
+// ?maze · ?sandboard 면 그 미니게임에서 바로 시작한다 (검증용)
 const startRoom = query.get('dungeon') || 'alley';
 const startSpot = query.get('fishing') || 'lake_island_fishing';
-let scene: 'field' | 'dungeon' | 'fishing' = query.has('dungeon') ? 'dungeon' : query.has('fishing') ? 'fishing' : 'field';
+let scene: 'field' | 'dungeon' | 'fishing' | 'maze' | 'sandboard' = query.has('dungeon')
+  ? 'dungeon'
+  : query.has('fishing')
+    ? 'fishing'
+    : query.has('maze')
+      ? 'maze'
+      : query.has('sandboard')
+        ? 'sandboard'
+        : 'field';
 let field: FieldState = makeFieldState(FIELD.start);
-let roomId = scene === 'fishing' ? startSpot : startRoom; // 지금 들어가 있는 던전·낚시터 (나오면 그 포탈 앞으로)
+// 지금 들어가 있는 던전·낚시터·미니게임 (나오면 그 포탈 앞으로)
+let roomId = scene === 'fishing' ? startSpot : scene === 'maze' || scene === 'sandboard' ? scene : startRoom;
+let maze: MazeState = makeMaze();
+let sand: SandState = makeSandboard();
 
 // 낚시 도감 — ponytail: 브라우저 localStorage. 저장(IndexedDB, M2)을 붙이면 세이브의 fishDex 로 옮긴다 (GDD 10장)
 const DEX_KEY = 'nyang.fishDex.v1';
@@ -460,6 +511,25 @@ const bookData = (): BookData => ({
   sheet: (k) => sheets[k] ?? (enemySheet(k), null),
 });
 
+// 미니게임 기록 — 미로 최단 시간(초) · 샌드보드 최고 점수
+const REC_KEY = 'nyang.minigames.v1';
+const records: { maze: number | null; sandboard: number | null } = (() => {
+  const num = (x: unknown) => (typeof x === 'number' && Number.isFinite(x) && x >= 0 ? x : null);
+  try {
+    const v = JSON.parse(localStorage.getItem(REC_KEY) ?? '{}') as Partial<Record<'maze' | 'sandboard', unknown>>;
+    return { maze: num(v.maze), sandboard: num(v.sandboard) };
+  } catch {
+    return { maze: null, sandboard: null };
+  }
+})();
+function saveRecords() {
+  try {
+    localStorage.setItem(REC_KEY, JSON.stringify(records));
+  } catch {
+    // 이번 판만
+  }
+}
+
 /** 낚싯대·릴의 감기·줄 강도 */
 const gear = () => ((s) => ({ reel: s.reel, line: s.line, luck: s.luck }))(stats(bag));
 
@@ -493,6 +563,25 @@ if (trace)
       dex,
       bag,
       monsters: monDex,
+      get maze() { return maze; },
+      get sandboard() { return sand; },
+      records,
+      /** 미로 칸 (cx, cz) 가운데의 화면 위치 (CSS px) */
+      mazeScreen: (cx: number, cz: number) => {
+        const d = Math.min(devicePixelRatio, 2);
+        return { x: (mazeView.ox + (cx + 0.5) * mazeView.px) / d, y: (mazeView.oy + (cz + 0.5) * mazeView.px) / d };
+      },
+      /** 샌드보드 가로 자리 x · 거리 dd 의 화면 위치 (CSS px) */
+      sandScreen: (x: number, dd: number) => {
+        const d = Math.min(devicePixelRatio, 2);
+        return { x: (sandView.cx + x * sandView.half) / d, y: (sandView.y0 + (dd - sand.d) * sandView.ppm) / d };
+      },
+      /** 미니게임 버튼(돌아가기 · 다시 · 카드의 돌아가기) 가운데 (CSS px) */
+      miniScreen: () => {
+        const L = miniLayout(innerWidth, innerHeight);
+        const mid = (r: { x: number; y: number; w: number; h: number }) => ({ x: r.x + r.w / 2, y: r.y + r.h / 2 });
+        return { leave: mid(L.leave), again: mid(L.again), back: mid(L.back) };
+      },
       /** 지역이 없어 도감에 안 나오는 몬스터 */
       ungrouped,
       /** 가방 화면의 칸 · 장비 칸 · 버튼 · 닫기 가운데 (CSS px) */
@@ -657,6 +746,8 @@ const mood = {
   phase: '' as string,
   /** 낮잠에 든 때 (performance.now) */
   napAt: 0,
+  /** 미개방 구역에 부딪혀 갸웃한 때 (초) */
+  lockT: -9,
 };
 function fieldMood(dt: number, now: number) {
   const b = field.mode === 'walk' || field.mode === 'axe' ? biomeAt(field.x, field.y) : '';
@@ -678,8 +769,14 @@ function fieldMood(dt: number, now: number) {
   for (const e of field.events) if (e.type === 'chop' && ++mood.chops % 5 === 0) say('exertion', 1.2);
   // 포탈 위: 낚시터면 군침, 던전이면 의욕, 아직 연결 전이면 갸웃
   const w = FIELD.warps.find((v) => inWarp(v, field.x, field.y));
-  if (w && w.id !== mood.portal) say(SPOTS[w.to] ? 'hunger' : w.to === 'shop' ? 'delight' : w.to ? 'determination' : 'question', 1.6);
+  if (w && w.id !== mood.portal)
+    say(SPOTS[w.to] ? 'hunger' : w.to === 'shop' ? 'delight' : w.to === 'maze' ? 'idea' : w.to === 'sandboard' ? 'rhythm' : w.to ? 'determination' : 'question', 1.6);
   mood.portal = w?.id ?? '';
+  // 미개방 구역으로 밀면 갸웃 (2.5초에 한 번)
+  if (field.events.some((e) => e.type === 'locked') && now - mood.lockT > 2.5) {
+    say('question', 1.4);
+    mood.lockT = now;
+  }
   mood.stillT = field.moving ? 0 : mood.stillT + dt;
   if (mood.stillT > 7) {
     say('sleep', 3);
@@ -749,14 +846,100 @@ const enterFishing = (to: string) =>
     say((fishing.spot.mood ?? 'focus') as EmoteId, 1.6);
     sayHelp();
   });
-/** 포탈 → 던전 또는 낚시터 */
-/** 포탈 → 던전 · 낚시터, 또는 상점 창 (장면은 그대로 — 한 번 벗어났다 와야 다시 열린다) */
+/** 피라미드 미로 — 매번 새 미로 */
+const enterMaze = () =>
+  goTo(() => {
+    scene = 'maze';
+    roomId = 'maze';
+    canvas.style.cursor = '';
+    maze = makeMaze();
+    miniHover = null;
+    quiet();
+    say('focus', 1.6);
+    sayHelp();
+  });
+/** 모래 미끄럼틀 샌드보드 — 굴러오는 아르마딜로 시트를 먼저 불러온다 */
+const enterSandboard = () =>
+  goTo(async () => {
+    step('모래 미끄럼틀');
+    await enemySheet('cactus_armadillo');
+    scene = 'sandboard';
+    roomId = 'sandboard';
+    canvas.style.cursor = '';
+    sand = makeSandboard();
+    resetSandFx();
+    miniHover = null;
+    quiet();
+    say('rhythm', 1.6);
+    sayHelp();
+  });
+/** 미니게임 다시 (R · 결과 카드의 다시) */
+const restartMini = () =>
+  goTo(() => {
+    if (scene === 'maze') maze = makeMaze();
+    else {
+      sand = makeSandboard();
+      resetSandFx();
+    }
+    miniHover = null;
+    quiet();
+    sayHelp();
+  });
+/** 포탈 → 던전 · 낚시터 · 미니게임, 또는 상점 창 (장면은 그대로 — 한 번 벗어났다 와야 다시 열린다) */
 const enterPortal = (to: string) => {
+  if (to === 'maze') return enterMaze();
+  if (to === 'sandboard') return enterSandboard();
   if (to !== 'shop') return SPOTS[to] ? enterFishing(to) : enterDungeon(to);
   field.armed = false;
   field.dwell = 0;
   if (bagAllowed()) openPanel('shop');
 };
+/** 미로 사건 → 보상 · 소리 · 감정 · 기록 */
+function mazeEvent(e: MazeEvent) {
+  if (e.type === 'coin') {
+    bag.coins++;
+    sfxCoin();
+  } else if (e.type === 'chest') {
+    sfxPickup();
+    if (obtain(bag, e.item) > 0) say('frustration', 1.5); // 가방이 가득
+    else say('treasure_temptation', 2);
+    saveBag();
+  } else {
+    bag.coins += e.bonus;
+    sfxCatch();
+    say('delight', 3);
+    if (records.maze === null || e.secs < records.maze) records.maze = Math.round(e.secs * 10) / 10;
+    saveRecords();
+    saveBag();
+  }
+}
+/** 샌드보드 사건 → 보상 · 소리 · 감정 · 기록 */
+function sandEvent(e: SandEvent) {
+  switch (e.type) {
+    case 'coin':
+      bag.coins++;
+      sfxCoin();
+      break;
+    case 'jump':
+      sfxJump();
+      break;
+    case 'ramp':
+      sfxCast();
+      say('exertion', 0.8);
+      break;
+    case 'crash':
+      sfxHurt();
+      say('dizzy', 1);
+      break;
+    case 'finish':
+      sfxCatch();
+      say(e.clean ? 'pride' : 'relief', 3);
+      if (records.sandboard === null || e.score > records.sandboard) records.sandboard = e.score;
+      saveRecords();
+      saveBag();
+      break;
+  }
+}
 /** 포탈 워프 — 포탈 위에 내린다. 한 번 벗어났다 들어와야 빨려 들어간다 (그 자리에서 바로 던전으로 가지 않음) */
 const warpTo = (w: Warp) =>
   goTo(() => {
@@ -774,6 +957,7 @@ const backToField = () =>
     fishKey = false;
     fishPtr = null;
     canvas.style.cursor = '';
+    saveBag(); // 미니게임에서 주운 냥코인
     quiet();
     sayHelp();
   });
@@ -824,6 +1008,12 @@ function frame(now: number) {
         reelTick = 0;
         sfxReel();
       }
+    } else if (scene === 'maze') {
+      updateMaze(maze, input(), dt);
+      maze.events.forEach(mazeEvent);
+    } else if (scene === 'sandboard') {
+      updateSandboard(sand, { mx: input().mx, jump: jumpQueued }, dt);
+      sand.events.forEach(sandEvent);
     } else {
       const dash = keys.has('Space') || [...pressing.values()].includes('dash');
       const out = updateDungeon(dungeon, { ...input(), punch: punchQueued, dash }, dt);
@@ -832,12 +1022,22 @@ function frame(now: number) {
       dungeonMood();
       if (out === 'exit') backToField();
     }
-    punchQueued = false;
+    punchQueued = jumpQueued = false;
     tickEmote(dt);
     tickBuffs(bag, dt);
   }
   if (scene === 'field') drawFieldScene();
   else if (scene === 'fishing') drawFishing(ctx, canvas.width, canvas.height, fishing, { t: last / 1000, dt: lastDt, hover: fishHover, touch: touchOn });
+  else if (scene === 'maze') drawMaze(ctx, canvas.width, canvas.height, maze, catSheet, { t: last / 1000, dt: lastDt, touch: touchOn, hover: miniHover, best: records.maze });
+  else if (scene === 'sandboard')
+    drawSandboard(
+      ctx,
+      canvas.width,
+      canvas.height,
+      sand,
+      { cat: catSheet, snow: snowSheet, armadillo: sheets.cactus_armadillo },
+      { t: last / 1000, dt: lastDt, touch: touchOn, hover: miniHover, best: records.sandboard },
+    );
   else
     drawDungeon(ctx, canvas.width, canvas.height, dungeon, catSheet, { t: last / 1000, dt: lastDt, fps, grid: debug, trace: trace ? traceDraw : undefined, touch: touchOn });
   drawOverlay();
@@ -895,10 +1095,14 @@ const help = document.getElementById('help')!;
 const HELP = {
   field: 'WASD 이동 · 숲은 도끼로, 물은 배로 · 이정표 앞 포탈에 잠시 서 있으면 던전 · 지도 끌기·미니맵으로 둘러보기, 포탈 클릭 = 워프 · 강아지마을은 고등어 상점 · I 가방 · B 도감 · M 미니맵 · T 지형 보기',
   dungeon: 'WASD 이동 · 클릭/J 냥펀치 · Space 구르기 · 쓰러진 몬스터가 떨군 건 다가가면 주워요 · I 가방 · 빛나는 칸으로 나가기 · G 격자',
+  maze: 'WASD 이동 · 횃불이 닿는 길만 보여요 · 냥코인을 줍고 막다른 길 끝의 보물 상자를 찾아 출구로 · 빠를수록 탈출 보너스 · R 새 미로 · Esc 돌아가기',
+  sandboard: 'A/D 좌우 · Space 점프로 바위·선인장·아르마딜로를 뛰어넘어요 · 냥코인 줍기 · 점프대를 타면 공중 냥코인 · 부딪히면 느려져요 · R 다시 · Esc 돌아가기',
 };
 const HELP_TOUCH = {
   field: '왼쪽 조이스틱으로 이동 · 숲은 도끼로, 물은 배로 · 포탈에 잠시 서 있으면 던전·낚시터 (강아지마을은 상점) · 화면을 끌어 둘러보고 포탈을 누르면 워프',
   dungeon: '조이스틱 이동 · 냥펀치 · 구르기 · 빛나는 칸으로 나가기',
+  maze: '조이스틱으로 이동 · 횃불이 닿는 길만 보여요 · 냥코인과 보물 상자를 찾아 출구로',
+  sandboard: '조이스틱 좌우 · 점프 버튼이나 화면 누르기 = 점프 · 바위·선인장·아르마딜로를 뛰어넘고 냥코인을 주워요',
 };
 function sayHelp() {
   const t = scene === 'fishing' ? fishingHelp(fishing, touchOn) : (touchOn ? HELP_TOUCH : HELP)[scene];
@@ -924,6 +1128,7 @@ const step = (t: string) => {
   await prepareRoom(startRoom);
   dungeon = makeDungeon(sheets, startRoom, bag);
   if (scene === 'dungeon') enteredRoom();
+  if (scene === 'sandboard') await enemySheet('cactus_armadillo');
   if (scene === 'fishing') {
     step('낚시터');
     await fishingReady(startSpot);

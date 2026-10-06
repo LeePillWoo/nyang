@@ -8,8 +8,10 @@ import {
   FIELD,
   FOREST,
   inWarp,
+  isOpen,
   makeFieldState,
   updateField,
+  warpLocked,
   WALK,
   WATER,
   type FieldState,
@@ -72,6 +74,38 @@ const standOnWarp = () => {
   assert.deepEqual(backFrom(warp.to), warp.back);
   assert.ok(!inWarp(warp, warp.back[0], warp.back[1]));
 }
+
+// 미개방 구역 (field.json open): 가장자리 밖으로는 걸어서도 배로도 못 가고 'locked' 사건, 그쪽 포탈은 연결돼 있어도 잠겨 있다
+{
+  const o = FIELD.open;
+  const [W, H] = FIELD.size;
+  const [COLS, ROWS] = FIELD.grid;
+  const x0 = Math.floor((o.c[0] * W) / COLS); // 개방 구역 왼쪽 가장자리
+  const y = Math.floor(((o.r[0] + 0.5) * H) / ROWS);
+  assert.ok(isOpen(x0 + 5, y) && !isOpen(x0 - 5, y) && isOpen(FIELD.start[0], FIELD.start[1]), '시작점은 개방 구역 안');
+  const s = makeFieldState([x0 + 30, y]);
+  assert.equal(run(s, -1, 0, 1), null);
+  assert.ok(s.x >= x0 - 1 && s.x < x0 + 30, `가장자리에서 막힌다 (x ${s.x.toFixed(0)}, 경계 ${x0})`);
+  let locked = false;
+  for (let i = 0; i < 10; i++) {
+    updateField(s, -1, 0, 0.016);
+    locked ||= s.events.some((e) => e.type === 'locked');
+  }
+  assert.ok(locked, '미개방 구역으로 밀면 locked 사건');
+  const sea: TerrainAt = () => WATER;
+  const b = makeFieldState([x0 + 30, y], sea);
+  b.mode = 'boat';
+  for (let i = 0; i < 60; i++) updateField(b, -1, 0, 0.016, sea);
+  assert.ok(b.x >= x0 - 1 && b.mode === 'boat', `배로도 못 넘어간다 (x ${b.x.toFixed(0)})`);
+  const lockedWarp = FIELD.warps.find((w) => w.to && warpLocked(w))!;
+  const p = makeFieldState(FIELD.start);
+  [p.x, p.y] = lockedWarp.at;
+  assert.equal(run(p, 0, 0, lockedWarp.dwell * 2), null, `${lockedWarp.id} 는 잠겨서 안 간다`);
+  assert.ok(FIELD.warps.some((w) => w.to && !warpLocked(w)), '열린 포탈도 있다');
+}
+
+// 여기부터는 가짜 지도로 움직임만 본다 — 개방 구역을 지도 전체로 넓혀 둔다 (아래 좌표들은 지도 왼쪽 위에 있다)
+Object.assign(FIELD.open, { r: [0, FIELD.grid[1] - 1], c: [0, FIELD.grid[0] - 1] });
 
 // 걷기: 가로는 설정 속도, 세로는 비스듬한 시점만큼 느리다. 그림 밖으로는 못 나간다
 {

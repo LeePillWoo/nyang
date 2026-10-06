@@ -16,6 +16,13 @@ const OUT = new URL('./out/', import.meta.url);
 const fsPath = (u) => fileURLToPath(u);
 const readJson = (rel) => JSON.parse(fs.readFileSync(new URL(rel, import.meta.url), 'utf8'));
 const FIELD = readJson('../src/data/field.json');
+/** 개방 구역(field.json open) 안의 워프 — 잠긴 구역 밖 워프는 갈 수 없는 게 맞다 */
+const inOpen = (x, y) => {
+  const c = Math.min(FIELD.grid[0] - 1, Math.floor((x * FIELD.grid[0]) / FIELD.size[0]));
+  const r = Math.min(FIELD.grid[1] - 1, Math.floor((y * FIELD.grid[1]) / FIELD.size[1]));
+  return r >= FIELD.open.r[0] && r <= FIELD.open.r[1] && c >= FIELD.open.c[0] && c <= FIELD.open.c[1];
+};
+const OPEN_WARPS = FIELD.warps.filter((w) => inOpen(w.at[0], w.at[1]));
 const ROOMS = readJson('../src/data/rooms.json');
 const ROOM = ROOMS.alley;
 // 던전 나가는 곳(맵의 'E') 첫 칸 가운데, 월드 좌표 m (타일 2m)
@@ -56,13 +63,20 @@ async function open(where = 'dungeon', room = '', view = null, extra = '') {
   if (view) await page.setViewport(view);
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
-  const q = where === 'dungeon' ? '&dungeon' + (room ? '=' + room : '') : where === 'fishing' ? '&fishing' + (room ? '=' + room : '') : '';
+  const q =
+    where === 'dungeon' ? '&dungeon' + (room ? '=' + room : '') : where === 'fishing' ? '&fishing' + (room ? '=' + room : '') : where === 'maze' || where === 'sandboard' ? '&' + where : '';
   await page.goto(base + '?trace' + q + extra, { waitUntil: 'load' });
   await page.waitForFunction(() => window.__sheets, { timeout: 60000 });
   return { page, errors };
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+/** 마우스로 (x, y) 누르기 */
+const click2 = async (page, p) => {
+  await page.mouse.move(p.x, p.y);
+  await page.mouse.down();
+  await page.mouse.up();
+};
 const SHEET_ROWS = { axe: 4, boat: 4, snow: 4 }; // 나머지 시트는 5행
 
 /** 필드: 화면 기준 방향키 */
@@ -585,7 +599,7 @@ try {
     ['tablet-portrait', { width: 768, height: 1024, deviceScaleFactor: 2, isMobile: true, hasTouch: true }],
   ]) {
     const errs = [];
-    for (const where of ['field', 'dungeon', 'fishing']) {
+    for (const where of ['field', 'dungeon', 'fishing', 'maze', 'sandboard']) {
       const { page, errors } = await open(where, '', view, '&touch');
       await sleep(800);
       await page.screenshot({ path: fsPath(new URL(`screen-${name}-${where}.png`, OUT)) });
@@ -826,6 +840,159 @@ try {
     await page.close();
   }
 
+  // 3-9) 미개방 구역 · 미니게임 (실제 키·마우스):
+  //  개방 구역 가장자리에서 밖으로 밀어도 못 넘어간다 · 잠긴 포탈은 눌러도 워프하지 않는다 (화면 field-locked.png) →
+  //  피라미드 포탈 → 미로: 길을 BFS 로 풀어 모퉁이마다 WASD 로 걸어 출구까지, 보너스 냥코인·기록, 돌아가기 →
+  //  모래 미끄럼틀 포탈 → 샌드보드: 빈 레인으로 A/D, 바위 앞에서 Space, 완주·점수·기록, 다시 타기, Esc
+  console.log('\n[미개방 구역 · 미니게임]');
+  {
+    const { page, errors } = await open('field');
+    const x0 = Math.floor((FIELD.open.c[0] * FIELD.size[0]) / FIELD.grid[0]);
+    const y = FIELD.start[1];
+    // 가장자리 안쪽에서 걸을 수 있는 자리를 찾아 선다
+    const sx = await page.evaluate(
+      ([x0, y]) => {
+        for (let x = x0 + 24; x < x0 + 300; x += 4) if (__game.terrain(x, y) === 0) return x;
+        return -1;
+      },
+      [x0, y],
+    );
+    check(sx > 0, `개방 구역 왼쪽 가장자리 안쪽에 설 자리 (${sx}, ${y})`);
+    await page.evaluate(([x, y]) => Object.assign(__game.field, { x, y, camX: x, camY: y, armed: true, mode: 'walk' }), [sx, y]);
+    await page.keyboard.down('KeyA');
+    await sleep(1500);
+    await page.keyboard.up('KeyA');
+    const fx = await page.evaluate(() => __game.field.x);
+    check(fx >= x0 - 1 && fx <= sx, `왼쪽(미개방)으로 1.5초 밀어도 가장자리에서 멈춘다 (x ${fx | 0}, 경계 ${x0})`);
+    await page.screenshot({ path: fsPath(new URL('field-locked.png', OUT)) });
+    const locked = FIELD.warps.find((w) => w.id === 'tiger_rock');
+    check(locked.to && !inOpen(locked.at[0], locked.at[1]), '호랑이 바위(수정 동굴 던전)는 잠긴 구역');
+    const click = async (p) => {
+      await page.mouse.move(p.x, p.y);
+      await page.mouse.down();
+      await page.mouse.up();
+    };
+    await click(await page.evaluate(() => __game.minimapPoint('tiger_rock')));
+    await sleep(1200);
+    const before = await page.evaluate(() => [__game.field.x, __game.field.y]);
+    await click(await page.evaluate(() => __game.portalScreen('tiger_rock')));
+    await sleep(1500);
+    const after = await page.evaluate(() => [__game.field.x, __game.field.y, __game.scene]);
+    check(after[0] === before[0] && after[1] === before[1] && after[2] === 'field', '잠긴 포탈은 눌러도 워프하지 않는다');
+    await page.screenshot({ path: fsPath(new URL('field-locked-look.png', OUT)) });
+    check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
+    await page.close();
+  }
+  {
+    const { page, errors } = await open('field');
+    const w = FIELD.warps.find((v) => v.to === 'maze');
+    await page.evaluate((at) => Object.assign(__game.field, { x: at[0], y: at[1], camX: at[0], camY: at[1], armed: true, mode: 'walk' }), w.at);
+    const inMaze = await page.waitForFunction(() => __game.scene === 'maze', { timeout: 6000 }).then(() => true, () => false);
+    check(inMaze, `${w.label} 포탈에 서 있으면 미로`);
+    const coins0 = await page.evaluate(() => __game.bag.coins);
+    const m = await page.evaluate(() => ({ w: __game.maze.w, h: __game.maze.h, solid: __game.maze.grid.solid, exit: __game.maze.exit, seen: __game.maze.seen.reduce((a, b) => a + b, 0) }));
+    check(m.seen < m.w * m.h * 0.12, `처음엔 횃불 둘레만 보인다 (${m.seen}/${m.w * m.h}칸)`);
+    // 길을 풀어 모퉁이만 경유점으로
+    const W = m.w;
+    const dist = new Int32Array(W * m.h).fill(-1);
+    const q = [1 * W + 1];
+    dist[q[0]] = 0;
+    for (let h = 0; h < q.length; h++) {
+      const c = q[h];
+      const x = c % W;
+      const z = (c - x) / W;
+      for (const [nx, nz] of [[x + 1, z], [x - 1, z], [x, z + 1], [x, z - 1]])
+        if (nx >= 0 && nz >= 0 && nx < W && nz < m.h && !m.solid[nz * W + nx] && dist[nz * W + nx] < 0) {
+          dist[nz * W + nx] = dist[c] + 1;
+          q.push(nz * W + nx);
+        }
+    }
+    const path = [m.exit];
+    for (let [x, z] = m.exit; dist[z * W + x] > 0; ) {
+      [x, z] = [[x + 1, z], [x - 1, z], [x, z + 1], [x, z - 1]].find(([nx, nz]) => nx >= 0 && nz >= 0 && nx < W && nz < m.h && !m.solid[nz * W + nx] && dist[nz * W + nx] === dist[z * W + x] - 1);
+      path.push([x, z]);
+    }
+    path.reverse();
+    const corners = path.filter((p, i) => i === path.length - 1 || (i > 0 && (path[i - 1][0] !== path[i + 1][0] && path[i - 1][1] !== path[i + 1][1])));
+    const mazeKeys = (p, t) => [
+      ...(t[0] - p.x > 0.08 ? ['KeyD'] : t[0] - p.x < -0.08 ? ['KeyA'] : []),
+      ...(t[1] - p.y > 0.08 ? ['KeyS'] : t[1] - p.y < -0.08 ? ['KeyW'] : []),
+    ];
+    const mazePos = () => ({ x: __game.maze.x / 2, y: __game.maze.z / 2 });
+    let shot = false;
+    for (const [cx, cz] of corners) {
+      const done = eval(`() => __game.maze.phase === 'done' || Math.hypot(__game.maze.x / 2 - ${cx + 0.5}, __game.maze.z / 2 - ${cz + 0.5}) < 0.12`);
+      await walk(page, mazePos, [cx + 0.5, cz + 0.5], mazeKeys, done, 6000);
+      if (!shot && corners.indexOf(corners.find((c) => c[0] === cx && c[1] === cz)) >= 3) {
+        shot = true;
+        await page.screenshot({ path: fsPath(new URL('maze-fog.png', OUT)) });
+      }
+    }
+    const end = await page.evaluate(() => ({ phase: __game.maze.phase, got: __game.maze.got, bonus: __game.maze.bonus, t: __game.maze.t, coins: __game.bag.coins, best: __game.records.maze }));
+    check(end.phase === 'done', `길을 따라 걸으면 출구에서 탈출 (${path.length - 1}걸음, ${end.t.toFixed(1)}초)`);
+    check(end.coins === coins0 + end.got + end.bonus && end.bonus >= 5, `냥코인: 주운 ${end.got} + 탈출 보너스 ${end.bonus}`);
+    check(end.best !== null && end.best <= end.t + 0.1, `최고 기록 저장 (${end.best}초)`);
+    await sleep(400);
+    await page.screenshot({ path: fsPath(new URL('maze-done.png', OUT)) });
+    await click2(page, (await page.evaluate(() => __game.miniScreen())).back);
+    const out = await page.waitForFunction(() => __game.scene === 'field', { timeout: 4000 }).then(() => true, () => false);
+    const pos = await page.evaluate(() => [__game.field.x, __game.field.y]);
+    check(out && Math.hypot(pos[0] - w.back[0], pos[1] - w.back[1]) < 5, '돌아가기 → 피라미드 포탈 앞');
+    check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
+    await page.close();
+  }
+  {
+    const { page, errors } = await open('field');
+    const w = FIELD.warps.find((v) => v.to === 'sandboard');
+    await page.evaluate((at) => Object.assign(__game.field, { x: at[0], y: at[1], camX: at[0], camY: at[1], armed: true, mode: 'walk' }), w.at);
+    const inSand = await page.waitForFunction(() => __game.scene === 'sandboard', { timeout: 10000 }).then(() => true, () => false);
+    check(inSand, `${w.label} 포탈에 서 있으면 샌드보드`);
+    const coins0 = await page.evaluate(() => __game.bag.coins);
+    // 자동 조종: 빈 레인으로 A/D, 7m 안의 장애물은 Space 로 점프
+    let held = null;
+    let shot = false;
+    const t0 = Date.now();
+    while (Date.now() - t0 < 120000) {
+      const s = await page.evaluate(() => {
+        const s = __game.sandboard;
+        const solid = (o) => (o.kind === 'rock' || o.kind === 'cactus' || o.kind === 'armadillo') && !o.hit;
+        return { phase: s.phase, x: s.x, d: s.d, t: s.t, air: s.air, obs: s.obs.filter((o) => solid(o) && o.d > s.d && o.d < s.d + 22).map((o) => [o.x, o.d, o.r]) };
+      });
+      if (s.phase !== 'play') break;
+      const lanes = [-0.8, -0.4, 0, 0.4, 0.8];
+      const lane = lanes.map((l) => ({ l, bad: s.obs.filter(([x, , r]) => Math.abs(x - l) < r + 0.2).length + Math.abs(l - s.x) * 0.01 })).sort((a, b) => a.bad - b.bad)[0].l;
+      const want = Math.abs(lane - s.x) < 0.04 ? null : lane > s.x ? 'KeyD' : 'KeyA';
+      if (want !== held) {
+        if (held) await page.keyboard.up(held);
+        if (want) await page.keyboard.down(want);
+        held = want;
+      }
+      if (s.air <= 0 && s.obs.some(([x, d, r]) => d - s.d < 7 && Math.abs(x - s.x) < r + 0.13)) await page.keyboard.press('Space');
+      if (!shot && s.t > 5) {
+        shot = true;
+        await page.screenshot({ path: fsPath(new URL('sandboard-run.png', OUT)) });
+      }
+      await sleep(40);
+    }
+    if (held) await page.keyboard.up(held);
+    const end = await page.evaluate(() => ({ phase: __game.sandboard.phase, coins: __game.sandboard.coins, crashes: __game.sandboard.crashes, score: __game.sandboard.score, t: __game.sandboard.t, bag: __game.bag.coins, best: __game.records.sandboard }));
+    check(end.phase === 'done', `피하고 점프하며 끝까지 가면 완주 (${end.t.toFixed(1)}초 · 냥코인 ${end.coins} · 부딪힘 ${end.crashes} · 점수 ${end.score})`);
+    check(end.coins > 0 && end.bag === coins0 + end.coins, '주운 냥코인이 가방에');
+    check(end.best !== null && end.best >= end.score, `최고 점수 저장 (${end.best})`);
+    await sleep(400);
+    await page.screenshot({ path: fsPath(new URL('sandboard-done.png', OUT)) });
+    await click2(page, (await page.evaluate(() => __game.miniScreen())).again);
+    const again = await page.waitForFunction(() => __game.sandboard.phase === 'play' && __game.sandboard.d < 30, { timeout: 4000 }).then(() => true, () => false);
+    check(again, '다시 타기');
+    await sleep(700); // 화면 전환(페이드)이 끝난 뒤에 — 전환 중 키는 무시된다
+    await page.keyboard.press('Escape');
+    const out = await page.waitForFunction(() => __game.scene === 'field', { timeout: 4000 }).then(() => true, () => false);
+    const pos = await page.evaluate(() => [__game.field.x, __game.field.y]);
+    check(out && Math.hypot(pos[0] - w.back[0], pos[1] - w.back[1]) < 5, 'Esc → 모래 미끄럼틀 포탈 앞');
+    check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
+    await page.close();
+  }
+
   // 4) 왕복: 필드에서 시작 → 골목 던전 포탈(고양이마을) 앞으로 → 포탈로 걸어가 머문다 → 던전 → 나가는 칸으로 걸어 나간다 → 필드
   console.log('\n[필드 ↔ 던전 왕복]');
   {
@@ -998,8 +1165,8 @@ try {
           }
       }
       return warps.filter((w) => !seen[Math.floor(w.at[1] / S) * W + Math.floor(w.at[0] / S)]).map((w) => w.id);
-    }, FIELD.start, FIELD.warps);
-    check(cut.length === 0, `시작점에서 모든 워프까지 갈 수 있다 (워프 ${FIELD.warps.length}개${cut.length ? ', 막힌 워프: ' + cut.join(', ') : ''})`);
+    }, FIELD.start, OPEN_WARPS);
+    check(cut.length === 0, `시작점에서 개방 구역의 모든 워프까지 갈 수 있다 (워프 ${OPEN_WARPS.length}개${cut.length ? ', 막힌 워프: ' + cut.join(', ') : ''})`);
     // 워프는 뭍(걷기·숲)에서만 작동한다 — 포탈 한가운데가 물·막힘·다리면 연결해도 못 들어간다
     const wet = await page.evaluate((warps) => warps.filter((w) => __game.terrain(w.at[0], w.at[1]) > 1).map((w) => `${w.id}(지형 ${__game.terrain(w.at[0], w.at[1])})`), FIELD.warps);
     check(wet.length === 0, `모든 포탈이 뭍 위에 있다${wet.length ? ': ' + wet.join(', ') : ''}`);

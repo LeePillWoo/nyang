@@ -15,6 +15,21 @@ import data from './data/field.json' with { type: 'json' };
 export const FIELD = data;
 export type Warp = (typeof data.warps)[number];
 
+/**
+ * 개방 구역 — field.json `open` 의 조각(rR_cC) 범위 안. 밖은 미개방: 막힌 땅처럼 걸어서도 배로도 못 넘어가고,
+ * 어둡게 그리고(field-draw · minimap), 그쪽 포탈은 잠긴다. 콘텐츠가 차면 범위를 넓힌다.
+ */
+export function isOpen(x: number, y: number) {
+  const [W, H] = data.size;
+  const [COLS, ROWS] = data.grid;
+  const c = Math.min(COLS - 1, Math.floor((x * COLS) / W));
+  const r = Math.min(ROWS - 1, Math.floor((y * ROWS) / H));
+  const o = data.open;
+  return r >= o.r[0] && r <= o.r[1] && c >= o.c[0] && c <= o.c[1];
+}
+/** 미개방 구역의 포탈 (워프도 안 되고 빨아들이지도 않는다) */
+export const warpLocked = (w: Warp) => !isOpen(w.at[0], w.at[1]);
+
 export const WALK = 0;
 export const FOREST = 1;
 export const WATER = 2;
@@ -33,7 +48,9 @@ export type FieldEvent =
   | { type: 'chop'; x: number; y: number; flip: number }
   | { type: 'splash'; x: number; y: number }
   | { type: 'ripple'; x: number; y: number }
-  | { type: 'stroke'; x: number; y: number };
+  | { type: 'stroke'; x: number; y: number }
+  /** 미개방 구역으로 밀고 들어가려 했다 (막힘) */
+  | { type: 'locked' };
 
 const EDGE = 24; // 그림 가장자리 여백
 const CAM_EASE = 8; // 카메라가 따라오는 속도
@@ -77,12 +94,15 @@ export type FieldState = {
 export const inWarp = (w: Warp, x: number, y: number) =>
   ((x - w.at[0]) / w.r) ** 2 + ((y - w.at[1]) / (w.r * data.vertical)) ** 2 <= 1;
 
-/** 아직 던전이 연결되지 않은 포탈(to 가 빈 값)은 그려지기만 하고 빨아들이지 않는다 */
-const warpAt = (x: number, y: number) => data.warps.find((w) => w.to && inWarp(w, x, y)) ?? null;
+/** 아직 던전이 연결되지 않은 포탈(to 가 빈 값)과 미개방 구역의 포탈은 그려지기만 하고 빨아들이지 않는다 */
+const warpAt = (x: number, y: number) => data.warps.find((w) => w.to && !warpLocked(w) && inWarp(w, x, y)) ?? null;
+/** 미개방 구역은 막힌 땅으로 본다 */
+const gated = (at: TerrainAt): TerrainAt => (x, y) => (isOpen(x, y) ? at(x, y) : BLOCK);
 const clampX = (x: number) => Math.min(data.size[0] - EDGE, Math.max(EDGE, x));
 const clampY = (y: number) => Math.min(data.size[1] - EDGE, Math.max(EDGE, y));
 
-export function makeFieldState([x, y]: number[], terrainAt: TerrainAt = everywhereWalk): FieldState {
+export function makeFieldState([x, y]: number[], terrainAt0: TerrainAt = everywhereWalk): FieldState {
+  const terrainAt = gated(terrainAt0);
   return {
     x,
     y,
@@ -160,8 +180,9 @@ export function updateField(
   mx: number,
   my: number,
   dt: number,
-  at: TerrainAt = everywhereWalk,
+  at0: TerrainAt = everywhereWalk,
 ): Warp | null {
+  const at = gated(at0);
   s.events.length = 0;
   s.animT += dt;
   s.modeT += dt;
@@ -203,7 +224,9 @@ export function updateField(
     const afloat = s.mode === 'boat';
     // 배는 크니 뱃머리가 먼저 뭍에 닿는다
     const reach = M.boat.bow * FIELD.catBody;
-    const bow = at(clampX(nx + ux * reach), clampY(ny + uy * reach * FIELD.vertical));
+    const bowX = clampX(nx + ux * reach);
+    const bowY = clampY(ny + uy * reach * FIELD.vertical);
+    const bow = at(bowX, bowY);
     const ground = (t: Terrain) => t !== WATER && t !== BLOCK;
     if (!afloat && next === WATER) {
       // 물가: 배를 띄우고 올라탄다. 시트 첫 컷은 고양이가 배 왼쪽 offset 만큼에 서 있으니,
@@ -240,7 +263,8 @@ export function updateField(
         return null;
       }
     } else if (next === BLOCK || (afloat && bow === BLOCK)) {
-      // 막힌 곳: 한 축으로라도 미끄러져 본다
+      // 막힌 곳: 한 축으로라도 미끄러져 본다. 미개방 구역이라 막힌 거면 알린다
+      if (!isOpen(nx, ny) || (afloat && !isOpen(bowX, bowY))) s.events.push({ type: 'locked' });
       const tx = clampX(s.x + ux * speed * dt);
       const ty = clampY(s.y + uy * speed * FIELD.vertical * dt);
       const ok = (x: number, y: number) => {
