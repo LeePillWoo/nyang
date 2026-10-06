@@ -1,7 +1,7 @@
 // 게임 뼈대 — 캔버스·입력·장면 전환(필드 ↔ 던전 · 낚시터)·소리·감정·불러오기.
 // 필드는 field.ts(로직) / field-draw.ts(그리기), 던전은 dungeon.ts / dungeon-draw.ts, 낚시는 fishing.ts / fishing-draw.ts.
 import { assetUrl, image } from './assets.ts';
-import { bagLayout, bagTap, drawBag, drawShop, itemIconsReady, resetBagView, resetShopView, shopLayout, shopTap, shopView } from './bag-draw.ts';
+import { bagLayout, bagTap, coinReady, drawBag, drawShop, itemIconsReady, resetBagView, resetShopView, shopLayout, shopTap, shopView } from './bag-draw.ts';
 import { count, fromSave, obtain, stats, tickBuffs, type Bag } from './bag.ts';
 import { bookLayout, bookTap, bookView, drawBook, groupOf, openBook, ungrouped, type BookData } from './book-draw.ts';
 import shopData from './data/shop.json' with { type: 'json' };
@@ -44,7 +44,7 @@ import {
   sfxZap,
   unlockAudio,
 } from './audio.ts';
-import { cardAt, cardRects, drawCards, skillFxReady } from './skills-draw.ts';
+import { cardAt, cardRects, drawCards, drawResult, resultButtonAt, resultPoint, skillFxReady, type ResultButton } from './skills-draw.ts';
 import { learn as learnSkill, type SkillId } from './skills.ts';
 import { loadAxe, loadBoat, loadCat, loadSnow } from './cat.ts';
 import { drawDungeon, dungeonReady, roomReady } from './dungeon-draw.ts';
@@ -109,8 +109,9 @@ function traceDraw(who: string, sh: Sheet, row: number, col: number, sx: number,
   const b = sx + flip * (f.ox + f.sw) * k;
   trace.push({ t: performance.now(), who, row, col, clamped: col >= r.length, flip, sx, sy, left: Math.min(a, b), right: Math.max(a, b), ...extra });
 }
-/** 레벨 업 카드에 마우스가 올라간 카드 */
+/** 레벨 업 카드에 마우스가 올라간 카드 · 결과창 버튼 */
 let cardHover = -1;
+let resultHover: ResultButton | null = null;
 /** 샌드보드 점프 (이번 프레임) */
 let jumpQueued = false;
 addEventListener('keydown', (e) => {
@@ -126,6 +127,12 @@ addEventListener('keydown', (e) => {
     if (e.code === 'Escape') closePanel();
     return;
   }
+  // 결과창: Enter · Space · E · Esc = 필드로, R = 다시 도전 (다른 키는 먹는다)
+  if (scene === 'dungeon' && dungeon.result) {
+    if (['Enter', 'NumpadEnter', 'Space', 'KeyE', 'Escape'].includes(e.code)) backToField();
+    else if (e.code === 'KeyR') retryRoom();
+    return;
+  }
   // 레벨 업 카드: 1 · 2 · 3 (숫자패드도). 고르는 동안 다른 키는 R(방 다시)만
   if (scene === 'dungeon' && dungeon.choose) {
     const n = /^(?:Digit|Numpad)([1-9])$/.exec(e.code)?.[1];
@@ -139,13 +146,8 @@ addEventListener('keydown', (e) => {
   if (e.code === 'KeyG') debug = !debug;
   if (e.code === 'KeyT') showTerrain = !showTerrain;
   if (e.code === 'KeyM') showMap = !showMap;
-  if (e.code === 'KeyR' && scene === 'dungeon') {
-    if (dungeon.phase === 'napped') backToField(); // GDD: 목숨을 다 쓰면 마을에서 깨어난다
-    else {
-      resetDungeon(dungeon);
-      enteredRoom();
-    }
-  }
+  // R = 방 다시 (낮잠이면 곧 결과창이 뜬다 — 거기서 고른다)
+  if (e.code === 'KeyR' && scene === 'dungeon' && dungeon.phase !== 'napped') retryRoom();
   if (scene === 'fishing') {
     if (e.code === 'Escape') backToField();
     if (e.code === 'Space' && !e.repeat) {
@@ -287,6 +289,12 @@ canvas.addEventListener('pointerdown', (e) => {
     if (bookTap(innerWidth, innerHeight, p.x, p.y) === 'close') closePanel();
     return;
   }
+  if (scene === 'dungeon' && dungeon.result) {
+    const b = resultButtonAt(innerWidth, innerHeight, p.x, p.y, Object.keys(dungeon.run.skills).length);
+    if (b === 'leave') backToField();
+    else if (b === 'retry') retryRoom();
+    return;
+  }
   if (scene === 'dungeon' && dungeon.choose) {
     const i = cardAt(innerWidth, innerHeight, p.x, p.y, dungeon.choose.length);
     if (i >= 0 && pick(dungeon, i)) {
@@ -351,11 +359,7 @@ canvas.addEventListener('pointerdown', (e) => {
     stick = { id: e.pointerId, ...p };
     return;
   }
-  if (scene === 'dungeon') {
-    // 냥펀치는 자동이라 화면 누르기는 낮잠에서 깨기만: 손가락으로 누르면 집에서 깨어난다 (키보드는 R). 쓰러지자마자 연타에 넘어가지 않게 1초 뒤부터
-    if (dungeon.phase === 'napped' && e.pointerType !== 'mouse' && performance.now() - mood.napAt > 1000) backToField();
-    return;
-  }
+  if (scene === 'dungeon') return; // 냥펀치는 자동 · 낮잠이면 결과창의 버튼으로
   if (onMap(p)) {
     mapDrag = e.pointerId;
     mapPoint(p);
@@ -368,6 +372,11 @@ canvas.addEventListener('pointermove', (e) => {
     return;
   }
   if (panel) return;
+  if (scene === 'dungeon' && dungeon.result) {
+    resultHover = resultButtonAt(innerWidth, innerHeight, p.x, p.y, Object.keys(dungeon.run.skills).length);
+    if (e.pointerType === 'mouse') canvas.style.cursor = resultHover ? 'pointer' : '';
+    return;
+  }
   if (scene === 'dungeon' && dungeon.choose) {
     cardHover = cardAt(innerWidth, innerHeight, p.x, p.y, dungeon.choose.length);
     if (e.pointerType === 'mouse') canvas.style.cursor = cardHover >= 0 ? 'pointer' : '';
@@ -587,6 +596,8 @@ if (trace)
       learnSkill: (id: SkillId, n = 1) => {
         for (let i = 0; i < n; i++) learnSkill(dungeon.run, id);
       },
+      /** 결과창 버튼 가운데 (CSS px) */
+      resultPoint: (id: ResultButton) => resultPoint(innerWidth, innerHeight, id, Object.keys(dungeon.run.skills).length),
       /** 카드 i 의 가운데 (CSS px) */
       cardPoint: (i: number) => {
         const r = cardRects(innerWidth, innerHeight, dungeon.choose?.length ?? 3).cards[i];
@@ -712,6 +723,7 @@ function dungeonSound(e: DungeonEvent) {
   else if (e.type === 'level') sfxLevel();
   else if (e.type === 'wave') sfxWave(e.clear);
   else if (e.type === 'spawn') once(e.elite ? 'elite' : 'spawn', () => sfxSpawn(e.elite));
+  else if (e.type === 'result' && e.win) sfxLevel();
 }
 /** 같은 소리가 한꺼번에 몰리지 않게 (70ms 에 한 번) */
 const lastSfx = new Map<string, number>();
@@ -810,8 +822,6 @@ const mood = {
   lives: 0,
   scared: false,
   phase: '' as string,
-  /** 낮잠에 든 때 (performance.now) */
-  napAt: 0,
   /** 미개방 구역에 부딪혀 갸웃한 때 (초) */
   lockT: -9,
 };
@@ -858,6 +868,7 @@ function dungeonMood() {
     else if (e.type === 'wave') say(e.clear ? 'pride' : 'determination', 1.6);
     else if (e.type === 'spawn' && e.elite) say('danger', 2);
     else if (e.type === 'snack') say('heart', 1.2);
+    else if (e.type === 'result' && e.win) say('pride', 99);
   }
   if (P.lives < mood.lives) say('dizzy', 2);
   mood.lives = P.lives;
@@ -867,10 +878,7 @@ function dungeonMood() {
   } else if (P.hp >= maxHp(dungeon) * 0.3) mood.scared = false;
   if (dungeon.phase !== mood.phase) {
     if (dungeon.phase === 'cleared') say('delight', 3);
-    else if (dungeon.phase === 'napped') {
-      say('sleep', 99);
-      mood.napAt = performance.now();
-    }
+    else if (dungeon.phase === 'napped') say('sleep', 99);
     mood.phase = dungeon.phase;
   }
 }
@@ -1039,6 +1047,15 @@ const warpTo = (w: Warp) =>
     quiet();
     say('surprise', 1.2);
   });
+/** 던전 다시 도전 — 방을 처음부터 (웨이브 · 기술 · 기록 모두) */
+const retryRoom = () =>
+  goTo(() => {
+    resetDungeon(dungeon);
+    resultHover = null;
+    canvas.style.cursor = '';
+    enteredRoom();
+    sayHelp();
+  });
 /** 던전·낚시터에서 필드로 — 들어갔던 포탈 앞으로 */
 const backToField = () =>
   goTo(() => {
@@ -1173,7 +1190,8 @@ function drawOverlay() {
   if (touchOn && innerHeight > innerWidth) drawRotateHint(ctx, innerWidth);
   // 레벨 업 카드는 맨 위에 (조이스틱·버튼도 덮는다). 도움말 줄은 고르는 동안 숨긴다
   if (scene === 'dungeon' && dungeon.choose) drawCards(ctx, canvas.width, canvas.height, dungeon, cardHover, last / 1000, touchOn);
-  const hideHelp = scene === 'dungeon' && !!dungeon.choose;
+  if (scene === 'dungeon' && dungeon.result) drawResult(ctx, canvas.width, canvas.height, dungeon, resultHover, last / 1000, touchOn, dungeon.room.def.name);
+  const hideHelp = scene === 'dungeon' && (!!dungeon.choose || !!dungeon.result);
   if (help.classList.contains('choosing') !== hideHelp) help.classList.toggle('choosing', hideHelp);
 }
 
@@ -1211,7 +1229,7 @@ const step = (t: string) => {
 
 (async () => {
   step('배경');
-  await Promise.all([dungeonReady, fieldReady, emotesReady, itemIconsReady]);
+  await Promise.all([dungeonReady, fieldReady, emotesReady, itemIconsReady, coinReady]);
   step('고양이 시트');
   catSheet = await loadCat();
   step('도끼·배·눈길 시트');

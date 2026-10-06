@@ -129,6 +129,38 @@ if (all || !fs.existsSync(MINI) || tiles.some((p) => fs.statSync(path.join(ART, 
   fs.writeFileSync(MINI, Buffer.from(webp, 'base64'));
   console.log('  미니맵  world/minimap.webp');
 }
+// 냥코인 그림 — 샌드보드 장애물 시트의 발바닥 동전(paw_coin)만 잘라 작은 그림으로 (던전·가방·상점·미로가 쓴다. 시트 전체 370KB 를 안 받게).
+//   art/sandboarding/obstacles_v1.png + sprites.json → src/assets/ui/paw_coin.webp (보이는 범위 + 여백 6px, 원본 크기). 원본이 바뀌었을 때만
+{
+  const src = path.join(ART, 'sandboarding/obstacles_v1.png');
+  const spr = path.join(ART, 'sandboarding/sprites.json');
+  const dst = path.join(OUT, 'ui/paw_coin.webp');
+  if (fs.existsSync(src) && fs.existsSync(spr) && (all || !fs.existsSync(dst) || fs.statSync(src).mtimeMs > fs.statSync(dst).mtimeMs)) {
+    const sheet = JSON.parse(fs.readFileSync(spr, 'utf8').replace(/^﻿/, '')).sheets.find((s) => s.id === 'obstacles');
+    const f = sheet.frames.find((x) => x.id === 'paw_coin');
+    const [x, y] = f.rect;
+    const [bx, by, bw, bh] = f.visibleBounds;
+    const pad = 6;
+    const b64 = await page.evaluate(
+      async (b64, r) => {
+        const im = new Image();
+        im.src = 'data:image/png;base64,' + b64;
+        await new Promise((ok) => (im.onload = ok));
+        const cv = document.createElement('canvas');
+        cv.width = r[2];
+        cv.height = r[3];
+        cv.getContext('2d').drawImage(im, r[0], r[1], r[2], r[3], 0, 0, r[2], r[3]);
+        return cv.toDataURL('image/webp', 0.92).split(',')[1];
+      },
+      fs.readFileSync(src).toString('base64'),
+      [x + bx - pad, y + by - pad, bw + pad * 2, bh + pad * 2],
+    );
+    fs.mkdirSync(path.dirname(dst), { recursive: true });
+    fs.writeFileSync(dst, Buffer.from(b64, 'base64'));
+    console.log(`  냥코인 그림  src/assets/ui/paw_coin.webp (${bw + pad * 2}×${bh + pad * 2})`);
+  }
+}
+
 await browser.close();
 
 // 낚시 시트 좌표 → src/data/fishing-atlas.json (게임이 쓰는 값만, art 는 git 밖이라 옮겨 둔다)

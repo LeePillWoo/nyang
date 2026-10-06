@@ -8,6 +8,7 @@
  * 고양이가 다가가면 빨려 온다 (냥코인·아이템은 가방에, 생선뼈는 경험치로). 웨이브를 깨면 생선뼈가, 방을 깨면 남은 게 전부 날아온다.
  * 레벨이 오르면 choose 에 카드가 뜨고 고를 때까지 멈춘다 (pick).
  * 냥펀치는 자동 (auto) — 타격 범위 안에 몬스터가 있으면 저절로 나간다. 손으로 누르는 punch 입력은 체크용으로 남겨 둔다.
+ * 모든 웨이브를 깨거나 낮잠에 빠지면 결과창(result)이 뜨고 멈춘다 — 이번 판 기록은 stats (main 이 필드로 · 다시를 고른다).
  */
 import { makeBag, obtain, rollDrops, stats, type Bag } from './bag.ts';
 import { CELL, resolveCircle } from './collide.ts';
@@ -98,7 +99,16 @@ export type DungeonEvent =
   | { type: 'snack'; heal: number }
   | { type: 'level' }
   | { type: 'wave'; i: number; clear: boolean }
-  | { type: 'spawn'; elite: boolean };
+  | { type: 'spawn'; elite: boolean }
+  | { type: 'result'; win: boolean };
+/** 이번 판 기록 (결과창): 싸운 시간 · 쓰러뜨린 수 · 정예 · 주운 냥코인 · 얻은 아이템 · 준 피해 · 받은 피해 */
+export type RunStats = { t: number; kills: number; elites: number; coins: number; items: Record<string, number>; dealt: number; taken: number };
+/** 결과창 — win = 모든 웨이브 클리어, 아니면 낮잠 */
+export type Result = { win: boolean };
+/** 결과창이 뜨기까지: 클리어면 떨어진 게 다 날아온 뒤(최소 END_WIN, 길어도 END_WIN_MAX) · 낮잠이면 END_NAP 초 */
+const END_WIN = 1;
+const END_WIN_MAX = 2.5;
+const END_NAP = 1.2;
 /** 화면 기준 입력. mx, my 는 -1..1 */
 export type DungeonInput = { mx: number; my: number; punch: boolean; dash: boolean };
 
@@ -161,6 +171,10 @@ export type Dungeon = {
   choose: Card[] | null;
   /** 자동 냥펀치 (끄면 punch 입력으로만 — 기본 전투 체크용) */
   auto: boolean;
+  /** 이번 판 기록 · 결과창 (있는 동안 멈춘다) · 끝난 뒤 시간 */
+  stats: RunStats;
+  result: Result | null;
+  endT: number;
 };
 
 /** 장비·먹은 것까지 더한 최대 체력 */
@@ -244,14 +258,17 @@ export function resetDungeon(d: Dungeon, roomId = d.room.id) {
   d.events = [];
   d.run = makeRun();
   d.choose = null;
-  d.wave = d.classic ? null : { i: 0, total: WAVES.counts.length, state: 'intro', t: 0, queue: waveKinds(d.room, WAVES.counts[0] - d.enemies.length, false), marks: [], spawnT: 0 };
+  d.stats = { t: 0, kills: 0, elites: 0, coins: 0, items: {}, dealt: 0, taken: 0 };
+  d.result = null;
+  d.endT = 0;
+  d.wave = d.classic ? null : { i: 0, total: WAVES.counts.length, state: 'intro', t: 0, queue: waveKinds(d.room, WAVES.counts[0] - d.enemies.length, WAVES.elites[0] ?? 0), marks: [], spawnT: 0 };
 }
 
 /**
  * 웨이브 몬스터 n 마리: 방 spawns 순서를 되풀이 (방마다 비율 그대로), 원거리는 rangedMax 비율까지만, 섞어서.
- * 마지막 웨이브면 끝에 정예 하나 (근접 중 체력이 가장 큰 종).
+ * 정예 elites 마리를 웨이브 중간쯤에 끼운다 (근접 중 체력이 가장 큰 종 — 하나면 40%, 둘이면 35% · 75% 자리).
  */
-export function waveKinds(r: Room, n: number, last: boolean, rng: () => number = Math.random) {
+export function waveKinds(r: Room, n: number, elites: number, rng: () => number = Math.random) {
   const pool = r.def.spawns.map(([k]) => k as Kind);
   const ranged = (k: Kind) => ENEMY_DEFS[k].arrowSpeed > 0;
   const maxR = Math.floor(n * WAVES.rangedMax);
@@ -267,11 +284,15 @@ export function waveKinds(r: Room, n: number, last: boolean, rng: () => number =
     const j = Math.floor(rng() * (i + 1));
     [out[i], out[j]] = [out[j], out[i]];
   }
-  if (last) {
-    // 정예는 웨이브 중간쯤 (40%) — 안내가 뜨고 너무 늦게 나오지 않게
+  if (elites > 0) {
+    // 정예는 웨이브 중간쯤 — 안내가 뜨고 너무 늦게 나오지 않게
     const melee = pool.filter((k) => !ranged(k));
     const best = (melee.length ? melee : pool).reduce((a, b) => (ENEMY_DEFS[b].hp > ENEMY_DEFS[a].hp ? b : a));
-    out.splice(Math.floor(out.length * 0.4), 0, { kind: best, elite: true });
+    const n0 = out.length;
+    for (let j = elites - 1; j >= 0; j--) {
+      const at = elites === 1 ? 0.4 : 0.35 + (0.4 * j) / (elites - 1);
+      out.splice(Math.floor(n0 * at), 0, { kind: best, elite: true });
+    }
   }
   return out;
 }
@@ -352,7 +373,7 @@ function updateWave(d: Dungeon, dt: number) {
     W.i++;
     W.state = 'intro';
     W.t = 0;
-    W.queue = waveKinds(d.room, WAVES.counts[W.i], W.i === W.total - 1);
+    W.queue = waveKinds(d.room, WAVES.counts[W.i], WAVES.elites[W.i] ?? 0);
     d.events.push({ type: 'wave', i: W.i, clear: false });
   }
 }
@@ -367,6 +388,7 @@ export function hitPlayer(d: Dungeon, dmg: number, fx: number, fz: number) {
     return;
   }
   dmg = Math.max(1, dmg - stats(d.bag).def); // 방어만큼 덜 아프다 (최소 1)
+  d.stats.taken += Math.min(dmg, Math.max(0, P.hp));
   P.hp -= dmg;
   P.hurtT = 0.3;
   addPop(d, P.x, P.z, dmg, true, player.size);
@@ -400,10 +422,13 @@ export function hitPlayer(d: Dungeon, dmg: number, fx: number, fz: number) {
 export function strike(d: Dungeon, e: Enemy, dmg: number, fromX: number, fromZ: number, how: 'punch' | 'skill' | 'crit' | 'dot' = 'skill', push = 4) {
   if (e.state === 'pop' || dmg <= 0) return false;
   dmg = Math.round(dmg);
+  d.stats.dealt += Math.min(dmg, Math.max(0, e.hp));
   damageEnemy(e, dmg, fromX, fromZ, how === 'dot' ? 0 : push, how !== 'dot');
   if (how !== 'dot') addPop(d, e.x, e.z, dmg, false, e.def.size, how === 'punch' ? undefined : how);
   const down = (e.state as string) === 'pop'; // damageEnemy 가 바꾼다
   if (down) {
+    d.stats.kills++;
+    if (e.elite) d.stats.elites++;
     addFx(d, e.x, e.z, (d.room.def.popFx as FxId) ?? 'burst', e.elite ? 480 : 333);
     d.events.push({ type: 'pop', kind: e.kind });
     dropLoot(d, e);
@@ -462,6 +487,8 @@ function take(d: Dungeon, l: Loot) {
   const left = l.id === 'coin' ? ((d.bag.coins += l.n), 0) : obtain(d.bag, l.id, l.n);
   const got = l.n - left;
   if (got > 0) {
+    if (l.id === 'coin') d.stats.coins += got;
+    else d.stats.items[l.id] = (d.stats.items[l.id] ?? 0) + got;
     const last = d.toasts[d.toasts.length - 1];
     if (last && last.id === l.id && last.t < 0.8) last.n += got;
     else d.toasts.push({ id: l.id, n: got, t: 0 });
@@ -561,8 +588,9 @@ const onExit = (r: Room, x: number, z: number) =>
 export function updateDungeon(d: Dungeon, input: DungeonInput, dt: number): 'exit' | null {
   const P = d.P;
   d.events.length = 0;
-  if (d.choose) return null;
+  if (d.choose || d.result) return null;
   P.animT += dt;
+  if (d.phase === 'playing') d.stats.t += dt;
   P.dashCd = Math.max(0, P.dashCd - dt);
   P.invT = Math.max(0, P.invT - dt);
   P.hurtT = Math.max(0, P.hurtT - dt);
@@ -689,6 +717,18 @@ export function updateDungeon(d: Dungeon, input: DungeonInput, dt: number): 'exi
   updateLoot(d, dt);
   updateBones(d, dt);
   if (leave) for (const l of d.loot) take(d, l); // 나가면서 남은 것도 챙긴다
+  // 결과창: 모든 웨이브를 깨고 떨어진 게 다 날아오면(레벨 업 카드를 다 고른 뒤) · 낮잠이면 잠깐 뒤
+  // 이긴 판은 웨이브가 다 끝났을 때만 (웨이브 없는 시험 무대에서 몬스터가 없다고 뜨지 않게)
+  const over = (d.phase === 'cleared' && d.wave?.state === 'done') || d.phase === 'napped';
+  if (!d.classic && over && !d.result && !leave) {
+    d.endT += dt;
+    const win = d.phase === 'cleared';
+    const ready = win ? (d.endT > END_WIN && !d.loot.length && !d.bones.length && !d.run.pending) || d.endT > END_WIN_MAX : d.endT > END_NAP;
+    if (ready && !d.run.pending) {
+      d.result = { win };
+      d.events.push({ type: 'result', win });
+    }
+  }
   // 레벨이 올랐으면 카드를 띄우고 멈춘다 (낮잠이면 안 띄운다)
   if (d.run.pending > 0 && d.phase !== 'napped' && !leave) d.choose = rollCards(d.run);
   return leave ? 'exit' : null;

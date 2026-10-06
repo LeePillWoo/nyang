@@ -562,12 +562,15 @@ try {
     const d = await page.touchscreen.touchStart(c.buttons.find((b) => b.id === 'dash').x, c.buttons.find((b) => b.id === 'dash').y);
     check(await dashed, '구르기 버튼');
     await d.end();
-    // 낮잠: 쓰러지고 1초 뒤 화면을 누르면 집(필드)으로
+    // 낮잠: 잠깐 뒤 결과창(진 판) → '필드로' 버튼을 누르면 필드로
     await page.evaluate(() => (__game.dungeon.phase = 'napped'));
-    await sleep(1300);
-    await tap(page, { x: 422, y: 200 });
+    const lost = await page.waitForFunction(() => __game.dungeon.result && !__game.dungeon.result.win, { timeout: 3000 }).then(() => true, () => false);
+    check(lost, '낮잠에 빠지면 결과창 (진 판)');
+    await sleep(300);
+    await page.screenshot({ path: fsPath(new URL('dungeon-result-nap-phone.png', OUT)) });
+    await tap(page, await page.evaluate(() => __game.resultPoint('leave')));
     const home = await page.waitForFunction(() => __game.scene === 'field', { timeout: 3000 }).then(() => true, () => false);
-    check(home, '낮잠 중 화면을 누르면 집에서 깨어난다');
+    check(home, "결과창의 '필드로' 를 누르면 필드로");
     check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
     await page.close();
   }
@@ -670,6 +673,13 @@ try {
     await sleep(1500);
     const cleared = await page.evaluate(() => ({ phase: __game.dungeon.phase, loot: __game.dungeon.loot.length, coins: __game.bag.coins }));
     check(cleared.phase === 'cleared' && cleared.loot === 0 && cleared.coins > 0, `방을 깨면 남은 게 날아와 가방에 (냥코인 ${cleared.coins})`);
+    // 결과창 (이긴 판) → R 다시 도전 (이어지는 검사는 새 방에서)
+    const won = await page.waitForFunction(() => __game.dungeon.result?.win, { timeout: 4000 }).then(() => true, () => false);
+    check(won, '모든 웨이브를 깨면 결과창 (이긴 판)');
+    await page.keyboard.press('KeyR');
+    const again = await page.waitForFunction(() => !__game.dungeon.result && __game.dungeon.phase === 'playing', { timeout: 3000 }).then(() => true, () => false);
+    check(again, 'R 로 다시 도전 — 방이 처음부터');
+    await sleep(300);
 
     const ids = ['equipment_12', 'curios_01', 'curios_14'];
     await page.evaluate((ids) => {
@@ -1127,6 +1137,24 @@ try {
     check(elite, '마지막 웨이브엔 정예가 나온다');
     await sleep(600);
     await page.screenshot({ path: fsPath(new URL('dungeon-elite.png', OUT)) });
+    // 끝까지: 마지막 웨이브의 남은 것을 다 쓰러뜨리면 결과창 — 기록(쓰러뜨린 수 · 냥코인 · 준 피해 · 기술)
+    await page.evaluate(() => {
+      const d = __game.dungeon;
+      d.wave.queue = [];
+      d.wave.marks = [];
+      d.enemies.forEach((e) => (e.hp = 1));
+    });
+    const res = await page.waitForFunction(() => __game.dungeon.result?.win, { timeout: 20000 }).then(() => true, () => false);
+    const st = await page.evaluate(() => ({ ...__game.dungeon.stats, skills: Object.keys(__game.dungeon.run.skills).length }));
+    check(res && st.kills > 5 && st.dealt > 0 && st.skills > 0, `결과창: 쓰러뜨린 ${st.kills} · 준 피해 ${st.dealt} · 냥코인 ${st.coins} · 기술 ${st.skills}`);
+    await sleep(300);
+    await page.screenshot({ path: fsPath(new URL('dungeon-result.png', OUT)) });
+    const resultFrozen = await page.evaluate(async () => {
+      const x = __game.dungeon.P.x;
+      await new Promise((r) => setTimeout(r, 300));
+      return __game.dungeon.P.x === x;
+    });
+    check(resultFrozen, '결과창이 떠 있으면 멈춘다');
     const bad = await page.evaluate(() => window.__badDraw);
     check(bad === 0, `NaN 좌표로 그린 것 ${bad}번`);
     check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
@@ -1235,14 +1263,17 @@ try {
       const my = ((fx + fz) / d) * Math.SQRT1_2;
       return [...(mx > 0.35 ? ['KeyD'] : mx < -0.35 ? ['KeyA'] : []), ...(my > 0.35 ? ['KeyS'] : my < -0.35 ? ['KeyW'] : [])];
     };
-    // 실제 게임처럼 방을 비운 뒤(클리어) 걸어 나간다 — 클리어하면 못 움직이던 버그가 있었다
+    // 클리어하기 전에는 나가는 칸까지 걸어가면 나갈 수 있다 (도망) — 여기선 실제 게임처럼 다 깨고 결과창 → Enter 로 필드
     await page.evaluate(() => {
       __game.skipWaves();
       __game.dungeon.enemies = [];
     });
     await page.waitForFunction(() => __game.dungeon.phase === 'cleared', { timeout: 3000 });
-    const left = await walk(page, () => __game.cat, EXIT, dungeonKeys, () => __game.scene === 'field', 10000);
-    check(left, '방을 클리어한 뒤 나가는 칸까지 걸어가 필드로 나온다');
+    const shown = await page.waitForFunction(() => __game.dungeon.result?.win, { timeout: 4000 }).then(() => true, () => false);
+    check(shown, '방을 다 깨면 결과창');
+    await page.keyboard.press('Enter');
+    const left = await page.waitForFunction(() => __game.scene === 'field', { timeout: 3000 }).then(() => true, () => false);
+    check(left, '결과창에서 Enter 로 필드로 나온다');
     await sleep(500);
     const back = await page.evaluate(() => ({ x: __game.field.x, y: __game.field.y, armed: __game.field.armed }));
     const [bx, by] = ALLEY.back;

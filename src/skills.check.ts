@@ -185,7 +185,7 @@ const one = (id: SkillId, lvl: number, mons: [string, number, number][], secs: n
   assert.ok(lost(d.enemies[0]) === 22, `태엽 쥐: 달려가 펑 (${lost(d.enemies[0])})`);
 }
 
-// 5) 웨이브: 웨이브 1 = 방 몬스터 + 가장자리에서 더 → 다 쓰러뜨리면 쉬고 웨이브 2 → … → 마지막엔 정예 → 방 클리어
+// 5) 웨이브: 웨이브 1 = 방 몬스터 + 가장자리에서 더 → 다 쓰러뜨리면 쉬고 웨이브 2 → … (4번째에 정예 하나, 마지막에 둘) → 방 클리어 → 결과창
 {
   const d = makeDungeon(sheets, 'alley');
   const W = d.wave!;
@@ -197,7 +197,8 @@ const one = (id: SkillId, lvl: number, mons: [string, number, number][], secs: n
   };
   const waves: number[] = [];
   let elite: Enemy | null = null;
-  for (let t = 0; t < 120 && d.phase === 'playing'; t += DT) {
+  const elitesAt: number[] = [];
+  for (let t = 0; t < 240 && d.phase === 'playing'; t += DT) {
     const before = d.enemies.length;
     d.P.invT = 1; // 웨이브 흐름만 본다 — 고양이는 안 맞는다
     updateDungeon(d, still, DT);
@@ -206,7 +207,10 @@ const one = (id: SkillId, lvl: number, mons: [string, number, number][], secs: n
     for (const e of d.enemies.slice(before)) {
       seen++;
       assert.ok(Math.hypot(e.x - d.P.x, e.z - d.P.z) >= WAVES.minDist - 0.6, '고양이 가까이에선 안 나온다');
-      if (e.elite) elite = e;
+      if (e.elite) {
+        elite = e;
+        elitesAt.push(W.i);
+      }
     }
     maxAlive = Math.max(maxAlive, d.enemies.filter((e) => e.state !== 'pop').length + W.marks.length);
     for (const ev of d.events) if (ev.type === 'wave' && !ev.clear) waves.push(ev.i);
@@ -216,22 +220,57 @@ const one = (id: SkillId, lvl: number, mons: [string, number, number][], secs: n
   }
   assert.equal(d.phase, 'cleared', '마지막 웨이브를 깨면 방 클리어');
   assert.deepEqual(waves, WAVES.counts.slice(1).map((_, i) => i + 1), '웨이브 2 부터 안내');
-  assert.equal(seen, WAVES.counts.reduce((a, b) => a + b) + 1, `몬스터 수 (정예 포함) ${seen}`);
+  const nElites = WAVES.elites.reduce((a, b) => a + b, 0);
+  assert.equal(seen, WAVES.counts.reduce((a, b) => a + b) + nElites, `몬스터 수 (정예 ${nElites} 포함) ${seen}`);
+  assert.deepEqual(elitesAt, WAVES.elites.flatMap((n, i) => Array(n).fill(i)), `정예가 나오는 웨이브 ${elitesAt.map((i) => i + 1).join(',')}`);
   assert.ok(maxAlive <= WAVES.maxAlive, `한꺼번에 ${maxAlive} ≤ ${WAVES.maxAlive}`);
   const lastK = WAVES.hp[WAVES.counts.length - 1];
-  assert.ok(elite && elite.def.hp === Math.round(Math.round(ENEMY_DEFS[elite.kind].hp * lastK) * WAVES.elite.hp), '정예는 마지막 웨이브 배율 × 정예 배율');
-  // 원거리 비율 · 정예는 근접 중 가장 튼튼한 종
+  assert.ok(elite && elite.def.hp === Math.round(Math.round(ENEMY_DEFS[elite.kind].hp * lastK) * WAVES.elite.hp), '정예는 그 웨이브 배율 × 정예 배율');
+  // 결과창: 떨어진 게 다 날아온 뒤 뜨고, 뜨면 멈춘다. 기록은 쓰러뜨린 수 · 정예
+  for (let t = 0; t < 4 && !d.result; t += DT) {
+    updateDungeon(d, still, DT);
+    if (d.choose) pick(d, 0);
+  }
+  assert.ok(d.result?.win && d.loot.length === 0 && d.bones.length === 0, '모든 웨이브를 깨면 결과창 (떨어진 게 다 날아온 뒤)');
+  assert.equal(d.stats.kills, seen, `결과: 쓰러뜨린 수 ${d.stats.kills}`);
+  assert.equal(d.stats.elites, nElites, '결과: 정예');
+  assert.ok(d.stats.dealt > 0 && d.stats.t > 10, '결과: 준 피해 · 시간');
+  const x0 = d.P.x;
+  updateDungeon(d, { ...still, mx: 1 }, 0.5);
+  assert.equal(d.P.x, x0, '결과창이 떠 있으면 멈춘다');
+  // 원거리 비율 · 정예는 근접 중 가장 튼튼한 종, 웨이브 중간쯤 (둘이면 35% · 75%)
   for (const id of Object.keys(ROOMS)) {
-    const ks = waveKinds(room(id), 14, true, seeded(3));
+    const ks = waveKinds(room(id), 14, 2, seeded(3));
     const nr = ks.filter((k) => !k.elite && ENEMY_DEFS[k.kind].arrowSpeed > 0).length;
     assert.ok(nr <= Math.floor(14 * WAVES.rangedMax), `${id}: 원거리 ${nr}`);
-    const el = ks.filter((k) => k.elite);
-    assert.ok(el.length === 1 && ENEMY_DEFS[el[0].kind].arrowSpeed === 0 && ks.indexOf(el[0]) < ks.length * 0.6, `${id}: 정예 하나 · 근접 · 웨이브 중간쯤`);
+    const el = ks.map((k, i) => (k.elite ? i : -1)).filter((i) => i >= 0);
+    assert.ok(el.length === 2 && el.every((i) => ENEMY_DEFS[ks[i].kind].arrowSpeed === 0 && i > 2 && i < ks.length - 2), `${id}: 정예 둘 · 근접 · 웨이브 중간 (${el})`);
   }
 }
 
+// 5-1) 결과창 기록: 주운 냥코인 · 아이템 · 받은 피해. 낮잠이면 1.2초 뒤 결과창(진 판)
+{
+  const d = makeDungeon(sheets, 'alley', { ...makeBag(), equip: {} });
+  d.wave = null; // 웨이브 없이 기록만
+  d.loot.push({ id: 'coin', n: 9, x: d.P.x, z: d.P.z, h: 0, vh: 0, vx: 0, vz: 0, t: 1 }, { id: 'materials_05', n: 2, x: d.P.x, z: d.P.z, h: 0, vh: 0, vx: 0, vz: 0, t: 1 });
+  run(d, 0.2);
+  assert.ok(d.stats.coins === 9 && d.stats.items.materials_05 === 2, `줍기 기록 (냥코인 ${d.stats.coins})`);
+  d.enemies = [];
+  hitPlayer(d, 15, d.P.x + 1, d.P.z);
+  assert.equal(d.stats.taken, 15, '받은 피해');
+  for (let i = 0; i < 9; i++) {
+    d.P.invT = 0;
+    hitPlayer(d, 999, d.P.x + 1, d.P.z);
+  }
+  assert.equal(d.phase, 'napped');
+  run(d, 1);
+  assert.equal(d.result, null, '낮잠 바로는 아직');
+  run(d, 0.4);
+  assert.ok(d.result && !d.result.win, '낮잠 1.2초 뒤 결과창 (진 판)');
+}
+
 // 6) 밸런스: 대충 하는 자동 플레이어 (가까운 적을 때리고, 붙으면 물러나고, 아프면 구르고, 카드는 아무거나)로 방 13개 × 3판.
-//    너무 쉽거나(1분 안) 너무 길거나(4분 넘게) 너무 자주 낮잠이면 웨이브 수·몬스터 수·배율을 다시 본다
+//    너무 쉽거나(1분 40초 안) 너무 길거나(6분 40초 넘게) 너무 자주 낮잠이면 웨이브 수·몬스터 수·배율을 다시 본다
 {
   const bot = (id: string, seed: number) => {
     const rng = seeded(seed);
@@ -240,7 +279,7 @@ const one = (id: SkillId, lvl: number, mons: [string, number, number][], secs: n
     const d = makeDungeon(sheets, id);
     let t = 0;
     let picks = 0;
-    for (; t < 300 && d.phase === 'playing'; t += DT) {
+    for (; t < 600 && d.phase === 'playing'; t += DT) {
       if (d.choose) {
         pick(d, Math.floor(rng() * d.choose.length));
         picks++;
@@ -292,7 +331,7 @@ const one = (id: SkillId, lvl: number, mons: [string, number, number][], secs: n
   }
   const avg = times.reduce((a, b) => a + b, 0) / Math.max(1, times.length);
   console.log(`    평균 ${avg.toFixed(0)}초 · 낮잠 ${naps}/${games}`);
-  assert.ok(avg > 50 && avg < 240, `한 방 평균 ${avg.toFixed(0)}초`);
+  assert.ok(avg > 100 && avg < 400, `한 방 평균 ${avg.toFixed(0)}초`);
   assert.ok(naps <= games * 0.35, `낮잠 ${naps}/${games}`);
 }
 

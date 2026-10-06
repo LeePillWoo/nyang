@@ -62,7 +62,51 @@ export function darkOf(img: HTMLImageElement | HTMLCanvasElement): HTMLCanvasEle
   return c;
 }
 /** 냥코인 (그림이 없어 그린다) */
-export function drawCoin(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number) {
+const COIN = image('ui/paw_coin');
+/** 냥코인 그림 (발바닥 금화 — tools/assets.mjs 가 샌드보드 시트에서 잘라 둔다) */
+export const coinReady = COIN.ready;
+/**
+ * 냥코인: 발바닥 금화 (r = 반지름). t 를 주면 별 두 개가 번갈아 반짝, spin(0..1) 이면 빙글 도는 것처럼 가로로 눌린다.
+ * 그림을 아직 못 불러왔으면 그린 동전
+ */
+export function drawCoin(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number, t?: number, spin = 1) {
+  const im = COIN.img;
+  if (im.complete && im.naturalWidth) {
+    const h = r * 2.15;
+    const w = (h * im.naturalWidth) / im.naturalHeight;
+    ctx.drawImage(im, cx - (w * spin) / 2, cy - h / 2, w * spin, h);
+  } else plainCoin(ctx, cx, cy, r);
+  if (t !== undefined) twinkle(ctx, cx, cy, r, t);
+}
+/** 4갈래 별 두 개가 번갈아 반짝 (동전마다 박자가 다르게) */
+function twinkle(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number, t: number) {
+  const star = (x: number, y: number, k: number) => {
+    if (k <= 0.02) return;
+    const L = r * 0.62 * k;
+    const w = L * 0.22;
+    ctx.beginPath();
+    ctx.moveTo(x, y - L);
+    ctx.lineTo(x + w, y - w);
+    ctx.lineTo(x + L, y);
+    ctx.lineTo(x + w, y + w);
+    ctx.lineTo(x, y + L);
+    ctx.lineTo(x - w, y + w);
+    ctx.lineTo(x - L, y);
+    ctx.lineTo(x - w, y - w);
+    ctx.closePath();
+    ctx.fill();
+  };
+  const blink = (p: number) => (p < 0.32 ? Math.sin((p / 0.32) * Math.PI) : 0);
+  const ph = (((t * 1.25 + cx * 0.0131 + cy * 0.007) % 1) + 1) % 1;
+  ctx.save();
+  ctx.fillStyle = 'rgba(255, 255, 238, 0.95)';
+  ctx.shadowColor = 'rgba(255, 230, 140, 0.9)';
+  ctx.shadowBlur = r * 0.4;
+  star(cx - r * 0.42, cy - r * 0.56, blink(ph));
+  star(cx + r * 0.62, cy + r * 0.1, blink((ph + 0.5) % 1) * 0.75);
+  ctx.restore();
+}
+function plainCoin(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number) {
   ctx.save();
   ctx.fillStyle = '#e8a92e';
   ctx.beginPath();

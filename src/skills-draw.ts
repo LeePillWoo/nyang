@@ -3,7 +3,7 @@
 // 효과는 2배(물체·투사체·타격), 범위 효과는 실제 범위 그대로 + 진하게 + 테두리. 원거리는 잔상·그림자·떨어질 자리, 이어지는 공격은 실·조준선·레이저 빔으로.
 // 좌표는 던전 그림 px (dungeon-draw.ts 가 방 배경과 같은 변환을 걸어 둔 상태). 로직은 skills.ts · dungeon.ts.
 import { image } from './assets.ts';
-import { drawIcon } from './bag-draw.ts';
+import { drawCoin, drawIcon } from './bag-draw.ts';
 import fxData from './data/skill-fx.json' with { type: 'json' };
 import { PLAYER, WAVES, type Dungeon } from './dungeon.ts';
 import type { Enemy } from './enemy.ts';
@@ -506,21 +506,57 @@ function eliteTag(ctx: CanvasRenderingContext2D, e: Enemy, sx: number, sy: numbe
 // ── HUD (dungeon-draw.ts 의 HUD 좌표 — 배율·노치 반영된 단위) ──
 
 /** 체력 판 안: 레벨 + 경험치 막대 (x 14..250, y 80..100) */
-export function drawXpBar(ctx: CanvasRenderingContext2D, d: Dungeon) {
+let xpSeen = -1;
+let xpFlash = 0;
+let xpClock = 0;
+export function drawXpBar(ctx: CanvasRenderingContext2D, d: Dungeon, t: number) {
   const run = d.run;
-  ctx.font = 'bold 14px system-ui, sans-serif';
-  ctx.fillStyle = '#5b4a3f';
+  const now = run.level * 10000 + run.xp;
+  if (xpSeen >= 0 && now !== xpSeen) xpFlash = 0.45; // 생선뼈를 먹으면 번쩍
+  xpSeen = now;
+  xpFlash = Math.max(0, xpFlash - Math.max(0, Math.min(0.1, t - xpClock)));
+  xpClock = t;
+  const n = need(run.level);
+  const x = 66;
+  const y = 86;
+  const w = 172;
+  const h = 18;
   ctx.textAlign = 'left';
-  ctx.fillText(`Lv ${run.level}`, 22, 101);
-  ctx.fillStyle = '#e4d6c4';
+  ctx.font = 'bold 15px system-ui, sans-serif';
+  ctx.fillStyle = '#5b4a3f';
+  ctx.fillText(`Lv ${run.level}`, 20, y + 15);
+  ctx.fillStyle = 'rgba(90, 64, 46, 0.22)';
   ctx.beginPath();
-  ctx.roundRect(70, 90, 166, 12, 6);
+  ctx.roundRect(x, y, w, h, h / 2);
   ctx.fill();
-  ctx.fillStyle = '#f5c35a';
+  const g = ctx.createLinearGradient(x, 0, x + w, 0);
+  g.addColorStop(0, '#ffdd63');
+  g.addColorStop(1, '#ff9a3c');
+  ctx.fillStyle = g;
   ctx.beginPath();
-  ctx.roundRect(70, 90, Math.max(12, (166 * run.xp) / need(run.level)), 12, 6);
+  ctx.roundRect(x, y, Math.max(h, (w * run.xp) / n), h, h / 2);
   ctx.fill();
-  drawAnim(ctx, 'xp_fishbone', 0, 70, 96, 22);
+  if (xpFlash > 0) {
+    ctx.fillStyle = `rgba(255, 255, 255, ${xpFlash * 1.6})`;
+    ctx.beginPath();
+    ctx.roundRect(x, y, w, h, h / 2);
+    ctx.fill();
+  }
+  ctx.strokeStyle = 'rgba(120, 80, 50, 0.6)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.roundRect(x, y, w, h, h / 2);
+  ctx.stroke();
+  drawAnim(ctx, 'xp_fishbone', 0, x + 12, y + h / 2, 24);
+  ctx.font = 'bold 12px system-ui, sans-serif';
+  ctx.textAlign = 'right';
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = 'rgba(80, 52, 36, 0.85)';
+  ctx.strokeText(`${run.xp} / ${n}`, x + w - 8, y + 13);
+  ctx.fillStyle = '#fffaf0';
+  ctx.fillText(`${run.xp} / ${n}`, x + w - 8, y + 13);
+  ctx.textAlign = 'left';
 }
 
 /** 오른쪽 위: 가진 기술 (아이콘 + 레벨 점) — 오른쪽 끝 x = right, 위 y = top */
@@ -587,12 +623,14 @@ export function drawWaveHud(ctx: CanvasRenderingContext2D, d: Dungeon, W: number
     ctx.strokeText(big, W / 2, H * 0.32);
     ctx.fillStyle = w.state === 'break' ? '#a8e07a' : w.i === w.total - 1 ? '#ffb35a' : '#ffd84a';
     ctx.fillText(big, W / 2, H * 0.32);
-    if (w.state === 'intro' && w.i === w.total - 1) {
+    const elites = WAVES.elites[w.i] ?? 0;
+    if (w.state === 'intro' && elites > 0) {
+      const say = elites > 1 ? `👑 정예가 ${elites}마리 나타나요` : '👑 정예가 나타나요';
       ctx.font = 'bold 20px system-ui, sans-serif';
       ctx.lineWidth = 6;
-      ctx.strokeText('👑 정예가 나타나요', W / 2, H * 0.32 + 38);
+      ctx.strokeText(say, W / 2, H * 0.32 + 38);
       ctx.fillStyle = '#ffd34d';
-      ctx.fillText('👑 정예가 나타나요', W / 2, H * 0.32 + 38);
+      ctx.fillText(say, W / 2, H * 0.32 + 38);
     }
     ctx.restore();
   }
@@ -757,4 +795,194 @@ function drawCard(ctx: CanvasRenderingContext2D, r: R, c: Card, i: number, on: b
   }
   ctx.restore();
   void d;
+}
+
+// ── 결과창 (CSS px — 화면 전체): 모든 웨이브를 깼거나 낮잠에 빠지면. 560×480 으로 그리고 화면에 맞춰 줄인다 ──
+
+const RES = { w: 560 };
+export type ResultButton = 'retry' | 'leave';
+/** 결과창 자리와 배율 · 버튼 (디자인 좌표). 높이는 배운 기술 줄 수(8개씩)에 맞춘다 */
+function resultLayout(w: number, h: number, skills: number) {
+  const rows = Math.max(1, Math.ceil(skills / 8));
+  const by = 316 + (rows - 1) * 50 + 56;
+  const ch = by + 46 + 20;
+  const s = Math.min(1, (w - 24) / RES.w, (h - 24) / ch);
+  const x = w / 2 - (RES.w * s) / 2;
+  const y = h / 2 - (ch * s) / 2;
+  const buttons: Record<ResultButton, R> = {
+    retry: { x: 24, y: by, w: 248, h: 46 },
+    leave: { x: 288, y: by, w: 248, h: 46 },
+  };
+  return { s, x, y, h: ch, buttons };
+}
+/** 화면 (x, y) 가 결과창의 어느 버튼인가 (skills = 배운 기술 수) */
+export function resultButtonAt(w: number, h: number, px: number, py: number, skills: number): ResultButton | null {
+  const L = resultLayout(w, h, skills);
+  const x = (px - L.x) / L.s;
+  const y = (py - L.y) / L.s;
+  for (const [id, r] of Object.entries(L.buttons) as [ResultButton, R][]) if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) return id;
+  return null;
+}
+/** 버튼 가운데 (화면 CSS px — 검증용) */
+export function resultPoint(w: number, h: number, id: ResultButton, skills: number) {
+  const L = resultLayout(w, h, skills);
+  const r = L.buttons[id];
+  return { x: L.x + (r.x + r.w / 2) * L.s, y: L.y + (r.y + r.h / 2) * L.s };
+}
+const mmss = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+
+/** 결과창: 제목 · 기록 6칸 · 얻은 것 · 배운 기술 · 다시 도전 / 필드로. hover = 마우스가 올라간 버튼 */
+export function drawResult(ctx: CanvasRenderingContext2D, cw: number, ch: number, d: Dungeon, hover: ResultButton | null, t: number, touch: boolean, roomName: string) {
+  const res = d.result;
+  if (!res) return;
+  const dpr = Math.min(devicePixelRatio, 2);
+  const W = cw / dpr;
+  const H = ch / dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = 'rgba(40, 28, 22, 0.55)';
+  ctx.fillRect(0, 0, W, H);
+  const L = resultLayout(W, H, Object.keys(d.run.skills).length);
+  ctx.save();
+  ctx.translate(L.x, L.y);
+  ctx.scale(L.s, L.s);
+  const win = res.win;
+  const st = d.stats;
+  const wave = d.wave;
+  // 판
+  ctx.shadowColor = 'rgba(40, 25, 15, 0.4)';
+  ctx.shadowBlur = 24;
+  ctx.fillStyle = '#fffaf0';
+  ctx.beginPath();
+  ctx.roundRect(0, 0, RES.w, L.h, 26);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  // 띠: 이기면 금빛, 낮잠이면 보랏빛
+  const band = ctx.createLinearGradient(0, 0, RES.w, 0);
+  band.addColorStop(0, win ? '#ffd45e' : '#b9a3d6');
+  band.addColorStop(1, win ? '#ffa93b' : '#8f7fb8');
+  ctx.fillStyle = band;
+  ctx.beginPath();
+  ctx.roundRect(0, 0, RES.w, 92, [26, 26, 0, 0]);
+  ctx.fill();
+  ctx.textAlign = 'center';
+  ctx.lineJoin = 'round';
+  ctx.font = 'bold 36px system-ui, sans-serif';
+  ctx.lineWidth = 8;
+  ctx.strokeStyle = 'rgba(90, 55, 30, 0.75)';
+  const title = win ? '🎉 던전 클리어!' : '💤 낮잠에 빠졌어요';
+  ctx.strokeText(title, RES.w / 2, 50);
+  ctx.fillStyle = '#ffffff';
+  ctx.fillText(title, RES.w / 2, 50);
+  ctx.font = 'bold 16px system-ui, sans-serif';
+  ctx.fillStyle = 'rgba(70, 45, 30, 0.9)';
+  const sub = wave ? (win ? `${roomName} · 웨이브 ${wave.total}/${wave.total} 모두 버텼어요` : `${roomName} · 웨이브 ${wave.i + 1}/${wave.total} 에서 쓰러졌어요`) : roomName;
+  fitText(ctx, sub, RES.w / 2, 78, RES.w - 40, 16, 'bold ');
+  // 기록 6칸
+  const tiles: [string, string, string][] = [
+    ['⏰', '싸운 시간', mmss(st.t)],
+    ['🐾', '쓰러뜨린 몬스터', st.elites ? `${st.kills} (👑${st.elites})` : `${st.kills}`],
+    ['⭐', '레벨', `Lv ${d.run.level}`],
+    ['💥', '준 피해', st.dealt.toLocaleString()],
+    ['💔', '받은 피해', st.taken.toLocaleString()],
+    ['', '냥코인', `+${st.coins}`],
+  ];
+  tiles.forEach(([icon, label, value], i) => {
+    const x = 24 + (i % 3) * 174;
+    const y = 106 + Math.floor(i / 3) * 62;
+    ctx.fillStyle = 'rgba(240, 226, 204, 0.75)';
+    ctx.beginPath();
+    ctx.roundRect(x, y, 164, 54, 14);
+    ctx.fill();
+    ctx.textAlign = 'left';
+    if (icon) {
+      ctx.font = '22px system-ui, sans-serif';
+      ctx.fillText(icon, x + 10, y + 36);
+    } else drawCoin(ctx, x + 23, y + 27, 14, t);
+    ctx.fillStyle = '#9a7b62';
+    ctx.font = '12px system-ui, sans-serif';
+    ctx.fillText(label, x + 42, y + 21);
+    ctx.fillStyle = i === 5 ? '#c98a1c' : '#5b4a3f';
+    fitText(ctx, value, x + 42, y + 44, 116, 20, 'bold ');
+  });
+  // 얻은 것 (아이템)
+  const row = (y: number, label: string) => {
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#9a7b62';
+    ctx.font = 'bold 13px system-ui, sans-serif';
+    ctx.fillText(label, 24, y);
+  };
+  row(250, '얻은 것');
+  const items = Object.entries(st.items);
+  if (!items.length) {
+    ctx.fillStyle = '#b8a48f';
+    ctx.font = '14px system-ui, sans-serif';
+    ctx.fillText('없음', 100, 274);
+  }
+  items.slice(0, 9).forEach(([id, n], i) => {
+    const cx = 120 + i * 48;
+    drawIcon(ctx, id, cx, 268, 40);
+    if (n > 1) {
+      ctx.font = 'bold 12px system-ui, sans-serif';
+      ctx.textAlign = 'right';
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = 'rgba(80, 52, 36, 0.85)';
+      ctx.strokeText(`${n}`, cx + 20, 288);
+      ctx.fillStyle = '#fff';
+      ctx.fillText(`${n}`, cx + 20, 288);
+    }
+  });
+  if (items.length > 9) {
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#9a7b62';
+    ctx.font = 'bold 13px system-ui, sans-serif';
+    ctx.fillText(`+${items.length - 9}`, 120 + 9 * 48 - 16, 274);
+  }
+  // 배운 기술 (아이콘 + 레벨 점)
+  row(318, '배운 기술');
+  const skills = Object.entries(d.run.skills) as [SkillId, number][];
+  if (!skills.length) {
+    ctx.fillStyle = '#b8a48f';
+    ctx.font = '14px system-ui, sans-serif';
+    ctx.fillText('없음', 100, 318);
+  }
+  skills.forEach(([id, n], i) => {
+    const cx = 120 + (i % 8) * 54;
+    const cy = 316 + Math.floor(i / 8) * 50;
+    const fam = FAMILIES[SKILLS[id].family];
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
+    ctx.strokeStyle = fam.color;
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.roundRect(cx - 19, cy - 19, 38, 38, 9);
+    ctx.fill();
+    ctx.stroke();
+    drawAnim(ctx, SKILLS[id].anim, iconFrame(SKILLS[id].anim, t), cx, cy, 30);
+    for (let k = 0; k < MAX_LV; k++) {
+      ctx.fillStyle = k < n ? fam.color : 'rgba(120, 85, 55, 0.25)';
+      ctx.beginPath();
+      ctx.arc(cx - 12 + k * 6, cy + 24, 2.3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  });
+  // 버튼
+  const btn = (id: ResultButton, text: string, main: boolean) => {
+    const r = L.buttons[id];
+    const on = hover === id;
+    ctx.fillStyle = main ? (on ? '#f08a3c' : '#f5a05a') : on ? '#ffffff' : 'rgba(255, 250, 240, 0.95)';
+    ctx.beginPath();
+    ctx.roundRect(r.x, r.y, r.w, r.h, r.h / 2);
+    ctx.fill();
+    if (!main) {
+      ctx.strokeStyle = 'rgba(120, 85, 55, 0.4)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+    ctx.textAlign = 'center';
+    ctx.fillStyle = main ? '#fff' : '#5b4a3f';
+    fitText(ctx, text, r.x + r.w / 2, r.y + 30, r.w - 20, 18, 'bold ');
+  };
+  btn('retry', touch ? '다시 도전' : '다시 도전 (R)', false);
+  btn('leave', touch ? '필드로' : '필드로 (Enter)', true);
+  ctx.restore();
+  ctx.textAlign = 'left';
 }

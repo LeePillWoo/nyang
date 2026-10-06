@@ -170,8 +170,24 @@ export function drawDungeon(ctx: CanvasRenderingContext2D, cw: number, ch: numbe
       go: () => {
         const bob = l.h > 0 ? 0 : Math.sin(v.t * 3 + l.x) * 3;
         const y = sy - 20 - l.h * 70 + bob;
-        blob(ctx, sx, sy, l.id === 'coin' ? 14 : 20);
-        if (l.id === 'coin') return drawCoin(ctx, sx, y, 17);
+        blob(ctx, sx, sy, l.id === 'coin' ? 20 : 20);
+        if (l.id === 'coin') {
+          // 냥코인: 빛 무리 위에서 빙글빙글 · 반짝 — 많이 떨어졌으면 여러 닢이 겹쳐 쌓인다
+          const R = 26;
+          const glow = ctx.createRadialGradient(sx, y, 0, sx, y, R * 2);
+          glow.addColorStop(0, `rgba(255, 226, 120, ${0.45 + 0.15 * Math.sin(v.t * 5 + l.x)})`);
+          glow.addColorStop(1, 'rgba(255, 226, 120, 0)');
+          ctx.fillStyle = glow;
+          ctx.beginPath();
+          ctx.arc(sx, y, R * 2, 0, Math.PI * 2);
+          ctx.fill();
+          const extra = l.n >= 12 ? 2 : l.n >= 5 ? 1 : 0;
+          for (let i = extra; i >= 0; i--) {
+            const spin = 0.45 + 0.55 * Math.abs(Math.cos(v.t * 2.6 + l.x * 3 + i * 1.3));
+            drawCoin(ctx, sx + (i % 2 ? 1 : -1) * i * R * 0.55, y + i * R * 0.3, R, i ? undefined : v.t, spin);
+          }
+          return;
+        }
         const rare = ITEMS[l.id]?.rare ?? 1;
         if (rare >= 3) {
           ctx.fillStyle = RARE[rare].color + '55';
@@ -336,7 +352,7 @@ function drawHud(ctx: CanvasRenderingContext2D, cw: number, ch: number, d: Dunge
     ctx.fillText('\u{1F43E}', 60 + i * 27, 78);
   }
   ctx.globalAlpha = 1;
-  if (!d.classic) drawXpBar(ctx, d);
+  if (!d.classic) drawXpBar(ctx, d, v.t);
 
   // 먹은 것 효과 (가방 버튼 밑): 아이콘 + 남은 초
   let y = d.classic ? 146 : 172;
@@ -402,9 +418,11 @@ function drawHud(ctx: CanvasRenderingContext2D, cw: number, ch: number, d: Dunge
     ctx.textAlign = 'center';
     ctx.font = 'bold 46px system-ui, sans-serif';
     ctx.fillStyle = 'rgba(70,52,42,0.85)';
-    ctx.fillText(d.phase === 'cleared' ? '방 클리어!' : '낮잠…', W / 2, H / 2 - 8);
-    ctx.font = '20px system-ui, sans-serif';
-    ctx.fillText(d.phase === 'cleared' ? '노란 매트로 나가기' : v.touch ? '화면을 눌러 집에서 깨어나기' : 'R 키로 집에서 깨어나기', W / 2, H / 2 + 30);
+    if (!d.result) ctx.fillText(d.phase === 'cleared' ? '방 클리어!' : '낮잠…', W / 2, H / 2 - 8);
+    if (d.classic && d.phase === 'cleared') {
+      ctx.font = '20px system-ui, sans-serif';
+      ctx.fillText('노란 매트로 나가기', W / 2, H / 2 + 30);
+    }
     ctx.textAlign = 'left';
   }
   ctx.restore();
