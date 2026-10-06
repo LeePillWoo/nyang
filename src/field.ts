@@ -73,13 +73,22 @@ export type Whale = {
   hold: number;
   /** 그림자 진하기 0..1 */
   alpha: number;
-  /** 그림자가 맴도는 각도 */
-  ang: number;
   /** 다시 나올 수 있을 때까지 (초) */
   cool: number;
-  /** 그림자가 맴도는 가운데 · 고래가 솟는 자리 (배가 있던 곳) */
+  /** 고래가 솟는 자리 (배가 있던 곳) */
   x: number;
   y: number;
+  /** 그림자 — 낚시 물고기처럼 배 둘레의 목표(tx, ty)로 부드럽게 헤엄친다: 자리 · 속도 · 바라보는 쪽 · 다음 목표까지 · 꼬리 흔들기 시계 */
+  sx: number;
+  sy: number;
+  vx: number;
+  vy: number;
+  hx: number;
+  hy: number;
+  tx: number;
+  ty: number;
+  retarget: number;
+  anim: number;
 };
 
 const EDGE = 24; // 그림 가장자리 여백
@@ -155,7 +164,7 @@ export function makeFieldState([x, y]: number[], terrainAt0: TerrainAt = everywh
     warp: null,
     dwell: 0,
     armed: !warpAt(x, y),
-    whale: { phase: 'none', still: 0, t: 0, hold: 0, alpha: 0, ang: 0, cool: 0, x, y },
+    whale: { phase: 'none', still: 0, t: 0, hold: 0, alpha: 0, cool: 0, x, y, sx: x, sy: y, vx: 0, vy: 0, hx: 1, hy: 0, tx: x, ty: y, retarget: 0, anim: 0 },
   };
 }
 
@@ -206,8 +215,8 @@ function waterPast(s: FieldState, ux: number, uy: number, at: TerrainAt) {
 /** 배가 다리 위를 지나는 중인가 (그때만 배가 땅 위에 있어도 된다) */
 export const bridging = (s: FieldState, at: TerrainAt) => s.mode === 'boat' && at(s.x, s.y) === BRIDGE;
 
-/** 고래가 사는 바다: whale.sea 조각 안의 물이고, 둘레 room×catBody 도 다 물이다 (강·호수·물가엔 안 나온다) */
-export function deepSea(x: number, y: number, at: TerrainAt) {
+/** 고래가 나오는 바다: whale.sea 조각 안의 물이고, 둘레 room×catBody 도 다 물이다 (앞바다는 되고, 강·호수·물가 바로 옆은 안 된다) */
+export function whaleSea(x: number, y: number, at: TerrainAt) {
   const c = Math.floor((x * data.grid[0]) / data.size[0]);
   const r = Math.floor((y * data.grid[1]) / data.size[1]);
   if (!WHALE.sea.some(([sr, sc]) => sr === r && sc === c) || at(x, y) !== WATER) return false;
@@ -219,6 +228,46 @@ export function deepSea(x: number, y: number, at: TerrainAt) {
   return true;
 }
 
+/** 그림자가 물 위에만 오게 — 몸이 들어갈 타원(머리·꼬리 끝까지, 양옆 · 대각선)이 다 물인 곳 (선착장 널빤지·물가에 걸치지 않게) */
+function shadowWet(x: number, y: number, at: TerrainAt) {
+  const L = WHALE.shadow * data.catBody * 0.55;
+  const W = L * 0.45 * data.vertical;
+  for (let i = 0; i < 8; i++) {
+    const a = (i * Math.PI) / 4;
+    if (at(x + Math.cos(a) * L, y + Math.sin(a) * W) !== WATER) return false;
+  }
+  return at(x, y) === WATER;
+}
+/** 배 둘레 r0..r1 (catBody 배) 안에서 그림자가 다 물 위에 오는 한 점 — from 에서 가는 길(가운데)도 물. 못 찾으면 null */
+function aroundBoat(s: FieldState, r0: number, r1: number, at: TerrainAt, rng: () => number, from?: { x: number; y: number }): [number, number] | null {
+  for (let i = 0; i < 24; i++) {
+    const a = rng() * Math.PI * 2;
+    const r = (r0 + rng() * (r1 - r0)) * data.catBody;
+    const x = s.x + Math.cos(a) * r;
+    const y = s.y + Math.sin(a) * r * data.vertical;
+    if (shadowWet(x, y, at) && (!from || shadowWet((x + from.x) / 2, (y + from.y) / 2, at))) return [x, y];
+  }
+  return null;
+}
+/** 낚시 물고기처럼 목표로 부드럽게 헤엄친다 (가까우면 천천히, 바라보는 쪽은 속도를 따라). grip 이 크면 방향을 빨리 튼다 */
+function swim(w: Whale, tx: number, ty: number, speed: number, dt: number, grip = 2.5) {
+  const dx = tx - w.sx;
+  const dy = ty - w.sy;
+  const d = Math.hypot(dx, dy) || 1;
+  const want = Math.min(speed, d * 2.5);
+  const k = 1 - Math.exp(-grip * dt);
+  w.vx += ((dx / d) * want - w.vx) * k;
+  w.vy += ((dy / d) * want - w.vy) * k;
+  w.sx += w.vx * dt;
+  w.sy += w.vy * dt;
+  const v = Math.hypot(w.vx, w.vy);
+  if (v > 3) {
+    w.hx = w.vx / v;
+    w.hy = w.vy / v;
+  }
+  w.anim += dt * (0.5 + Math.min(1.5, v / (WHALE.swim * data.catBody))); // 빨리 헤엄칠수록 꼬리를 빨리
+}
+
 /** 고래 한 프레임. 솟구치는 동안 · 뱉어 내다 배가 물에 떨어지기 전까지는 true (조작을 받지 않는다) */
 function stepWhale(s: FieldState, input: boolean, dt: number, at: TerrainAt, rng: () => number): boolean {
   const w = s.whale;
@@ -226,7 +275,9 @@ function stepWhale(s: FieldState, input: boolean, dt: number, at: TerrainAt, rng
   const was = w.t;
   w.t += dt;
   const passed = (k: number) => was < k && w.t >= k;
+  const C = data.catBody;
   if (w.phase === 'rise') {
+    if (w.t < RISE.dash) swim(w, w.x, w.y, WHALE.swim * 6 * C, dt, 9); // 배 밑으로 돌진
     if (passed(RISE.dash)) emit('breach');
     if (passed(RISE.gulp)) emit('gulp');
     if (w.t >= RISE.end) {
@@ -244,24 +295,39 @@ function stepWhale(s: FieldState, input: boolean, dt: number, at: TerrainAt, rng
     return w.t < SPIT.land;
   }
   if (w.cool > 0) w.cool = Math.max(0, w.cool - dt);
-  const sea = s.mode === 'boat' && deepSea(s.x, s.y, at);
+  const sea = s.mode === 'boat' && whaleSea(s.x, s.y, at);
   w.still = sea && !input ? w.still + dt : 0;
-  w.ang += WHALE.spin * dt * (w.phase === 'leave' ? 0.6 : 1);
   if (w.phase === 'none') {
     if (w.still >= WHALE.still && w.cool <= 0) {
+      // 조금 떨어진 물에서 나타나 배 쪽으로 헤엄쳐 온다
       const [h0, h1] = WHALE.hold;
-      Object.assign(w, { phase: 'lurk', t: 0, x: s.x, y: s.y, hold: h0 + rng() * (h1 - h0), ang: rng() * Math.PI * 2 });
+      const [sx, sy] = aroundBoat(s, WHALE.from[0], WHALE.from[1], at, rng) ?? aroundBoat(s, WHALE.near[0], WHALE.near[1], at, rng) ?? [s.x, s.y];
+      const [tx, ty] = aroundBoat(s, WHALE.near[0], WHALE.near[1], at, rng, { x: sx, y: sy }) ?? [sx, sy];
+      Object.assign(w, { phase: 'lurk', t: 0, x: s.x, y: s.y, hold: h0 + rng() * (h1 - h0), sx, sy, vx: 0, vy: 0, tx, ty, retarget: 2 + rng() * 2, alpha: 0 });
       emit('near');
     }
   } else if (w.phase === 'lurk') {
+    // 배 둘레를 얼쩡거린다: 둘레의 물 위 한 점으로 헤엄쳐 가고, 닿거나 잠시 뒤엔 다른 점으로 (가끔 배 밑으로도)
     w.alpha = Math.min(1, w.alpha + dt / WHALE.fadeIn);
-    if (!sea || input) Object.assign(w, { phase: 'leave', t: 0 });
-    else if (w.t >= w.hold) {
+    w.retarget -= dt;
+    if (w.retarget <= 0 || Math.hypot(w.tx - w.sx, w.ty - w.sy) < 0.5 * C) {
+      [w.tx, w.ty] = aroundBoat(s, WHALE.near[0], WHALE.near[1], at, rng, { x: w.sx, y: w.sy }) ?? [w.tx, w.ty];
+      w.retarget = 1.6 + rng() * 2;
+    }
+    swim(w, w.tx, w.ty, WHALE.swim * C, dt);
+    if (!sea || input) {
+      // 배가 움직이면 배에서 먼 쪽으로 헤엄쳐 가며 흐려진다
+      const dx = w.sx - s.x;
+      const dy = w.sy - s.y;
+      const d = Math.hypot(dx, dy) || 1;
+      Object.assign(w, { phase: 'leave', t: 0, tx: w.sx + (dx / d) * 8 * C, ty: w.sy + (dy / d) * 8 * C });
+    } else if (w.t >= w.hold) {
       Object.assign(w, { phase: 'rise', t: 0, x: s.x, y: s.y });
       emit('rise');
       return true;
     }
   } else if (w.phase === 'leave') {
+    swim(w, w.tx, w.ty, WHALE.swim * 2 * C, dt);
     w.alpha = Math.max(0, w.alpha - dt / WHALE.fadeOut);
     if (w.alpha <= 0) {
       w.phase = 'none';

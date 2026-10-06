@@ -404,4 +404,47 @@ console.log('bridge.check: ok');
   tick(land, 12, 0, 0, () => WALK);
   assert.equal(land.whale.phase, 'none', '뭍에선 안 나온다');
 }
+// 그림자는 낚시 물고기처럼 헤엄친다: 물 위에서만 · 배 둘레를 돌아다니고(제자리에 있지 않다) · 바라보는 쪽은 움직이는 쪽 ·
+// 배가 움직이면 멀어진다. 앞바다(물가에서 room×catBody 넘게 떨어진 곳)에서도 나오고, 물가 바로 옆에선 안 나온다
+{
+  const DT = 1 / 60;
+  const C = FIELD.catBody;
+  const shore = 3700; // x 가 이보다 크면 바다, 작으면 뭍 (r3_c4)
+  const coast: TerrainAt = (x) => (x >= shore ? WATER : WALK);
+  const boat = (x: number): FieldState => {
+    const q = makeFieldState([x, 1640], coast);
+    q.mode = 'boat';
+    return q;
+  };
+  const near = boat(shore + WHALE.room * C + 8);
+  for (let i = 0; i < (WHALE.still + 0.2) / DT; i++) updateField(near, 0, 0, DT, coast);
+  assert.equal(near.whale.phase, 'lurk', '앞바다(물가에서 조금 떨어진 곳)에서도 나온다');
+  const w = near.whale;
+  w.hold = 99; // 오래 지켜본다
+  let path = 0;
+  let maxD = 0;
+  let headingOk = 0;
+  let frames = 0;
+  for (let i = 0; i < 8 / DT; i++) {
+    const [px, py] = [w.sx, w.sy];
+    updateField(near, 0, 0, DT, coast);
+    assert.equal(coast(w.sx, w.sy), WATER, `그림자는 물 위에서만 (${w.sx.toFixed(0)}, ${w.sy.toFixed(0)})`);
+    const step = Math.hypot(w.sx - px, w.sy - py);
+    path += step;
+    if (i > 3 / DT) maxD = Math.max(maxD, Math.hypot(w.sx - near.x, (w.sy - near.y) / FIELD.vertical) / C);
+    if (step > 0.05) {
+      frames++;
+      if ((w.sx - px) * w.hx + (w.sy - py) * w.hy > 0) headingOk++;
+    }
+  }
+  assert.ok(path > 8 * C, `그림자가 돌아다닌다 (8초에 ${(path / C).toFixed(1)}칸)`);
+  assert.ok(maxD <= WHALE.near[1] + 1, `나타난 뒤엔 배 둘레에 머문다 (가장 멀리 ${maxD.toFixed(1)}칸)`);
+  assert.ok(headingOk > frames * 0.9, `바라보는 쪽 = 움직이는 쪽 (${headingOk}/${frames})`);
+  const d0 = Math.hypot(w.sx - near.x, w.sy - near.y);
+  for (let i = 0; i < 1 / DT; i++) updateField(near, 1, 0, DT, coast);
+  assert.ok(w.phase === 'leave' && Math.hypot(w.sx - near.x, w.sy - near.y) > d0, '배가 움직이면 멀어지며 흐려진다');
+  const tight = boat(shore + WHALE.room * C * 0.6);
+  for (let i = 0; i < 6 / DT; i++) updateField(tight, 0, 0, DT, coast);
+  assert.equal(tight.whale.phase, 'none', '물가 바로 옆엔 안 나온다');
+}
 console.log('whale.check: ok');

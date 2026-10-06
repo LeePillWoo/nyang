@@ -10,7 +10,7 @@
  * 냥펀치는 자동 (auto) — 타격 범위 안에 몬스터가 있으면 저절로 나간다. 손으로 누르는 punch 입력은 체크용으로 남겨 둔다.
  * 모든 웨이브를 깨거나 낮잠에 빠지면 결과창(result)이 뜨고 멈춘다 — 이번 판 기록은 stats (main 이 필드로 · 다시를 고른다).
  */
-import { makeBag, obtain, rollDrops, stats, type Bag } from './bag.ts';
+import { makeBag, obtain, rollDrops, room as bagRoom, stats, type Bag } from './bag.ts';
 import { CELL, resolveCircle } from './collide.ts';
 import player from './data/player.json' with { type: 'json' };
 import waves from './data/waves.json' with { type: 'json' };
@@ -67,7 +67,8 @@ const SHAKE_LIFE_LOST = 24;
 /** 떠오르는 숫자. style: 기술 · 치명타 · 계속 피해 (없으면 냥펀치) */
 export type Pop = { x: number; z: number; text: string; t: number; dx: number; hurt: boolean; h: number; style?: 'skill' | 'crit' | 'dot' };
 /** 바닥에 떨어진 것. id 'coin' = 냥코인 n 개. h = 공중 높이(m), t = 떨어진 뒤 시간 (0.45초 지나야 주울 수 있다) */
-export type Loot = { id: string; n: number; x: number; z: number; h: number; vh: number; vx: number; vz: number; t: number };
+/** 바닥에 떨어진 것. full = 가방에 자리가 없어 빨려 오지 않고 그 자리에 있다 · near = 고양이가 그 위에 서 있다 (가득 알림은 밟을 때 한 번) */
+export type Loot = { id: string; n: number; x: number; z: number; h: number; vh: number; vx: number; vz: number; t: number; full?: boolean; near?: boolean };
 /** 포인트 아이템: 생선뼈(경험치 v — 정예의 큰 뼈는 3) · 생선 비스킷(snack — 바로 먹는 회복) */
 export type Bone = { x: number; z: number; h: number; vh: number; vx: number; vz: number; t: number; v: number; snack?: boolean };
 /** 주운 것 알림 (화면 왼쪽). id 'full' = 가방이 가득 참 */
@@ -252,7 +253,8 @@ export function resetDungeon(d: Dungeon, roomId = d.room.id) {
   d.toasts = [];
   d.enemies = d.room.def.spawns.map(([k, tx, tz]) => {
     const p = tile(tx as number, tz as number);
-    return makeEnemy(k as Kind, d.sheets[k as Kind], p.x, p.z);
+    const e = makeEnemy(k as Kind, d.sheets[k as Kind], p.x, p.z);
+    return d.classic ? e : waveScale(e, 0); // 방에 서 있던 몬스터도 웨이브 1 배율
   });
   d.arrows = [];
   d.pops = [];
@@ -302,6 +304,15 @@ export function waveKinds(r: Room, n: number, elites: number, rng: () => number 
   return out;
 }
 
+/** 웨이브가 갈수록 세다 — 웨이브 i 의 체력·공격 배율을 건다 (waves.json hp · damage) */
+function waveScale(e: Enemy, i: number) {
+  const hk = WAVES.hp[i] ?? 1;
+  const dk = WAVES.damage[i] ?? 1;
+  if (hk !== 1 || dk !== 1) e.def = { ...e.def, hp: Math.max(1, Math.round(e.def.hp * hk)), damage: Math.max(1, Math.round(e.def.damage * dk)) };
+  e.hp = e.def.hp;
+  return e;
+}
+
 /** 웨이브를 건너뛴다 (검증용 — 마지막 웨이브를 깬 것으로) */
 export function skipWaves(d: Dungeon) {
   if (!d.wave) return;
@@ -347,12 +358,7 @@ function updateWave(d: Dungeon, dt: number) {
     for (const m of W.marks) {
       m.t += dt;
       if (m.t < WAVES.telegraph) continue;
-      const e = makeEnemy(m.kind, d.sheets[m.kind], m.x, m.z);
-      // 웨이브가 갈수록 세다 (체력·공격 배율)
-      const hk = WAVES.hp[W.i] ?? 1;
-      const dk = WAVES.damage[W.i] ?? 1;
-      if (hk !== 1 || dk !== 1) e.def = { ...e.def, hp: Math.round(e.def.hp * hk), damage: Math.round(e.def.damage * dk) };
-      e.hp = e.def.hp;
+      const e = waveScale(makeEnemy(m.kind, d.sheets[m.kind], m.x, m.z), W.i);
       if (m.elite) {
         const E = WAVES.elite;
         e.def = { ...e.def, hp: Math.round(e.def.hp * E.hp), damage: Math.round(e.def.damage * E.damage), size: Math.round(e.def.size * E.size), speed: e.def.speed * E.speed, name: `${E.name} ${e.def.name}` };
@@ -473,11 +479,14 @@ function dropLoot(d: Dungeon, e: Enemy) {
   });
 }
 
-/** 생선뼈: 체력 perHp 마다 1개 (정예는 큰 뼈 — 값 3). 가끔(정예는 늘) 생선 비스킷 */
+/**
+ * 생선뼈: 체력 perHp 마다 1개 (정예는 큰 뼈 — 값 3). 가끔(정예는 늘) 생선 비스킷.
+ * 초반 웨이브는 체력을 낮춰도(배율 < 1) 그 종 원래 체력만큼은 준다 — 쉽게 잡히는 만큼 경험치가 줄면 첫 기술이 늦게 나온다
+ */
 function dropBones(d: Dungeon, e: Enemy) {
   if (d.classic) return;
   const big = e.elite;
-  const n = big ? Math.ceil(WAVES.elite.bones / 3) : Math.max(1, Math.round(e.def.hp / XP.perHp));
+  const n = big ? Math.ceil(WAVES.elite.bones / 3) : Math.max(1, Math.round(Math.max(e.def.hp, ENEMY_DEFS[e.kind].hp) / XP.perHp));
   const toss = (extra: Partial<Bone>) => {
     const a = Math.random() * Math.PI * 2;
     const v = 0.8 + Math.random() * 1.6;
@@ -500,13 +509,19 @@ function take(d: Dungeon, l: Loot) {
     d.events.push({ type: 'loot', coin: l.id === 'coin' });
   }
   if (left > 0) {
-    if (!d.toasts.some((q) => q.id === 'full' && q.t < TOAST_LIFE)) {
-      d.toasts.push({ id: 'full', n: 0, t: 0 });
-      d.events.push({ type: 'full' });
-    }
-    l.t = -1.5; // 잠깐 빨려 오지 않게
+    bagFull(d);
+    // 못 넣은 건 그 자리에 멈춘다 — 빨려 오던 속도가 남으면 고양이를 지나쳐 미끄러져 나간다 (2026-10-06 "모자를 먹으러 가면 날아간다")
+    l.vx = 0;
+    l.vz = 0;
   }
   l.n = left;
+}
+
+/** 가방이 가득 — 알림(소리)은 떠 있는 동안 한 번 */
+function bagFull(d: Dungeon) {
+  if (d.toasts.some((q) => q.id === 'full')) return;
+  d.toasts.push({ id: 'full', n: 0, t: 0 });
+  d.events.push({ type: 'full' });
 }
 
 /** 튀어 오르고 미끄러지다 멈춘다. 가까우면(또는 pull 이면 어디서든) 고양이에게 빨려 온다 — 닿으면 true */
@@ -537,9 +552,19 @@ function fly(d: Dungeon, l: { x: number; z: number; h: number; vh: number; vx: n
   return got;
 }
 
-/** 떨어진 것: 냥코인·아이템은 가방에 (방을 깨면 어디서든 날아온다) */
+/** 떨어진 것: 냥코인·아이템은 가방에 (방을 깨면 어디서든 날아온다). 가방에 자리가 없는 건 빨려 오지 않고 그 자리에 — 밟으면 가득 알림, 자리가 나면 줍는다 */
 function updateLoot(d: Dungeon, dt: number) {
-  for (const l of d.loot) if (fly(d, l, dt, MAGNET, d.phase === 'cleared')) take(d, l);
+  for (const l of d.loot) {
+    l.full = l.id !== 'coin' && bagRoom(d.bag, l.id) <= 0;
+    if (!l.full) {
+      if (fly(d, l, dt, MAGNET, d.phase === 'cleared')) take(d, l);
+      continue;
+    }
+    fly(d, l, dt, 0, false);
+    const near = Math.hypot(d.P.x - l.x, d.P.z - l.z) < 0.7;
+    if (near && !l.near) bagFull(d);
+    l.near = near;
+  }
   d.loot = d.loot.filter((l) => l.n > 0);
   for (const q of d.toasts) q.t += dt;
   d.toasts = d.toasts.filter((q) => q.t < TOAST_LIFE).slice(-5);

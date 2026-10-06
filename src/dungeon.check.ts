@@ -176,6 +176,26 @@ function run(d: Dungeon, input: typeof still, seconds: number) {
   assert.equal(d.bag.coins, 7, '나갈 때 남은 냥코인도');
   assert.equal(d.bag.slots[0]?.id, 'equipment_13', '나갈 때 남은 장비도 빈 칸에');
 }
+// 가방이 가득 차면 떨어진 장비(모자)는 빨려 오지 않고 그 자리에 있다 — 전엔 빨려 오다 못 넣고 그 속도로 고양이를 지나쳐 미끄러져 나갔다.
+// 밟으면 가득 알림, 자리가 나면 빨려 와 줍는다
+{
+  const d = fresh();
+  d.enemies = [];
+  for (let i = 0; i < d.bag.slots.length; i++) addItem(d.bag, 'equipment_02');
+  const hat = { id: 'equipment_18', n: 1, x: d.P.x + 1.2, z: d.P.z, h: 0, vh: 0, vx: 0, vz: 0, t: 1 };
+  d.loot.push(hat);
+  let r = run(d, still, 1);
+  assert.ok(Math.abs(hat.x - (d.P.x + 1.2)) < 0.01 && Math.abs(hat.z - d.P.z) < 0.01 && hat.full, '가득 차면 빨려 오지 않고 그 자리에');
+  assert.equal(r.events.filter((e) => e.type === 'full').length, 0, '밟기 전엔 알림 없음');
+  d.P.x = hat.x;
+  r = run(d, still, 1);
+  assert.ok(d.loot.length === 1 && Math.hypot(hat.x - d.P.x, hat.z - d.P.z) < 0.3, '밟아도 미끄러져 나가지 않는다');
+  assert.equal(r.events.filter((e) => e.type === 'full').length, 1, '밟으면 가득 알림 한 번');
+  d.P.x -= 1.5;
+  d.bag.slots[3] = null;
+  run(d, still, 1);
+  assert.ok(d.loot.length === 0 && d.bag.slots[3]?.id === 'equipment_18', '자리가 나면 빨려 와 줍는다');
+}
 
 // 자동 냥펀치: 타격 범위 안에 몬스터가 있으면 누르지 않아도 나간다. 범위 밖 · 없음 · 구르는 중 · 낮잠이면 안 나간다.
 // 물러나면서 때려도(움직이는 쪽과 반대) 맞는다. 구르기는 움직이는 쪽으로

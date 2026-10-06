@@ -1,5 +1,6 @@
 import { image } from './assets.ts';
 import { AXE_FPS, AXE_ROW, BOAT_FPS, BOAT_ROW, CAT_FPS, CAT_ROW, SNOW_FPS, SNOW_ROW } from './cat.ts';
+import fishAtlas from './data/fishing-atlas.json' with { type: 'json' };
 import { drawEmote } from './emote.ts';
 import { BLOCK, BRIDGE, FIELD, FOREST, isOpen, RISE, SPIT, WALK, warpLocked, WATER, WHALE, type FieldEvent, type FieldState, type Terrain, type Warp, type Whale } from './field.ts';
 import { drawFrame, type Sheet } from './sheet.ts';
@@ -306,34 +307,40 @@ function whaleCell(ctx: CanvasRenderingContext2D, row: number, col: number, x: n
   ctx.restore();
 }
 
-/** 물속 그림자: 헤엄 그림(머리가 아래)을 맴도는 방향으로 돌려 수면에 눕힌다. 6컷을 겹쳐 가며 꿈틀거린다 */
-function whaleShadow(ctx: CanvasRenderingContext2D, x: number, y: number, ang: number, alpha: number, t: number) {
-  const img = whaleSheet();
+/**
+ * 물속 그림자 — 낚시 물고기 그림자와 같은 그림·같은 방식 (2026-10-06 사용자 의견: 고래 시트의 그림자 컷은 자세가 컷마다 달라
+ * 겹쳐 돌리면 어색했다). 낚시 그림자 시트의 큰머리형(넓은 가슴지느러미 — 위에서 본 고래 같다)을 몸길이 shadow 배로 키워,
+ * 꼬리를 흔들며 헤엄치고 좌우는 뒤집고 위아래로 갈 땐 살짝만 기운다 (fishing-draw.ts drawShadow 와 같은 식)
+ */
+const FISH_SHADOW = (fishAtlas as unknown as { shadow: { sheet: string; states: Record<string, { fps: number; frames: number[][] }> } }).shadow;
+const WHALE_SHADOW = FISH_SHADOW.states.broadhead;
+let shadowImg: HTMLImageElement | null = null;
+const shadowSheet = () => (shadowImg ??= image(FISH_SHADOW.sheet).img);
+/** 바다가 밝아서 낚시터(0.32)보다 조금 진하게 */
+const WHALE_SHADOW_ALPHA = 0.42;
+function whaleShadow(ctx: CanvasRenderingContext2D, w: Whale, alpha: number) {
+  const img = shadowSheet();
   if (!img.complete || !img.naturalWidth || alpha <= 0) return;
-  const C = img.naturalWidth / 6;
-  const size = WHALE.shadow * FIELD.catBody;
-  const f = t * 2.2;
-  const i = Math.floor(f) % 6;
-  const mix = f - Math.floor(f);
+  const fr = WHALE_SHADOW.frames[Math.floor(w.anim * WHALE_SHADOW.fps) % WHALE_SHADOW.frames.length];
+  const [sx, sy, sw, sh] = fr;
+  const scale = (WHALE.shadow * FIELD.catBody) / fr[6]; // 그림 속 몸길이(내용 폭)를 고래 몸길이로
+  const flip = w.hx < 0 ? -1 : 1;
+  const rot = (flip > 0 ? Math.atan2(w.hy, w.hx) : -Math.atan2(w.hy, -w.hx)) * 0.6;
   ctx.save();
-  ctx.translate(x, y);
-  ctx.scale(1, FIELD.vertical);
-  ctx.rotate(ang);
-  for (const [col, a] of [[i, 1 - mix], [(i + 1) % 6, mix]]) {
-    ctx.globalAlpha = alpha * a;
-    ctx.drawImage(img, col * C, 0, C, C, -size / 2, -size / 2, size, size);
-  }
+  ctx.translate(w.sx, w.sy);
+  ctx.rotate(rot);
+  ctx.scale(flip * scale, scale);
+  ctx.globalAlpha *= alpha * WHALE_SHADOW_ALPHA;
+  ctx.drawImage(img, sx, sy, sw, sh, -sw / 2, -sh / 2, sw, sh);
   ctx.restore();
 }
 
-/** 물속 (배·물결보다 먼저): 맴도는 그림자 — 나타날 땐 멀리서 다가오고, 흐려질 땐 멀어진다. 솟구치기 직전엔 배 밑으로 모인다 */
-function drawWhaleUnder(ctx: CanvasRenderingContext2D, w: Whale, t: number) {
-  const R = WHALE.orbit * FIELD.catBody;
-  const orbit = (r: number, alpha: number) => whaleShadow(ctx, w.x + Math.cos(w.ang) * r, w.y + Math.sin(w.ang) * r * FIELD.vertical, w.ang, alpha * 0.85, t);
-  if (w.phase === 'lurk' || w.phase === 'leave') orbit(R * (1 + 0.6 * (1 - w.alpha)), w.alpha);
+/** 물속 (배·물결보다 먼저): 헤엄치는 그림자. 솟구치기 직전엔 배 밑으로 돌진하고, 고래 시트의 떠오르는 그림자로 이어진다 */
+function drawWhaleUnder(ctx: CanvasRenderingContext2D, w: Whale) {
+  if (w.phase === 'lurk' || w.phase === 'leave') whaleShadow(ctx, w, w.alpha);
   else if (w.phase === 'rise' && w.t < RISE.dash) {
     const k = w.t / RISE.dash;
-    orbit(R * Math.max(0, 1 - k / 0.6) ** 2, 1 - seg(k, 0.4, 0.7));
+    whaleShadow(ctx, w, 1 - seg(k, 0.45, 0.75));
     const a = whaleAt(w);
     whaleCell(ctx, 1, k < 0.75 ? 0 : 1, a.x, a.y, a.size, seg(k, 0.4, 0.75)); // 배 밑으로 떠오르는 그림자
   }
@@ -519,8 +526,11 @@ export function drawField(
     ring(s.x - (s.moving ? s.flip * 7 * U : 0), s.y + U, (s.moving ? 11 : 16) * U, s.moving ? 0.9 : 1.6);
   }
   stepParts(dt);
-  if (afloat) whaleSheet(); // 배를 타면 고래 그림을 미리 불러 둔다
-  drawWhaleUnder(ctx, s.whale, t);
+  if (afloat) {
+    whaleSheet(); // 배를 타면 고래 그림을 미리 불러 둔다
+    shadowSheet();
+  }
+  drawWhaleUnder(ctx, s.whale);
   drawRings(ctx);
   drawWhaleAbove(ctx, s.whale);
 

@@ -17,6 +17,8 @@ const fsPath = (u) => fileURLToPath(u);
 const readJson = (rel) => JSON.parse(fs.readFileSync(new URL(rel, import.meta.url), 'utf8'));
 const FIELD = readJson('../src/data/field.json');
 const WAVE_DATA = readJson('../src/data/waves.json');
+const PLAYER_DATA = readJson('../src/data/player.json');
+const SKILL_DATA = readJson('../src/data/skills.json');
 const { OBS: SAND_OBS, coast: sandCoast } = await import('../src/sandboard.ts');
 /** 개방 구역(field.json open) 안의 워프 — 잠긴 구역 밖 워프는 갈 수 없는 게 맞다 */
 const inOpen = (x, y) => {
@@ -730,6 +732,29 @@ try {
     await page.screenshot({ path: fsPath(new URL('bag-toasts.png', OUT)) });
     const got = await page.evaluate((ids) => ids.map((id) => __game.bag.slots.some((s) => s?.id === id)), ids);
     check(got.every(Boolean), '다가가면 아이템을 줍는다 (주운 것 알림)');
+    // 가방이 가득 차면 장비(모자)는 빨려 오지 않고 그 자리에 — "가방 가득" 꼬리표, 밟으면 알림, 자리가 나면 줍는다 (화면 dungeon-bag-full.png)
+    const savedSlots = await page.evaluate(() => JSON.stringify(__game.bag.slots));
+    await page.evaluate(() => {
+      const d = __game.dungeon;
+      d.enemies.forEach((e) => Object.assign(e, { x: d.P.x - 6, z: d.P.z - 6, def: { ...e.def, speed: 0 } })); // 방해하지 않게 멀리
+      for (let i = 0; i < d.bag.slots.length; i++) if (!d.bag.slots[i]) d.bag.slots[i] = { id: 'equipment_02', n: 1 };
+      d.loot.push({ id: 'equipment_18', n: 1, x: d.P.x + 1.6, z: d.P.z, h: 0, vh: 0, vx: 0, vz: 0, t: 1 });
+      window.__hat0 = [d.P.x + 1.6, d.P.z];
+    });
+    await sleep(1200);
+    const hat = await page.evaluate(() => {
+      const l = __game.dungeon.loot.find((v) => v.id === 'equipment_18');
+      return l ? { moved: Math.hypot(l.x - window.__hat0[0], l.z - window.__hat0[1]), full: !!l.full } : null;
+    });
+    check(!!hat && hat.full && hat.moved < 0.05, `가방이 가득 차면 모자는 빨려 오지 않고 그 자리에 ("가방 가득" 표시, 움직인 거리 ${hat ? hat.moved.toFixed(2) : '없음'}m)`);
+    await page.screenshot({ path: fsPath(new URL('dungeon-bag-full.png', OUT)) });
+    await page.evaluate(() => Object.assign(__game.dungeon.P, { x: window.__hat0[0], z: window.__hat0[1] })); // 모자를 밟는다
+    await sleep(800);
+    const onHat = await page.evaluate(() => ({ n: __game.dungeon.loot.filter((v) => v.id === 'equipment_18').length, toast: __game.dungeon.toasts.some((q) => q.id === 'full') }));
+    check(onHat.n === 1 && onHat.toast, '밟아도 미끄러져 나가지 않고 "가방이 가득" 알림');
+    await page.evaluate((saved) => __game.bag.slots.splice(0, __game.bag.slots.length, ...JSON.parse(saved)), savedSlots);
+    await sleep(800);
+    check(await page.evaluate(() => __game.bag.slots.some((v) => v?.id === 'equipment_18')), '가방에 자리가 나면 빨려 와 줍는다');
 
     await page.evaluate(() => (__game.dungeon.P.hp = 40));
     await page.keyboard.press('KeyI');
@@ -765,7 +790,7 @@ try {
     await page.keyboard.press('Escape');
     check(!(await page.evaluate(() => __game.bagOpen)), 'Esc 로 가방을 닫는다');
 
-    // 장비 공격력 +8 이 냥펀치에: 10 + 8 = 18
+    // 장비 공격력 +8 이 냥펀치에: 냥펀치 피해 + 8
     await page.keyboard.press('KeyR');
     await sleep(300);
     await autoPick(page);
@@ -776,7 +801,7 @@ try {
     });
     await sleep(250);
     const dmg = await page.evaluate(() => __game.dungeon.pops.map((q) => q.text));
-    check(dmg.includes('18'), `장비 공격력이 냥펀치에 (피해 ${dmg.join(',')})`);
+    check(dmg.includes(String(PLAYER_DATA.punch.damage + 8)), `장비 공격력이 냥펀치에 (${PLAYER_DATA.punch.damage} + 8 — 피해 ${dmg.join(',')})`);
 
     const before = await page.evaluate(() => JSON.stringify([__game.bag.coins, Object.entries(__game.bag.equip).sort(), __game.bag.slots]));
     await page.reload({ waitUntil: 'load' });
@@ -980,6 +1005,30 @@ try {
     const out = await page.waitForFunction(() => __game.scene === 'field', { timeout: 4000 }).then(() => true, () => false);
     const pos = await page.evaluate(() => [__game.field.x, __game.field.y]);
     check(out && Math.hypot(pos[0] - w.back[0], pos[1] - w.back[1]) < 5, '돌아가기 → 피라미드 포탈 앞');
+    check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
+    await page.close();
+  }
+  // 고래 — 앞바다: 고양이 항구 앞바다에서도 그림자가 나오고, 낚시 물고기처럼 물 위에서만 배 둘레를 헤엄쳐 다닌다 (화면 whale-harbor.png)
+  {
+    const { page, errors } = await open('field');
+    const HARBOR = [3250, 1720];
+    await page.evaluate(([x, y]) => Object.assign(__game.field, { x, y, camX: x, camY: y, mode: 'boat', armed: true }), HARBOR);
+    const lurk = await page.waitForFunction(() => __game.field.whale.phase === 'lurk', { timeout: 6000 }).then(() => true, () => false);
+    check(lurk, '고양이 항구 앞바다에서도 고래 그림자가 나온다');
+    await page.evaluate(() => (__game.field.whale.hold = 99));
+    await sleep(1200);
+    const track = await page.evaluate(async () => {
+      const out = [];
+      for (let i = 0; i < 40; i++) {
+        const w = __game.field.whale;
+        out.push([w.sx, w.sy, __game.terrain(w.sx, w.sy)]);
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      return out;
+    });
+    const path = track.slice(1).reduce((a, p, i) => a + Math.hypot(p[0] - track[i][0], p[1] - track[i][1]), 0);
+    check(track.every((p) => p[2] === 2) && path > 30, `그림자는 물 위에서 배 둘레를 헤엄쳐 다닌다 (4초에 ${path.toFixed(0)}px)`);
+    await page.screenshot({ path: fsPath(new URL('whale-harbor.png', OUT)) });
     check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
     await page.close();
   }
@@ -1268,14 +1317,14 @@ try {
     await page.screenshot({ path: fsPath(new URL('dungeon-laser-aim.png', OUT)) });
     await page.waitForFunction(() => __game.dungeon.run.ents.some((e) => e.k === 'laser' && e.t > e.aim + 0.15), { polling: 'raf', timeout: 4000 });
     await page.screenshot({ path: fsPath(new URL('dungeon-laser-fire.png', OUT)) });
-    // 기술 칸 5가지 (빨간 점 + 넷)
-    await page.evaluate(() => {
-      for (const id of ['yarn_ball', 'spool', 'hairball', 'snare']) __game.learnSkill(id, 1);
+    // 기술 칸을 다 채운다 (빨간 점 + 나머지)
+    await page.evaluate((slots) => {
+      for (const id of ['yarn_ball', 'spool', 'hairball', 'snare'].slice(0, slots - 1)) __game.learnSkill(id, 1);
       __game.dungeon.run.pending = 1;
-    });
+    }, SKILL_DATA.slots);
     await page.waitForFunction(() => __game.dungeon.choose, { timeout: 3000 });
     const cards = await page.evaluate(() => ({ ids: __game.dungeon.choose.map((c) => c.id), owned: Object.keys(__game.dungeon.run.skills) }));
-    check(cards.owned.length === 5 && cards.ids.every((id) => cards.owned.includes(id)), `기술 5가지면 카드엔 가진 기술만 (${cards.ids.join(', ')})`);
+    check(cards.owned.length === SKILL_DATA.slots && cards.ids.every((id) => cards.owned.includes(id)), `기술 ${SKILL_DATA.slots}가지면 카드엔 가진 기술만 (${cards.ids.join(', ')})`);
     await sleep(250);
     await page.screenshot({ path: fsPath(new URL('dungeon-cards-full.png', OUT)) });
     check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);

@@ -195,7 +195,23 @@ export function drawDungeon(ctx: CanvasRenderingContext2D, cw: number, ch: numbe
           ctx.arc(sx, y, 34 + Math.sin(v.t * 5) * 4, 0, Math.PI * 2);
           ctx.fill();
         }
+        if (!l.full) return drawIcon(ctx, l.id, sx, y - 8, 58);
+        // 가방에 자리가 없다 — 빨려 오지 않는 까닭을 보여 준다
+        ctx.save();
+        ctx.globalAlpha = 0.7;
         drawIcon(ctx, l.id, sx, y - 8, 58);
+        ctx.globalAlpha = 1;
+        ctx.font = 'bold 14px system-ui, sans-serif';
+        const tag = '가방 가득';
+        const tw = ctx.measureText(tag).width + 16;
+        ctx.fillStyle = 'rgba(239,107,94,0.95)';
+        ctx.beginPath();
+        ctx.roundRect(sx - tw / 2, y - 64, tw, 22, 11);
+        ctx.fill();
+        ctx.fillStyle = '#fff';
+        ctx.textAlign = 'center';
+        ctx.fillText(tag, sx, y - 48);
+        ctx.restore();
       },
     });
   }
@@ -378,7 +394,7 @@ function drawHud(ctx: CanvasRenderingContext2D, cw: number, ch: number, d: Dunge
     const a = Math.min(1, q.t / 0.15, (TOAST_LIFE - q.t) / 0.5);
     const slide = (1 - Math.min(1, q.t / 0.2)) * -30;
     const full = q.id === 'full';
-    const text = full ? '가방이 가득 찼어요' : `${q.id === 'coin' ? '냥코인' : ITEMS[q.id].name} +${q.n}`;
+    const text = full ? '가방이 가득 찼어요 · 비우면 주울 수 있어요' : `${q.id === 'coin' ? '냥코인' : ITEMS[q.id].name} +${q.n}`;
     ctx.globalAlpha = Math.max(0, a);
     ctx.font = 'bold 15px system-ui, sans-serif';
     const tw = ctx.measureText(text).width + (full ? 24 : 54);

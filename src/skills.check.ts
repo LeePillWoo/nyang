@@ -53,19 +53,19 @@ const run = (d: Dungeon, secs: number, input = still) => {
     }
   assert.ok(spool > other * 1.8, `가진 기술이 더 잘 나온다 (${spool} vs ${other})`);
   // 기술 칸: SLOTS 가지를 가지면 새 기술은 안 나오고 가진 기술(최대가 아닌 것) 레벨 업만
-  const five = SKILL_IDS.slice(0, SLOTS);
+  const kept = SKILL_IDS.slice(0, SLOTS);
   const capped = makeDungeon(sheets, 'alley');
-  five.forEach((id, i) => {
+  kept.forEach((id, i) => {
     for (let k = 0; k <= i % 3; k++) learn(capped.run, id);
   });
-  while (capped.run.skills[five[0]]! < MAX_LV) learn(capped.run, five[0]); // five[0] 은 최대
-  assert.equal(capped.run.skills[five[0]], MAX_LV);
+  while (capped.run.skills[kept[0]]! < MAX_LV) learn(capped.run, kept[0]); // kept[0] 은 최대
+  assert.equal(capped.run.skills[kept[0]], MAX_LV);
   for (let i = 0; i < 300; i++)
     for (const c of rollCards(capped.run, rng)) {
-      assert.ok(five.includes(c.id as SkillId) && c.id !== five[0], `기술 칸이 다 차면 가진 기술 레벨 업만 (${c.id})`);
+      assert.ok(kept.includes(c.id as SkillId) && c.id !== kept[0], `기술 칸이 다 차면 가진 기술 레벨 업만 (${c.id})`);
       assert.equal(c.lv, capped.run.skills[c.id as SkillId]! + 1);
     }
-  for (const id of five) capped.run.skills[id] = MAX_LV;
+  for (const id of kept) capped.run.skills[id] = MAX_LV;
   assert.deepEqual(rollCards(capped.run, rng), [{ id: 'heal', lv: 0 }], '가진 기술이 다 최대면 간식');
   const four = makeDungeon(sheets, 'alley');
   for (const id of SKILL_IDS.slice(0, SLOTS - 1)) learn(four.run, id);
