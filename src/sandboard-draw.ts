@@ -99,8 +99,11 @@ export function drawSandboard(ctx: CanvasRenderingContext2D, cw: number, ch: num
   const Y = (d: number) => y0 - ppm * D * Math.log(1 + (d - s.d) / D);
   const X = (x: number, d: number) => cx + x * half * sc(d);
   const dAt = (y: number) => s.d + D * (Math.exp((y0 - y) / (ppm * D)) - 1);
-  const dMin = dAt(ch) - 2;
+  // 보이는 거리: 화면 아래 끝 너머 6m(말뚝 키만큼) ~ 화면 위 끝 너머 2m. 이 밖은 그리지 않는다 —
+  // 원근 식은 치즈보다 D 이상 뒤에서 log(음수) = NaN 이 되고, 캔버스는 NaN 이동을 무시해 그림을 왼쪽 위(0,0)에 그린다
+  const dMin = Math.max(dAt(ch) - 6, s.d - D * 0.8);
   const dMax = dAt(0) + 2;
+  const seen = (d: number) => d >= dMin && d <= dMax;
 
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   // 배경: 화면 아래(가까운 곳)부터 STRIP_PX 씩 올라가며, 그 줄에 해당하는 띠의 가로 조각을 그 거리의 배율로 (조각 경계는 살짝 겹친다)
@@ -126,7 +129,9 @@ export function drawSandboard(ctx: CanvasRenderingContext2D, cw: number, ch: num
 
   // 그릴 것 모으기 (화면 아래쪽 = 가까운 것이 위에)
   const items: { y: number; draw: () => void }[] = [];
-  const at = (d: number, draw: () => void) => items.push({ y: Y(d), draw });
+  const at = (d: number, draw: () => void) => {
+    if (seen(d)) items.push({ y: Y(d), draw });
+  };
   // 양옆 밧줄 울타리: 7m 마다 말뚝, 세 번째마다 깃발. 말뚝 사이에 밧줄 (원근이라 앞으로 갈수록 모인다)
   const POST = 7;
   const POST_H = 70;
@@ -174,7 +179,7 @@ export function drawSandboard(ctx: CanvasRenderingContext2D, cw: number, ch: num
   for (const side of [-1, 1]) deco('lantern_post', side * 1.0, END, 0.8, side > 0 ? -1 : 1);
 
   // 결승선 (바닥, 사다리꼴)
-  if (END > dMin && END < dMax) {
+  if (seen(END)) {
     const n = 16;
     for (let j = 0; j < 2; j++) {
       const d1 = END + j * 0.6;
@@ -196,12 +201,12 @@ export function drawSandboard(ctx: CanvasRenderingContext2D, cw: number, ch: num
 
   // 바닥 물건 (구덩이·둔덕·점프대·가속 발판)
   for (const ob of s.obs) {
-    if (!FLAT.has(ob.kind) || ob.d < dMin || ob.d > dMax) continue;
+    if (!FLAT.has(ob.kind) || !seen(ob.d)) continue;
     spr(ctx, art, ob.kind, X(ob.x, ob.d), Y(ob.d), OB_K * k * sc(ob.d) * OBS[ob.kind].k);
   }
   // 서 있는 물건 · 줍는 것
   for (const ob of s.obs) {
-    if (FLAT.has(ob.kind) || ob.got || ob.d < dMin || ob.d > dMax) continue;
+    if (FLAT.has(ob.kind) || ob.got || !seen(ob.d)) continue;
     const o = OBS[ob.kind];
     const pickup = o.role !== 'hit' && o.role !== 'tall';
     at(ob.d, () => {
@@ -224,15 +229,20 @@ export function drawSandboard(ctx: CanvasRenderingContext2D, cw: number, ch: num
   }
 
   // 치즈
-  at(s.d, () => drawCat(ctx, art, s, X(s.x, s.d), y0, k, v.t));
+  at(s.d, () => drawCat(ctx, art, s, X(s.x, s.d), y0, k, v.t, ppm));
   items.sort((a, b) => a.y - b.y);
   for (const it of items) it.draw();
 
-  // 짧은 효과 · 떠오르는 글자
-  for (const f of s.fx) spr(ctx, art, f.id + two(Math.min(6, Math.floor((f.t / FX_TIME) * 6) + 1)), X(f.x, f.d), Y(f.d), FX_K * k * sc(f.d));
+  // 짧은 효과 · 떠오르는 글자 ("촤악" 모래는 그 자리 바닥에 남아 뒤로 흘러간다)
+  for (const f of s.fx) {
+    if (!seen(f.d)) continue;
+    const big = f.id === 'carve_spray' ? 1.15 : 1;
+    spr(ctx, art, f.id + two(Math.min(6, Math.floor((f.t / FX_TIME) * 6) + 1)), X(f.x, f.d), Y(f.d), FX_K * k * sc(f.d) * big, f.flip ?? 1);
+  }
   ctx.textAlign = 'center';
   ctx.lineJoin = 'round';
   for (const p of s.pops) {
+    if (!seen(p.d)) continue;
     const q = k * sc(p.d);
     const a = Math.min(1, (0.9 - p.t) / 0.3);
     ctx.globalAlpha = Math.max(0, a);
@@ -263,46 +273,191 @@ export function drawSandboard(ctx: CanvasRenderingContext2D, cw: number, ch: num
   drawHud(ctx, cw, ch, dpr, s, art, v);
 }
 
-/** 치즈: 땅에선 뒷모습 주행(기울면 드리프트 컷, 가끔 고개 돌림) · 공중은 점프 · 내려오면 착지 · 부딪히면 넘어졌다 일어남 */
-function drawCat(ctx: CanvasRenderingContext2D, art: SandArt, s: SandState, x: number, y: number, k: number, t: number) {
+/**
+ * 주행 컷(ride · look · drift)의 보드: 칸 안의 보드 중심과 그려진 기울기. 그림에서 한 번 잰다 —
+ * 보드(나무색·청록 픽셀)의 무게중심과 주축. 드리프트 컷은 보드가 약 32° 꺾여 그려져 있고 기준점도 주행 컷과 달라서,
+ * 기준점 대신 보드 중심을 같은 자리에 두고 "물리 각도 − 그려진 기울기" 만큼 돌린다 (컷이 바뀌어도 보드가 튀지 않는다).
+ */
+type BoardInfo = { cx: number; cy: number; ang: number };
+const boards = new Map<string, BoardInfo>();
+function board(art: SandArt, id: string): BoardInfo {
+  const hit = boards.get(id);
+  if (hit) return hit;
+  const [sheet, fx, fy, fw, fh, px, py] = FR[id];
+  const c = document.createElement('canvas');
+  c.width = fw;
+  c.height = fh;
+  const g = c.getContext('2d', { willReadFrequently: true })!;
+  g.drawImage(art[sheet], fx, fy, fw, fh, 0, 0, fw, fh);
+  const d = g.getImageData(0, 0, fw, fh).data;
+  let n = 0;
+  let sx = 0;
+  let sy = 0;
+  let sxx = 0;
+  let syy = 0;
+  let sxy = 0;
+  for (let j = 0; j < fh; j++)
+    for (let i = 0; i < fw; i++) {
+      const o = (j * fw + i) * 4;
+      if (d[o + 3] < 128) continue;
+      const r = d[o];
+      const gg = d[o + 1];
+      const b = d[o + 2];
+      if (!((r > gg && gg > b && r < 170 && r - b > 40) || (b > r + 20 && gg > r))) continue;
+      n++;
+      sx += i;
+      sy += j;
+      sxx += i * i;
+      syy += j * j;
+      sxy += i * j;
+    }
+  let info: BoardInfo = { cx: px, cy: py - 90, ang: 0 };
+  if (n > 200) {
+    const mx = sx / n;
+    const my = sy / n;
+    let a = 0.5 * Math.atan2(2 * (sxy / n - mx * my), sxx / n - mx * mx - (syy / n - my * my)) - Math.PI / 2;
+    while (a < -Math.PI / 2) a += Math.PI;
+    while (a > Math.PI / 2) a -= Math.PI;
+    info = { cx: mx, cy: my, ang: a };
+  }
+  boards.set(id, info);
+  return info;
+}
+/** 줄(ride · drift_left …)의 평균 기울기 — 컷마다 재면 그림의 작은 흔들림까지 지워 보드가 덜덜 떤다 */
+const rowAng = new Map<string, number>();
+function rowAngle(art: SandArt, row: string) {
+  let a = rowAng.get(row);
+  if (a === undefined) {
+    a = 0;
+    for (let i = 1; i <= 6; i++) a += board(art, row + two(i)).ang / 6;
+    rowAng.set(row, a);
+  }
+  return a;
+}
+
+/** 모래 알갱이 (화면 px) — 미끄러질 때 보드 꼬리에서 바깥으로 튄다. 바닥에 떨어진 건 바닥과 함께 아래로 흘러간다 */
+let grains: { x: number; y: number; vx: number; vy: number; t: number; life: number; r: number }[] = [];
+let grainRun: SandState | null = null;
+let grainT = 0;
+let grainDebt = 0;
+/** 드리프트 컷을 쓰는 중인가 (경계에서 컷이 깜빡이지 않게 들어갈 때 21°, 나올 때 15°) */
+let drifting = false;
+
+/** 치즈: 땅에선 뒷모습 주행 — 보드가 물리 각도대로 돌고, 많이 꺾이면 드리프트 컷. 공중은 점프 · 내려오면 착지 · 부딪히면 넘어졌다 일어남 */
+function drawCat(ctx: CanvasRenderingContext2D, art: SandArt, s: SandState, x: number, y: number, k: number, t: number, ppm: number) {
   const p = s.air > 0 ? 1 - s.air / s.airMax : 0;
   const height = s.airMax >= SAND.rampJump ? 95 : s.airMax <= SAND.bump ? 38 : 60;
   const lift = s.air > 0 ? Math.sin(Math.PI * p) * height * k : 0;
-  // 그림자
-  ctx.fillStyle = 'rgba(90,60,30,0.28)';
+  const ride = s.dizzy <= 0 && !(s.phase === 'done' && s.fell) && s.air <= 0 && s.landT >= 0.5;
+  const q = RIDE_K * k;
+  // 보드 중심 (바닥) — 주행 컷에서 보드 중심이 기준점보다 위에 있는 만큼
+  const bx = x;
+  const by = y - (FR.ride_01[6] - board(art, 'ride_01').cy) * q;
+  const yaw = s.yaw;
+  const sin = Math.sin(yaw);
+  const cos = Math.cos(yaw);
+  // 그림자: 주행 중엔 보드 모양으로 보드와 같이 돈다. 공중·동작 컷은 둥근 그림자
+  ctx.fillStyle = 'rgba(90,60,30,0.26)';
   ctx.beginPath();
-  ctx.ellipse(x, y - 4 * k, (34 - lift / k / 8) * k, (11 - lift / k / 20) * k, 0, 0, Math.PI * 2);
+  if (ride) ctx.ellipse(bx + 4 * q, by + 8 * q, 30 * q, 92 * q, yaw, 0, Math.PI * 2);
+  else ctx.ellipse(x, y - 4 * k, (34 - lift / k / 8) * k, (11 - lift / k / 20) * k, 0, 0, Math.PI * 2);
   ctx.fill();
+
+  // 모래: 꼬리 뒤로 흐르는 줄 + 미끄러짐만큼 바깥으로 튀는 모래 + 알갱이
   const ground = s.air <= 0 && s.dizzy <= 0 && s.phase === 'play';
-  // 보드 뒤 모래 꼬리(아래로) · 기울어 미끄러지면 옆으로 튀는 모래 (기울수록 진하게)
+  const L = 80 * q;
+  const tx = bx - sin * L;
+  const ty = by + cos * L;
+  const out = -Math.sign(yaw) || 1; // 꼬리가 밀려나는 쪽 = 모래가 튀는 쪽
+  const spray = Math.min(1, s.slip * 1.6 + Math.abs(s.lean) * 0.25);
   if (ground) {
-    ctx.globalAlpha = 0.9;
-    spr(ctx, art, 'sand_trail' + two((Math.floor(s.t * 8) % 6) + 1), x, y - 4 * k, FX_K * k, 1, -1);
-    if (s.steer !== 0) {
-      ctx.globalAlpha = Math.min(1, Math.abs(s.lean) * 1.3);
-      spr(ctx, art, 'carve_spray' + two((Math.floor(s.t * 8) % 6) + 1), x, y + 6 * k, FX_K * k * (0.6 + Math.abs(s.lean) * 0.5), -s.steer);
+    ctx.save();
+    ctx.globalAlpha = 0.85;
+    ctx.translate(tx, ty);
+    ctx.rotate(yaw);
+    spr(ctx, art, 'sand_trail' + two((Math.floor(s.t * 8) % 6) + 1), 0, -6 * q, FX_K * k, 1, -1);
+    ctx.restore();
+    if (Math.abs(s.lean) > 0.08 || s.slip > 0.08) {
+      // 치즈를 가리지 않게: 꼬리 바깥·뒤쪽에, 조금 옅게
+      ctx.save();
+      ctx.globalAlpha = spray * 0.85;
+      ctx.translate(tx + out * 24 * q, ty + 6 * q);
+      ctx.rotate(yaw * 0.5);
+      spr(ctx, art, 'carve_spray' + two((Math.floor(s.t * 10) % 6) + 1), 0, 0, FX_K * k * (0.35 + 0.45 * spray), out);
+      ctx.restore();
     }
-    ctx.globalAlpha = 1;
   }
-  let id: string;
-  let q = ACT_K * k;
-  let flip = s.flip;
-  if (s.dizzy > 0 || (s.phase === 'done' && s.fell)) {
-    const f = s.phase === 'done' ? 0 : Math.min(11, Math.floor((1 - s.dizzy / SAND.dizzy) * 12));
-    id = s.phase === 'done' ? 'fall_06' : f < 6 ? 'fall' + two(f + 1) : 'get_up' + two(f - 5);
-  } else if (s.air > 0) id = 'jump' + two(Math.min(6, Math.floor(p * 6) + 1));
-  else if (s.landT < 0.5) id = 'land' + two(Math.min(6, Math.floor(s.landT * 12) + 1));
-  else {
-    q = RIDE_K * k;
-    flip = 1;
+  // 알갱이: 새 판이면 비우고, 미끄러짐만큼 뿌린다 (초당 최대 110알)
+  if (grainRun !== s) {
+    grainRun = s;
+    grains = [];
+    grainT = t;
+  }
+  const dt = Math.min(0.05, Math.max(0, t - grainT));
+  grainT = t;
+  if (ground) {
+    grainDebt += (s.slip * 110 + Math.abs(s.lean) * 12) * dt;
+    for (; grainDebt >= 1; grainDebt--) {
+      const sp = (110 + Math.random() * 170) * k * (0.5 + s.slip);
+      grains.push({
+        x: tx + (Math.random() - 0.5) * 18 * q,
+        y: ty + (Math.random() - 0.5) * 18 * q,
+        vx: out * sp * (0.7 + Math.random() * 0.5),
+        vy: (Math.random() * 90 - 20) * k,
+        t: 0,
+        life: 0.35 + Math.random() * 0.3,
+        r: (1.6 + Math.random() * 2.2) * k,
+      });
+    }
+  } else grainDebt = 0;
+  const flow = s.phase === 'play' ? s.v * ppm : 0;
+  ctx.fillStyle = '#e8c48c';
+  for (const g of grains) {
+    g.t += dt;
+    const drag = Math.exp(-4 * dt);
+    g.vx *= drag;
+    g.vy *= drag;
+    g.x += g.vx * dt;
+    g.y += (g.vy + flow) * dt;
+    ctx.globalAlpha = Math.max(0, 1 - g.t / g.life) * 0.85;
+    ctx.beginPath();
+    ctx.arc(g.x, g.y, g.r * (1 + g.t * 1.5), 0, Math.PI * 2);
+    ctx.fill();
+  }
+  grains = grains.filter((g) => g.t < g.life);
+  ctx.globalAlpha = 1;
+
+  if (ride) {
+    // 주행: 많이 꺾이면 드리프트 컷, 아니면 주행 컷(가끔 고개 돌림). 어느 컷이든 보드 중심을 같은 자리에, 물리 각도로
+    const a = Math.abs(yaw);
+    if (a > 0.37) drifting = true;
+    else if (a < 0.26) drifting = false;
     const ph = s.t % 6;
     const c = Math.floor(s.t / 6);
-    // 기울기가 셀수록 드리프트 컷이 깊어진다 (1~6)
-    if (s.steer !== 0) id = (s.steer < 0 ? 'drift_left' : 'drift_right') + two(Math.min(6, Math.floor(Math.abs(s.lean) * 6) + 1));
-    else if (s.phase === 'play' && c % 3 !== 0 && ph < 0.75) id = (c % 2 ? 'look_left' : 'look_right') + two(Math.floor(ph * 8) + 1);
-    else id = 'ride' + two((Math.floor(s.t * 8) % 6) + 1);
+    let row = 'ride';
+    let n = (Math.floor(s.t * 8) % 6) + 1;
+    if (drifting) row = yaw < 0 ? 'drift_left' : 'drift_right';
+    else if (s.phase === 'play' && c % 3 !== 0 && ph < 0.75 && a < 0.12) {
+      row = c % 2 ? 'look_left' : 'look_right';
+      n = Math.floor(ph * 8) + 1;
+    }
+    const id = row + two(n);
+    const [sheet, fx, fy, fw, fh] = FR[id];
+    const b = board(art, id);
+    ctx.save();
+    ctx.translate(bx, by);
+    ctx.rotate(yaw - rowAngle(art, row));
+    ctx.drawImage(art[sheet], fx, fy, fw, fh, -b.cx * q, -b.cy * q, fw * q, fh * q);
+    ctx.restore();
+  } else {
+    let id: string;
+    if (s.dizzy > 0 || (s.phase === 'done' && s.fell)) {
+      const f = s.phase === 'done' ? 0 : Math.min(11, Math.floor((1 - s.dizzy / SAND.dizzy) * 12));
+      id = s.phase === 'done' ? 'fall_06' : f < 6 ? 'fall' + two(f + 1) : 'get_up' + two(f - 5);
+    } else if (s.air > 0) id = 'jump' + two(Math.min(6, Math.floor(p * 6) + 1));
+    else id = 'land' + two(Math.min(6, Math.floor(s.landT * 12) + 1));
+    spr(ctx, art, id, x, y - lift, ACT_K * k, s.flip);
   }
-  spr(ctx, art, id, x, y - lift, q, flip);
   // 방패: 둥근 막 · 자석: 머리 위 자석
   if (s.shield > 0) {
     const blink = s.shield < 2 ? 0.5 + 0.5 * Math.sin(t * 20) : 1;

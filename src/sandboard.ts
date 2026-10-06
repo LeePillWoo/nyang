@@ -9,10 +9,25 @@ export const SAND = {
   vMin: 13,
   vMax: 24,
   accel: 2.4,
-  /** 좌우: 최고 가로 속도(가로 자리/초) · 누르면 이 시간 상수로 붙고 · 떼면 이 시간 상수로 미끄러지다 선다 (드리프트) */
-  steer: 2.6,
-  steerIn: 0.1,
-  steerOut: 0.13,
+  /**
+   * 좌우 = 드리프트. 누르면 보드가 먼저 꺾이고(스프링 — 살짝 넘쳤다 돌아옴), 몸은 늦게 따라 옆으로 흐른다(그립 지연).
+   * 보드가 가리키는 쪽과 실제로 가는 쪽의 차이가 미끄러짐(slip) — 모래를 튀기고 속도를 깎는다.
+   * steer = 보드가 다 꺾였을 때 가로 속도(가로 자리/초) · yawMax = 보드 최대 각도(라디안, 드리프트 컷의 32°와 같게)
+   * yawW·yawZ = 누를 때 각도 스프링(고유 진동수·감쇠) · yawWOut·yawZOut = 뗄 때 (덜 출렁이게)
+   * gripIn·gripOut = 가로 속도가 보드 방향을 따라가는 시간 상수 (뗄 때는 엣지를 세워 빨리 선다)
+   * dragSlip = 미끄러짐 1 일 때 감속(m/s²) · dragCarve = 보드를 다 꺾고 있을 때 감속 · carveAt = 이 미끄러짐을 넘으면 "촤악" (carve 사건)
+   */
+  steer: 2.5,
+  yawMax: 0.56,
+  yawW: 15,
+  yawZ: 0.55,
+  yawWOut: 17,
+  yawZOut: 0.7,
+  gripIn: 0.14,
+  gripOut: 0.07,
+  dragSlip: 10,
+  dragCarve: 1.4,
+  carveAt: 0.35,
   edge: 0.92,
   /** 고양이 가로 반폭 · 앞뒤로 닿는 거리(m) */
   catR: 0.09,
@@ -84,7 +99,7 @@ export const solid = (k: ObKind) => role(k) === 'hit' || role(k) === 'tall';
 /** got = 주웠다 · hit = 이미 작동했다(부딪힘·뜀) */
 export type Ob = { kind: ObKind; x: number; d: number; got?: boolean; hit?: boolean };
 /** 그리기용 짧은 효과 (시트의 효과 id) · 떠오르는 글자 */
-export type SandFx = { id: 'jump_puff' | 'land_burst' | 'hit_stars' | 'pickup_sparkle'; x: number; d: number; t: number };
+export type SandFx = { id: 'jump_puff' | 'land_burst' | 'hit_stars' | 'pickup_sparkle' | 'carve_spray'; x: number; d: number; t: number; flip?: number };
 export type SandPop = { text: string; x: number; d: number; t: number };
 export type SandEvent =
   | { type: 'coin'; n: number }
@@ -94,6 +109,7 @@ export type SandEvent =
   | { type: 'bump' }
   | { type: 'boost' }
   | { type: 'pit' }
+  | { type: 'carve'; k: number }
   | { type: 'crash'; kind: ObKind }
   | { type: 'block' }
   | { type: 'power'; kind: 'heart' | 'shield' | 'magnet' }
@@ -109,10 +125,15 @@ export type SandState = {
   landT: number;
   /** 넘어져 있는 남은 시간 */
   dizzy: number;
-  /** 가로 속도(가로 자리/초) · 기울기 -1..1 (가로 속도 / 최고) · 기울어진 쪽(-1, 0, 1) */
+  /** 보드 각도(라디안, + = 오른쪽) · 각속도 · 가로 속도(가로 자리/초) · 기울기 = 각도 / 최대 · 미끄러짐 0..1 · 기울어진 쪽(-1, 0, 1) */
+  yaw: number;
+  yawV: number;
   vx: number;
   lean: number;
+  slip: number;
   steer: number;
+  /** "촤악" 을 다시 낼 수 있나 (미끄러짐이 가라앉아야 다시) */
+  carveReady: boolean;
   flip: number;
   t: number;
   hearts: number;
@@ -139,7 +160,7 @@ const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v
 
 export function makeSandboard(rng: () => number = Math.random): SandState {
   const s: SandState = {
-    d: 0, x: 0, v: SAND.vMin, air: 0, airMax: 1, landT: 9, dizzy: 0, vx: 0, lean: 0, steer: 0, flip: 1, t: 0,
+    d: 0, x: 0, v: SAND.vMin, air: 0, airMax: 1, landT: 9, dizzy: 0, yaw: 0, yawV: 0, vx: 0, lean: 0, slip: 0, steer: 0, carveReady: true, flip: 1, t: 0,
     hearts: SAND.hearts, shield: 0, magnet: 0, boost: 0, phase: 'play', fell: false, coins: 0, crashes: 0, score: 0,
     obs: [], fx: [], pops: [], nextAt: 30, events: [], rng,
   };
@@ -199,7 +220,42 @@ function spawn(s: SandState) {
   }
 }
 
-const fx = (s: SandState, id: SandFx['id'], x = s.x, d = s.d) => s.fx.push({ id, x, d, t: 0 });
+const fx = (s: SandState, id: SandFx['id'], x = s.x, d = s.d, flip?: number) => s.fx.push({ id, x, d, t: 0, flip });
+
+type Lateral = Pick<SandState, 'x' | 'vx' | 'yaw' | 'yawV'>;
+/**
+ * 좌우 한 걸음 (u = 누르는 쪽 -1..1). 보드 각도 스프링 → 그립 지연으로 가로 속도 → 자리. 미끄러짐을 돌려준다.
+ * 가장자리에선 선다 — 바깥으로 계속 누르면 보드는 경계를 따라 펴지고 미끄러짐은 0 (벽에 대고 누른다고 모래를 튀기며 느려지지 않게)
+ */
+function lateral(l: Lateral, u: number, dt: number) {
+  // 가장자리 쪽(-1, 0, 1). 여유 0.03: 펴진 보드가 살짝 넘쳐 가장자리를 벗어났다 다시 꺾이기를 되풀이하지 않게 (떨림)
+  const side = (x: number) => (x >= SAND.edge - 0.03 ? 1 : x <= -SAND.edge + 0.03 ? -1 : 0);
+  const pinned = side(l.x) !== 0 && Math.sign(u) === side(l.x);
+  const pressed = u !== 0;
+  const w = pressed ? SAND.yawW : SAND.yawWOut;
+  const z = pressed ? SAND.yawZ : SAND.yawZOut;
+  l.yawV += (w * w * ((pinned ? 0 : u) * SAND.yawMax - l.yaw) - 2 * z * w * l.yawV) * dt;
+  l.yaw += l.yawV * dt;
+  const lean = l.yaw / SAND.yawMax;
+  l.vx += (lean * SAND.steer - l.vx) * (1 - Math.exp(-dt / (pressed ? SAND.gripIn : SAND.gripOut)));
+  l.x += l.vx * dt;
+  if (l.x >= SAND.edge) {
+    l.x = SAND.edge;
+    l.vx = Math.min(0, l.vx);
+  } else if (l.x <= -SAND.edge) {
+    l.x = -SAND.edge;
+    l.vx = Math.max(0, l.vx);
+  }
+  // 가장자리로 밀고 있으면 미끄러짐 0 — 닿는 순간에도 "촤악" 하지 않는다
+  return pinned || (side(l.x) !== 0 && Math.sign(l.yaw) === side(l.x)) ? 0 : Math.min(1, Math.abs(lean - l.vx / SAND.steer));
+}
+
+/** 지금 손을 떼면 어디서 멈추나 (자동 조종 · 검증용) */
+export function coast(s: Lateral) {
+  const l = { x: s.x, vx: s.vx, yaw: s.yaw, yawV: s.yawV };
+  for (let i = 0; i < 60; i++) lateral(l, 0, 1 / 60);
+  return l.x;
+}
 const pop = (s: SandState, text: string, x: number, d: number) => s.pops.push({ text, x, d, t: 0 });
 
 function finish(s: SandState, fell: boolean) {
@@ -238,20 +294,20 @@ export function updateSandboard(s: SandState, input: SandInput, dt: number) {
     fx(s, 'jump_puff');
     s.events.push({ type: 'jump' });
   }
-  // 좌우는 관성으로: 누르면 가로 속도가 붙고, 떼면 모래 위를 미끄러지다 선다. 가장자리에선 멈춘다
-  const want = s.dizzy > 0 ? 0 : clamp(input.mx, -1, 1) * SAND.steer;
-  s.vx += (want - s.vx) * (1 - Math.exp(-dt / (want !== 0 ? SAND.steerIn : SAND.steerOut)));
-  s.x += s.vx * dt;
-  if (s.x >= SAND.edge) {
-    s.x = SAND.edge;
-    s.vx = Math.min(0, s.vx);
-  } else if (s.x <= -SAND.edge) {
-    s.x = -SAND.edge;
-    s.vx = Math.max(0, s.vx);
-  }
-  s.lean = clamp(s.vx / SAND.steer, -1, 1);
+  // 좌우 = 드리프트: 보드가 먼저 꺾이고 몸이 늦게 따라온다. 그 차이(미끄러짐)만큼 모래를 튀기고 속도를 깎는다
+  s.slip = lateral(s, s.dizzy > 0 ? 0 : clamp(input.mx, -1, 1), dt);
+  s.lean = s.yaw / SAND.yawMax;
   s.steer = Math.abs(s.lean) > 0.12 ? Math.sign(s.lean) : 0;
   if (s.steer !== 0) s.flip = s.steer;
+  if (s.air <= 0) {
+    s.v = Math.max(Math.min(s.v, SAND.vMin * 0.7), s.v - (SAND.dragSlip * s.slip + SAND.dragCarve * Math.min(1, Math.abs(s.lean))) * dt); // 깎기만 한다 (넘어진 뒤 느린 속도를 올리지 않게)
+    if (s.slip > SAND.carveAt && s.carveReady) {
+      s.carveReady = false;
+      fx(s, 'carve_spray', s.x, s.d, -Math.sign(s.yaw) || 1);
+      s.events.push({ type: 'carve', k: s.slip });
+    }
+  }
+  if (s.slip < SAND.carveAt * 0.4) s.carveReady = true;
   s.d += s.v * dt;
 
   for (const ob of s.obs) {
@@ -322,7 +378,7 @@ export function updateSandboard(s: SandState, input: SandInput, dt: number) {
         }
         s.v = Math.max(SAND.vMin * 0.5, s.v * SAND.crash);
         s.dizzy = SAND.dizzy;
-        s.vx = 0;
+        s.vx = s.yaw = s.yawV = 0;
         s.air = 0;
         s.crashes++;
         s.hearts--;

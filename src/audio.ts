@@ -194,3 +194,5 @@ export const sfxFull = () => tone('sine', 300, 200, 0.14, 0.22);
 
 /** 폴짝 — 샌드보드 점프 */
 export const sfxJump = () => tone('triangle', 420, 880, 0.12, 0.16);
+/** 촤악 — 샌드보드가 미끄러지기 시작할 때 모래를 긁는 소리 (k = 미끄러짐 세기 0..1) */
+export const sfxCarve = (k = 1) => burst('bandpass', 2600, 0.7, 0.05 + 0.08 * k, 0.32, 800);

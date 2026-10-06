@@ -1,7 +1,7 @@
 // node src/sandboard.check.ts  (npm run check) — 늘 지나갈 길이 있고, 점프로 넘고(높은 건 점프대로만), 부딪히면 하트를 잃고,
 // 방패·자석·하트·가속·구덩이·둔덕이 제 일을 하고, 끝까지 가면 완주 / 하트를 다 잃으면 넘어져 끝
 import assert from 'node:assert/strict';
-import { makeSandboard, OBS, SAND, solid, updateSandboard, type Ob, type ObKind, type SandState } from './sandboard.ts';
+import { coast, makeSandboard, OBS, SAND, solid, updateSandboard, type Ob, type ObKind, type SandState } from './sandboard.ts';
 
 const seeded = (seed: number) => () => {
   seed |= 0;
@@ -165,19 +165,89 @@ const until = (s: SandState, f: () => boolean, input = still, max = 10) => {
   assert.ok(s.phase === 'done' && s.fell && fin?.type === 'finish' && fin.fell && fin.score === s.coins, '하트 0 → 넘어져 끝');
 }
 
-// 6-1) 드리프트: 누르면 가로 속도가 붙고, 떼면 잠깐 미끄러지다 선다 (한 레인 안). 가장자리에선 멈춘다
+// 6-1) 미끄러짐 손맛 (드리프트): 누르면 보드가 먼저 꺾이고(살짝 넘쳤다 돌아옴) 몸은 늦게 옆으로 흐른다.
+//      시작할 때 미끄러짐이 커서 "촤악"(carve) 하고 모래를 튀기며 속도가 조금 깎이고, 떼면 한 레인 안에서 미끄러지다 선다.
+//      숫자를 바꾸면 여기 표가 손맛을 보여 준다 — 범위를 벗어나면 실패
 {
   const s = fresh();
-  for (let t = 0; t < 0.3; t += DT) updateSandboard(s, { mx: 1, jump: false }, DT);
-  assert.ok(s.vx > SAND.steer * 0.9 && s.lean > 0.9 && s.steer === 1, `누르면 가로 속도가 붙는다 (${s.vx.toFixed(2)})`);
-  const x0 = s.x;
-  updateSandboard(s, still, DT);
-  assert.ok(s.x > x0, '떼도 바로 서지 않는다');
-  for (let t = 0; t < 1; t += DT) updateSandboard(s, still, DT);
-  const slid = s.x - x0;
-  assert.ok(slid > 0.1 && slid < 0.45 && Math.abs(s.vx) < 0.01 && s.steer === 0, `미끄러지다 선다 (${slid.toFixed(2)})`);
-  for (let t = 0; t < 2; t += DT) updateSandboard(s, { mx: 1, jump: false }, DT);
-  assert.ok(s.x === SAND.edge && s.vx === 0, '가장자리에선 멈춘다');
+  s.v = 20;
+  const rows: { t: number; yaw: number; vx: number; x: number; slip: number; v: number }[] = [];
+  const step = (mx: number, secs: number) => {
+    for (let k = 0; k < Math.round(secs / DT); k++) {
+      updateSandboard(s, { mx, jump: false }, DT);
+      rows.push({ t: rows.length * DT + DT, yaw: s.yaw, vx: s.vx, x: s.x, slip: s.slip, v: s.v });
+    }
+  };
+  step(1, 1);
+  const at = (sec: number) => rows[Math.round(sec / DT) - 1];
+  const yaw90 = rows.find((r) => r.yaw >= SAND.yawMax * 0.9)!.t;
+  const over = Math.max(...rows.map((r) => r.yaw)) / SAND.yawMax - 1;
+  const vx90 = rows.find((r) => r.vx >= SAND.steer * 0.9)!.t;
+  const kick = at(0.1);
+  const peakSlip = Math.max(...rows.map((r) => r.slip));
+  const lost = 20 - at(0.3).v;
+  // 떼기: 왼쪽 끝에서 0.6초 오른쪽으로 달리다 뗀다 (1초를 누르면 가장자리에 닿아 버린다)
+  const r = fresh();
+  r.x = -0.9;
+  for (let k = 0; k < 36; k++) updateSandboard(r, { mx: 1, jump: false }, DT);
+  const x0 = r.x;
+  const pred = coast(r);
+  let restT = 0;
+  for (let k = 1; k <= 60; k++) {
+    updateSandboard(r, still, DT);
+    if (!restT && Math.abs(r.vx) < 0.02) restT = k * DT;
+  }
+  const out = r.x - x0;
+  const tap = (secs: number) => {
+    const q = fresh();
+    for (let k = 0; k < Math.round(secs / DT); k++) updateSandboard(q, { mx: 1, jump: false }, DT);
+    for (let k = 0; k < 72; k++) updateSandboard(q, still, DT);
+    return q.x;
+  };
+  const deg = (r: number) => ((r * 180) / Math.PI).toFixed(0) + '°';
+  console.log('  미끄러짐 손맛:');
+  console.log(`    보드 각도  최대 ${deg(SAND.yawMax)} · 90% 까지 ${yaw90.toFixed(2)}초 · 넘침 ${(over * 100).toFixed(0)}% (살짝 넘쳤다 돌아옴)`);
+  console.log(`    0.1초 뒤   보드 ${deg(kick.yaw)} 꺾였는데 옆으로는 ${kick.x.toFixed(2)} 만 — 보드가 먼저, 몸은 나중`);
+  console.log(`    가로 속도  90% 까지 ${vx90.toFixed(2)}초 · 최대 미끄러짐 ${peakSlip.toFixed(2)} · 0.3초 동안 감속 ${lost.toFixed(2)} m/s (20 m/s 에서, 가속 포함)`);
+  console.log(`    떼면       ${out.toFixed(2)} 더 미끄러지고 ${restT.toFixed(2)}초 만에 섬 (한 레인 = 0.4) · 미리 셈 ${pred.toFixed(2)} → 실제 ${r.x.toFixed(2)}`);
+  console.log(`    톡 누르기  0.1초 → ${tap(0.1).toFixed(2)} · 0.15초 → ${tap(0.15).toFixed(2)} · 0.25초 → ${tap(0.25).toFixed(2)}`);
+  assert.ok(yaw90 >= 0.1 && yaw90 <= 0.2, `보드는 빨리 꺾인다 (${yaw90})`);
+  assert.ok(over > 0.04 && over < 0.2, `살짝 넘쳤다 돌아온다 (${over})`);
+  assert.ok(kick.yaw > SAND.yawMax * 0.6 && kick.x < 0.05, '처음엔 보드만 꺾이고 몸은 거의 그대로 (드리프트 시작)');
+  assert.ok(vx90 > yaw90 + 0.1 && vx90 < 0.5, `몸은 늦게 따라온다 (${vx90})`);
+  assert.ok(peakSlip > SAND.carveAt && lost > 0.5 && lost < 2.5, `시작할 때 미끄러지며 속도가 조금 깎인다 (${peakSlip}, ${lost})`);
+  assert.ok(out > 0.2 && out < 0.4 && restT < 0.6, `떼면 한 레인 안에서 미끄러지다 선다 (${out}, ${restT})`);
+  assert.ok(Math.abs(pred - r.x) < 0.01, '떼면 멈출 자리를 미리 셀 수 있다 (자동 조종이 쓴다)');
+  const t1 = tap(0.15);
+  assert.ok(t1 > 0.25 && t1 < 0.45, `0.15초 톡 = 한 레인쯤 (${t1})`);
+
+  // "촤악": 시작할 때 한 번, 미끄러짐이 가라앉기 전엔 다시 안 난다. 반대로 홱 틀면 또 난다 (가장자리에 안 닿게 왼쪽 끝에서 출발)
+  const c = fresh();
+  c.x = -0.9;
+  let carves = 0;
+  const run = (mx: number, secs: number) => {
+    for (let k = 0; k < Math.round(secs / DT); k++) {
+      updateSandboard(c, { mx, jump: false }, DT);
+      carves += c.events.filter((e) => e.type === 'carve').length;
+    }
+  };
+  run(1, 0.5);
+  assert.equal(carves, 1, '누르면 촤악 한 번');
+  assert.ok(c.fx.some((f) => f.id === 'carve_spray' && f.flip === -1), '오른쪽으로 틀면 모래는 왼쪽(뒤집음)으로');
+  run(-1, 0.4);
+  assert.equal(carves, 2, '반대로 홱 틀면 또 촤악');
+  // 가장자리에선 서고, 계속 바깥으로 눌러도 보드가 펴져서 미끄러지며 느려지지 않는다
+  run(1, 2);
+  const vEdge = c.v;
+  run(1, 0.5);
+  assert.ok(c.x >= SAND.edge - 0.03 && Math.abs(c.vx) < 0.01 && Math.abs(c.yaw) < 0.02 && c.slip === 0 && c.v >= vEdge, `가장자리: 멈추고 보드가 펴진다 (자리 ${c.x.toFixed(3)}, 각도 ${c.yaw.toFixed(3)})`);
+  assert.equal(carves, 3, '가장자리에 닿을 땐 촤악 안 함 (오른쪽으로 다시 틀 때 한 번만)');
+  // 공중에선 감속·촤악이 없다
+  const a = fresh();
+  a.air = a.airMax = 1;
+  const v0 = a.v;
+  for (let k = 0; k < 20; k++) updateSandboard(a, { mx: 1, jump: false }, DT);
+  assert.ok(a.v >= v0 && !a.fx.some((f) => f.id === 'carve_spray'), '공중에선 미끄러지지 않는다');
 }
 
 // 7) 완주: 빈 레인으로 피하고, 낮은 건 점프로 넘는 간단한 조종으로 끝까지. 무사하면 보너스. 끝난 뒤엔 멈춘다
@@ -191,8 +261,8 @@ const until = (s: SandState, f: () => boolean, input = still, max = 10) => {
         .map((l) => ({ l, bad: threats.filter((o) => Math.abs(o.x - l) < OBS[o.kind].r + 0.16).length + Math.abs(l - s.x) * 0.01 }))
         .sort((p, q) => p.bad - q.bad)[0].l;
       const near = threats.some((o) => o.d - s.d < 6 && Math.abs(o.x - s.x) < OBS[o.kind].r + SAND.catR + 0.02 && OBS[o.kind].role === 'hit');
-      const pred = s.x + s.vx * SAND.steerOut; // 떼면 이만큼 더 미끄러진다
-      updateSandboard(s, { mx: Math.abs(lane - pred) < 0.03 ? 0 : Math.sign(lane - pred), jump: near && s.air <= 0 }, DT);
+      const pred = coast(s); // 지금 떼면 멈출 자리 (드리프트로 더 미끄러지는 만큼)
+      updateSandboard(s, { mx: Math.abs(lane - pred) < 0.04 ? 0 : Math.sign(lane - pred), jump: near && s.air <= 0 }, DT);
       t += DT;
     }
     return { s, t };

@@ -17,6 +17,7 @@ import {
   sfxHit,
   sfxHurt,
   sfxJump,
+  sfxCarve,
   sfxNibble,
   sfxPlop,
   sfxPickup,
@@ -934,6 +935,9 @@ function sandEvent(e: SandEvent) {
     case 'pit':
       sfxHurt();
       say('frustration', 0.8);
+      break;
+    case 'carve':
+      sfxCarve(e.k);
       break;
     case 'crash':
       sfxHurt();

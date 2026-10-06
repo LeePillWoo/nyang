@@ -16,7 +16,7 @@ const OUT = new URL('./out/', import.meta.url);
 const fsPath = (u) => fileURLToPath(u);
 const readJson = (rel) => JSON.parse(fs.readFileSync(new URL(rel, import.meta.url), 'utf8'));
 const FIELD = readJson('../src/data/field.json');
-const { OBS: SAND_OBS, SAND: { steerOut: SAND_STEER_OUT } } = await import('../src/sandboard.ts');
+const { OBS: SAND_OBS, coast: sandCoast } = await import('../src/sandboard.ts');
 /** 개방 구역(field.json open) 안의 워프 — 잠긴 구역 밖 워프는 갈 수 없는 게 맞다 */
 const inOpen = (x, y) => {
   const c = Math.min(FIELD.grid[0] - 1, Math.floor((x * FIELD.grid[0]) / FIELD.size[0]));
@@ -959,6 +959,20 @@ try {
     const inSand = await page.waitForFunction(() => __game.scene === 'sandboard', { timeout: 10000 }).then(() => true, () => false);
     check(inSand, `${w.label} 포탈에 서 있으면 샌드보드`);
     const coins0 = await page.evaluate(() => __game.bag.coins);
+    // 그리기 감시: 이동(translate)이 NaN·무한이면 캔버스가 무시해서 그림이 왼쪽 위(0,0)에 그려진다 — 원근 뒤쪽 물건 버그
+    await page.evaluate(() => {
+      window.__badDraw = [];
+      const T = CanvasRenderingContext2D.prototype.translate;
+      CanvasRenderingContext2D.prototype.translate = function (x, y) {
+        if (!Number.isFinite(x) || !Number.isFinite(y)) window.__badDraw.push(Math.round(__game.sandboard.d));
+        return T.call(this, x, y);
+      };
+      const D = CanvasRenderingContext2D.prototype.drawImage;
+      CanvasRenderingContext2D.prototype.drawImage = function (...a) {
+        if (a.length === 9 && !a.slice(5).every(Number.isFinite)) window.__badDraw.push(Math.round(__game.sandboard.d));
+        return D.apply(this, a);
+      };
+    });
     // 자동 조종: 빈 레인으로 A/D, 6m 안의 낮은 장애물은 Space 로 점프 (높은 것·구덩이는 피하기만)
     const roles = Object.fromEntries(Object.entries(SAND_OBS).map(([k, o]) => [k, [o.role, o.r]]));
     let held = null;
@@ -968,12 +982,12 @@ try {
       const s = await page.evaluate((roles) => {
         const s = __game.sandboard;
         const bad = (o) => ['hit', 'tall', 'pit'].includes(roles[o.kind][0]) && !o.hit;
-        return { phase: s.phase, x: s.x, vx: s.vx, d: s.d, t: s.t, air: s.air, obs: s.obs.filter((o) => bad(o) && o.d > s.d && o.d < s.d + 22).map((o) => [o.x, o.d, roles[o.kind][1], roles[o.kind][0]]) };
+        return { phase: s.phase, x: s.x, vx: s.vx, yaw: s.yaw, yawV: s.yawV, d: s.d, t: s.t, air: s.air, obs: s.obs.filter((o) => bad(o) && o.d > s.d && o.d < s.d + 22).map((o) => [o.x, o.d, roles[o.kind][1], roles[o.kind][0]]) };
       }, roles);
       if (s.phase !== 'play') break;
       const lanes = [-0.8, -0.4, 0, 0.4, 0.8];
       const lane = lanes.map((l) => ({ l, bad: s.obs.filter(([x, , r]) => Math.abs(x - l) < r + 0.2).length + Math.abs(l - s.x) * 0.01 })).sort((a, b) => a.bad - b.bad)[0].l;
-      const pred = s.x + s.vx * SAND_STEER_OUT; // 떼면 이만큼 더 미끄러진다 (드리프트)
+      const pred = sandCoast(s); // 지금 떼면 멈출 자리 (드리프트로 더 미끄러지는 만큼)
       const want = Math.abs(lane - pred) < 0.04 ? null : lane > pred ? 'KeyD' : 'KeyA';
       if (want !== held) {
         if (held) await page.keyboard.up(held);
@@ -991,6 +1005,8 @@ try {
     const end = await page.evaluate(() => ({ fell: __game.sandboard.fell, hearts: __game.sandboard.hearts, phase: __game.sandboard.phase, coins: __game.sandboard.coins, crashes: __game.sandboard.crashes, score: __game.sandboard.score, t: __game.sandboard.t, bag: __game.bag.coins, best: __game.records.sandboard }));
     check(end.phase === 'done' && !end.fell, `피하고 점프하며 끝까지 가면 완주 (${end.t.toFixed(1)}초 · 냥코인 ${end.coins} · 부딪힘 ${end.crashes} · 하트 ${end.hearts} · 점수 ${end.score})`);
     check(end.coins > 0 && end.bag === coins0 + end.coins, '주운 냥코인이 가방에');
+    const bad = await page.evaluate(() => window.__badDraw);
+    check(bad.length === 0, `끝까지 달리는 동안 NaN 좌표로 그린 것 ${bad.length}번 (뒤쪽 장식이 왼쪽 위에 모이던 버그)${bad.length ? ' — 처음 ' + bad[0] + 'm' : ''}`);
     check(end.best !== null && end.best >= end.score, `최고 점수 저장 (${end.best})`);
     await sleep(400);
     await page.screenshot({ path: fsPath(new URL('sandboard-done.png', OUT)) });
@@ -1002,6 +1018,59 @@ try {
     const out = await page.waitForFunction(() => __game.scene === 'field', { timeout: 4000 }).then(() => true, () => false);
     const pos = await page.evaluate(() => [__game.field.x, __game.field.y]);
     check(out && Math.hypot(pos[0] - w.back[0], pos[1] - w.back[1]) < 5, 'Esc → 모래 미끄럼틀 포탈 앞');
+    check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
+    await page.close();
+  }
+
+  // 3-9) 샌드보드 미끄러짐 연속 촬영 (sandboard-drift.png): 오른쪽으로 눌러 미끄러지기 시작 → 놓기 → 왼쪽으로 홱.
+  //  보드가 먼저 꺾이고(넘쳤다 돌아옴) 몸은 늦게 따라오고, 꼬리에서 모래가 튀는지 눈으로 본다. 컷이 바뀌어도 보드가 튀지 않는지(보드 중심 위치)도 잰다
+  console.log('\n[샌드보드 미끄러짐]');
+  {
+    const { page, errors } = await open('sandboard');
+    await page.evaluate(() => {
+      const s = __game.sandboard;
+      s.obs = [];
+      s.nextAt = 9999;
+    });
+    await sleep(1600);
+    const shots = [];
+    const snap = async (label) => {
+      const m = await page.evaluate(() => {
+        const s = __game.sandboard;
+        return { ...__game.sandScreen(s.x, s.d), yaw: s.yaw, slip: s.slip, lane: s.x };
+      });
+      shots.push({ img: await page.screenshot({ type: 'jpeg', quality: 90, encoding: 'base64' }), meta: { ...m, label } });
+    };
+    await page.keyboard.down('KeyD');
+    for (let i = 0; i < 6; i++) await snap('→ 누름');
+    await page.keyboard.up('KeyD');
+    for (let i = 0; i < 3; i++) await snap('놓음');
+    await page.keyboard.down('KeyA');
+    for (let i = 0; i < 3; i++) await snap('← 홱');
+    await page.keyboard.up('KeyA');
+    const yaws = shots.map((s) => s.meta.yaw);
+    check(Math.max(...yaws) > 0.3 && Math.min(...yaws.slice(9)) < Math.max(...yaws), `보드가 꺾인다 (최대 ${((Math.max(...yaws) * 180) / Math.PI).toFixed(0)}°)`);
+    check(Math.max(...shots.map((s) => s.meta.slip)) > 0.3, '미끄러지기 시작할 때 미끄러짐이 커진다 (모래가 튄다)');
+    const p2 = await browser.newPage();
+    await p2.setViewport({ width: 1240, height: 1000 });
+    await p2.setContent('<body style="margin:0;background:#222"><canvas id=c width=1240 height=1000></canvas></body>');
+    await p2.evaluate(async (shots) => {
+      const c = document.getElementById('c').getContext('2d');
+      c.font = '14px sans-serif';
+      for (let i = 0; i < shots.length; i++) {
+        const { img, meta } = shots[i];
+        const im = new Image();
+        im.src = 'data:image/jpeg;base64,' + img;
+        await im.decode();
+        const x = (i % 4) * 310;
+        const y = Math.floor(i / 4) * 330;
+        c.drawImage(im, meta.x - 120, meta.y - 200, 240, 260, x + 5, y + 5, 300, 300 * (260 / 240));
+        c.fillStyle = '#fff';
+        c.fillText(`${i} ${meta.label} · 보드 ${((meta.yaw * 180) / Math.PI).toFixed(0)}° · 미끄러짐 ${meta.slip.toFixed(2)}`, x + 8, y + 326);
+      }
+    }, shots);
+    await p2.screenshot({ path: fsPath(new URL('sandboard-drift.png', OUT)) });
+    await p2.close();
     check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
     await page.close();
   }
