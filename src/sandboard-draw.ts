@@ -1,9 +1,10 @@
 // 샌드보드 그리기 — art/sandboarding 시트(배경 3장 · 장애물 · 장식 · 치즈 주행/동작 · 효과)로. 치즈는 화면 아래쪽에서 위(앞)를 보고 달리고,
 // 비탈은 원근으로 그린다: 앞(화면 위)으로 갈수록 좁아지는 사다리꼴 — 멀리 있는 건 작고, 가까운 건 크다.
 //   배율 sc(dd) = 1 / (1 + dd / D), 화면 y = y0 − ppm·D·ln(1 + dd / D)  (dd = 치즈보다 앞쪽 거리 m, D = 원근 거리 — 화면 맨 위가 FAR 배율이 되게 잡는다)
-//   배경은 세 장을 이어 붙인 띠를 화면 1px(기기 픽셀) 높이의 가로 조각으로 잘라 조각마다 그 거리의 배율로 그린다.
-//   조각마다 가로 배율이 달라 화면 가장자리에선 조각 사이가 어긋난다 — 4px 조각이면 2~3px 씩 어긋나 바위·야자수 가장자리가 톱니(모자이크)로 보였다.
-//   1px 이면 0.7px 아래라 보간에 묻힌다. 양옆(원근으로 넓어지는 화면 위쪽 구석)은 원본의 장식 없는 모래를 이어 붙인다 — 장식이 뒤집혀 보이지 않게.
+//   배경은 세 장을 위에서 아래로 01→02→03 이어 붙인 띠를 화면 1px(기기 픽셀) 높이의 가로 조각으로 잘라 조각마다 그 거리의 배율로 그린다.
+//   앞으로 갈수록(화면 위로) 띠의 위쪽 줄을 읽는다 — 거꾸로 읽으면 그림이 위아래로 뒤집힌다(2026-10-06 에 그랬다). 띠는 아래로 흐른다.
+//   조각마다 가로 배율이 달라 화면 가장자리에선 조각 사이가 어긋난다 — 4px 조각이면 2~3px 씩 어긋나 톱니(모자이크)로 보였다. 1px 이면 보간에 묻힌다.
+//   배경은 원근 맨 위에서도 화면 폭을 다 덮게 화면마다 키운다 (bgK) — 그림이 좌우로 이어지지 않아 양옆을 채우면 이음매가 생긴다. 그림은 그대로(뒤집기·투명 없음).
 // 양옆은 밧줄 울타리 · 깃발 · 장식, 출발점은 천막·보드 거치대, 결승선은 체크무늬 + 스핑크스·피라미드.
 // 좌표 · 피벗은 src/data/sandboard-atlas.json (tools/assets.mjs 가 art/sandboarding/sprites.json 에서 만든다). 로직은 sandboard.ts.
 import atlas from './data/sandboard-atlas.json' with { type: 'json' };
@@ -29,7 +30,7 @@ const ACT_K = 0.48;
 const DECO_K = 0.4;
 const FX_K = 0.55;
 /** 화면 맨 위(가장 먼 곳)의 배율 · 배경 조각 높이(화면 px) */
-const FAR = 0.55;
+const FAR = 0.66;
 const STRIP_PX = 1;
 const PLAY_C = (BG.playX[0] + BG.playX[1]) / 2;
 const PLAY_HALF = (BG.playX[1] - BG.playX[0]) / 2;
@@ -62,52 +63,21 @@ const hash = (i: number) => {
   const v = Math.sin(i * 127.1 + 311.7) * 43758.5453;
   return v - Math.floor(v);
 };
-const OUTER = ['cactus_tall', 'cactus_cluster', 'palm_small', 'palm_large', 'rock_low', 'rock_stack', 'rock_arch', 'ruined_wall', 'pillar_short', 'dry_shrub'];
 const DECOS = ['cactus_tall', 'cactus_cluster', 'flower_cactus', 'dry_shrub', 'palm_small', 'palm_large', 'rock_low', 'rock_stack', 'rock_arch', 'ruined_wall', 'pillar_short', 'pillar_cap', 'lantern_post', 'jars', 'bone_skeleton', 'arrow_sign'];
 /** 바닥에 깔리는 효과 — 치즈를 덮지 않게 먼저 그린다 */
 const GROUND_FX = new Set(['carve_spray', 'land_burst', 'jump_puff']);
 /** 바닥에 깔리는 것 — 고양이·장애물보다 먼저 */
 const FLAT = new Set(['sand_pit', 'sand_bump', 'jump_ramp', 'boost_pad']);
 
-/** 원본에서 장식 없이 모래만 있는 가로 범위 (주행 폭 안쪽) · 원본 바깥 가장자리를 모래로 녹이는 폭 */
-const SAND_X = [300, 724];
-const FEATHER = 90;
-/**
- * 배경 띠 (가로 3배 × 세 장 세로) — 한 번 만들어 둔다.
- * 바닥 = 원본 가운데의 모래 조각을 번갈아 뒤집어 이어 붙인 것 (모래·자갈뿐이라 뒤집어도 티가 안 나고 이음매가 없다),
- * 그 위 가운데 = 원본 (바깥 FEATHER px 는 모래로 녹여 테두리에 잘린 바위가 스며들게). 바위·야자수 같은 장식은 뒤집지 않는다
- */
+/** 배경 띠: 세 장을 위에서 아래로 01 → 02 → 03 (그림 그대로) — 한 번 만들어 둔다 */
 let strip: { art: SandArt; canvas: HTMLCanvasElement } | null = null;
 function bgStrip(art: SandArt) {
   if (strip?.art === art) return strip.canvas;
   const c = document.createElement('canvas');
-  c.width = BG.w * 3;
+  c.width = BG.w;
   c.height = BG.h * BG.tiles.length;
   const g = c.getContext('2d')!;
-  const sw = SAND_X[1] - SAND_X[0];
-  BG.tiles.forEach((t, i) => {
-    for (let n = 0, x = 0; x < c.width; n++, x += sw) {
-      g.save();
-      g.translate(x + (n % 2 ? sw : 0), i * BG.h);
-      if (n % 2) g.scale(-1, 1);
-      g.drawImage(art[t], SAND_X[0], 0, sw, BG.h, 0, 0, sw, BG.h);
-      g.restore();
-    }
-  });
-  const o = document.createElement('canvas');
-  o.width = BG.w;
-  o.height = c.height;
-  const og = o.getContext('2d')!;
-  BG.tiles.forEach((t, i) => og.drawImage(art[t], 0, i * BG.h, BG.w, BG.h));
-  og.globalCompositeOperation = 'destination-in';
-  const fade = og.createLinearGradient(0, 0, BG.w, 0);
-  fade.addColorStop(0, 'rgba(0,0,0,0)');
-  fade.addColorStop(FEATHER / BG.w, 'rgba(0,0,0,1)');
-  fade.addColorStop(1 - FEATHER / BG.w, 'rgba(0,0,0,1)');
-  fade.addColorStop(1, 'rgba(0,0,0,0)');
-  og.fillStyle = fade;
-  og.fillRect(0, 0, BG.w, o.height);
-  g.drawImage(o, BG.w, 0);
+  BG.tiles.forEach((t, i) => g.drawImage(art[t], 0, i * BG.h, BG.w, BG.h));
   strip = { art, canvas: c };
   return c;
 }
@@ -133,24 +103,29 @@ export function drawSandboard(ctx: CanvasRenderingContext2D, cw: number, ch: num
   const seen = (d: number) => d >= dMin && d <= dMax;
 
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-  // 배경: 화면 아래(가까운 곳)부터 STRIP_PX 씩 올라가며, 그 줄에 해당하는 띠의 가로 조각을 그 거리의 배율로 (조각 경계는 살짝 겹친다)
+  // 배경: 화면 위(먼 곳)부터 STRIP_PX 씩 내려오며, 그 줄 거리의 띠 조각을 그 거리의 배율로 (조각 경계는 살짝 겹친다).
+  // 배경 배율 bgK = 원근 맨 위에서도 그림 폭이 화면을 덮는 만큼 (가로 화면 약 1.5배, 세로 휴대폰 약 1.1배). 1m = M·k/bgK 배경 px
   const bg = bgStrip(art);
   const stripH = bg.height;
+  const bgK = k * Math.max(1, (cw / (BG.w * sc(dAt(0)) * k)) * 1.02);
+  const bm = (M * k) / bgK;
+  /** 거리 d 의 띠 줄 — 앞(화면 위)으로 갈수록 위쪽 줄 */
+  const rowOf = (d: number) => ((((-d * bm) % stripH) + stripH) % stripH);
   const slice = (rowA: number, rowB: number, ya: number, yb: number, q: number) =>
-    ctx.drawImage(bg, 0, rowA, bg.width, rowB - rowA, cx - (BG.w + PLAY_C) * q, ya, bg.width * q, yb - ya + 0.6);
-  for (let y = ch; y > 0; y -= STRIP_PX) {
-    const ya = Math.max(0, y - STRIP_PX);
-    const da = dAt(y);
-    const db = dAt(ya);
-    const q = sc((da + db) / 2) * k;
-    const rowA = (((da * M) % stripH) + stripH) % stripH;
-    const rowB = rowA + (db - da) * M;
-    if (rowB <= stripH) slice(rowA, rowB, ya, y, q);
+    ctx.drawImage(bg, 0, rowA, BG.w, rowB - rowA, cx - PLAY_C * q, ya, BG.w * q, yb - ya + 0.6);
+  for (let ya = 0; ya < ch; ya += STRIP_PX) {
+    const yb = Math.min(ch, ya + STRIP_PX);
+    const dTop = dAt(ya);
+    const dBot = dAt(yb);
+    const q = (bgK / k) * sc((dTop + dBot) / 2) * k;
+    const rTop = rowOf(dTop);
+    const rBot = rTop + (dTop - dBot) * bm;
+    if (rBot <= stripH) slice(rTop, rBot, ya, yb, q);
     else {
-      // 띠가 한 바퀴 도는 줄: 둘로 나눠 그린다
-      const yw = Y(da + (stripH - rowA) / M);
-      slice(rowA, stripH, yw, y, q);
-      slice(0, rowB - stripH, ya, yw, q);
+      // 띠가 한 바퀴 도는 줄: 둘로 나눠 그린다 (03 의 아래 끝 → 01 의 위 끝)
+      const yw = ya + ((yb - ya) * (stripH - rTop)) / (rBot - rTop);
+      slice(rTop, stripH, ya, yw, q);
+      slice(0, rBot - stripH, yw, yb, q);
     }
   }
 
@@ -194,14 +169,6 @@ export function drawSandboard(ctx: CanvasRenderingContext2D, cw: number, ch: num
     const x = side * (1.24 + hash(i + 50) * 0.36);
     const d = i * 11 + hash(i + 9) * 4;
     at(d, () => spr(ctx, art, id, X(x, d), Y(d), DECO_K * k * sc(d) * 0.9));
-  }
-  // 더 바깥 (원근으로 넓어지는 화면 위쪽 구석 — 모래만 있으면 허전하다): 바위·선인장·야자수·유적
-  for (let i = Math.max(1, Math.floor(dMin / 9)); i * 9 < Math.min(dMax, SAND.length - 10); i++) {
-    const side = hash(i + 7) < 0.5 ? -1 : 1;
-    const id = OUTER[Math.floor(hash(i + 31) * OUTER.length)];
-    const x = side * (1.85 + hash(i + 21) * 0.7);
-    const d = i * 9 + hash(i + 3) * 4;
-    at(d, () => spr(ctx, art, id, X(x, d), Y(d), DECO_K * k * sc(d) * (0.85 + hash(i + 5) * 0.3)));
   }
   // 출발: 천막 · 보드 거치대 · 항아리 / 결승: 스핑크스 · 피라미드 · 등불
   const deco = (id: string, x: number, d: number, m = 1) => at(d, () => spr(ctx, art, id, X(x, d), Y(d), DECO_K * k * sc(d) * m));
