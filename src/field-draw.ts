@@ -1,6 +1,7 @@
+import { image } from './assets.ts';
 import { AXE_FPS, AXE_ROW, BOAT_FPS, BOAT_ROW, CAT_FPS, CAT_ROW, SNOW_FPS, SNOW_ROW } from './cat.ts';
 import { drawEmote } from './emote.ts';
-import { BLOCK, BRIDGE, FIELD, FOREST, isOpen, WALK, warpLocked, WATER, type FieldEvent, type FieldState, type Terrain, type Warp } from './field.ts';
+import { BLOCK, BRIDGE, FIELD, FOREST, isOpen, RISE, SPIT, WALK, warpLocked, WATER, WHALE, type FieldEvent, type FieldState, type Terrain, type Warp, type Whale } from './field.ts';
 import { drawFrame, type Sheet } from './sheet.ts';
 
 export type FieldSheets = { cat: Sheet; axe: Sheet; boat: Sheet; snow: Sheet };
@@ -227,6 +228,7 @@ export function fieldFx(events: FieldEvent[]) {
       for (let i = 0; i < 9; i++)
         parts.push({ kind: 'drop', x: e.x + rand(-6, 6) * U, y: e.y - 2 * U, vx: rand(-30, 30) * U, vy: rand(-70, -35) * U, t: 0, life: rand(0.35, 0.55), size: rand(0.9, 1.6) * U, rot: 0, vr: 0, color: 'rgba(235, 250, 255, 0.95)' });
     } else if (e.type === 'ripple') ring(e.x, e.y, 16 * U, 1);
+    else if (e.type === 'whale') whaleFx(e.what, e.x, e.y);
     else if (e.type === 'stroke') {
       ring(e.x + rand(-4, 4) * U, e.y + 2 * U, 7 * U, 0.8);
       for (let i = 0; i < 3; i++)
@@ -275,6 +277,145 @@ function drawBits(ctx: CanvasRenderingContext2D) {
     ctx.fill();
   }
   ctx.globalAlpha = 1;
+}
+
+// ── 바다 고래 (field.json whale · 시트 art/characters/whale — 6×6 균등 칸) ──────────────────
+// 0행 그림자(위에서 본 헤엄, 머리가 아래) · 1행 솟구침 · 2행 입 벌림 · 3행 꿀꺽·입 다묾 · 4행 냠냠 · 5행 잠수
+/** 앞모습 칸에서 물에 닿는 선 · 벌린 입 가운데 (칸 위에서부터 비율 — 시트에서 잰 값) */
+const W_FOOT = 0.8;
+const W_MOUTH = 0.44;
+let whaleImg: HTMLImageElement | null = null;
+/** 배를 처음 탈 때 불러온다 (그림 0.8MB — 뭍만 걸으면 안 받는다) */
+const whaleSheet = () => (whaleImg ??= image(WHALE.sheet).img);
+const seg = (t: number, a: number, b: number) => Math.min(1, Math.max(0, (t - a) / (b - a)));
+const nth = (k: number, n: number) => Math.min(n - 1, Math.floor(k * n));
+/** 고래가 솟는 자리 (배 바로 뒤 — 물에 닿는 선) · 칸 크기 · 벌린 입 가운데 높이 */
+function whaleAt(w: { x: number; y: number }) {
+  const size = WHALE.size * FIELD.catBody;
+  const y = w.y - WHALE.behind * FIELD.catBody;
+  return { x: w.x, y, size, my: y - (W_FOOT - W_MOUTH) * size };
+}
+
+function whaleCell(ctx: CanvasRenderingContext2D, row: number, col: number, x: number, y: number, size: number, alpha = 1) {
+  const img = whaleSheet();
+  if (!img.complete || !img.naturalWidth || alpha <= 0) return;
+  const C = img.naturalWidth / 6;
+  ctx.save();
+  ctx.globalAlpha *= alpha;
+  ctx.drawImage(img, col * C, row * C, C, C, x - size / 2, y - size * W_FOOT, size, size);
+  ctx.restore();
+}
+
+/** 물속 그림자: 헤엄 그림(머리가 아래)을 맴도는 방향으로 돌려 수면에 눕힌다. 6컷을 겹쳐 가며 꿈틀거린다 */
+function whaleShadow(ctx: CanvasRenderingContext2D, x: number, y: number, ang: number, alpha: number, t: number) {
+  const img = whaleSheet();
+  if (!img.complete || !img.naturalWidth || alpha <= 0) return;
+  const C = img.naturalWidth / 6;
+  const size = WHALE.shadow * FIELD.catBody;
+  const f = t * 2.2;
+  const i = Math.floor(f) % 6;
+  const mix = f - Math.floor(f);
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(1, FIELD.vertical);
+  ctx.rotate(ang);
+  for (const [col, a] of [[i, 1 - mix], [(i + 1) % 6, mix]]) {
+    ctx.globalAlpha = alpha * a;
+    ctx.drawImage(img, col * C, 0, C, C, -size / 2, -size / 2, size, size);
+  }
+  ctx.restore();
+}
+
+/** 물속 (배·물결보다 먼저): 맴도는 그림자 — 나타날 땐 멀리서 다가오고, 흐려질 땐 멀어진다. 솟구치기 직전엔 배 밑으로 모인다 */
+function drawWhaleUnder(ctx: CanvasRenderingContext2D, w: Whale, t: number) {
+  const R = WHALE.orbit * FIELD.catBody;
+  const orbit = (r: number, alpha: number) => whaleShadow(ctx, w.x + Math.cos(w.ang) * r, w.y + Math.sin(w.ang) * r * FIELD.vertical, w.ang, alpha * 0.85, t);
+  if (w.phase === 'lurk' || w.phase === 'leave') orbit(R * (1 + 0.6 * (1 - w.alpha)), w.alpha);
+  else if (w.phase === 'rise' && w.t < RISE.dash) {
+    const k = w.t / RISE.dash;
+    orbit(R * Math.max(0, 1 - k / 0.6) ** 2, 1 - seg(k, 0.4, 0.7));
+    const a = whaleAt(w);
+    whaleCell(ctx, 1, k < 0.75 ? 0 : 1, a.x, a.y, a.size, seg(k, 0.4, 0.75)); // 배 밑으로 떠오르는 그림자
+  }
+}
+
+/** 물 위 (배보다 먼저 — 고래는 배 바로 뒤에 솟는다): 솟구침 → 입 벌림 → 꿀꺽 → 냠냠 / 뱉기: 솟구침 → 입 벌림 → 퉤 → 잠수 */
+function drawWhaleAbove(ctx: CanvasRenderingContext2D, w: Whale) {
+  const a = whaleAt(w);
+  const t = w.t;
+  if (w.phase === 'rise' || w.phase === 'gulped') {
+    if (t < RISE.dash) return;
+    const [row, col] =
+      t < RISE.emerge
+        ? [1, 2 + nth(seg(t, RISE.dash, RISE.emerge), 4)]
+        : t < RISE.open
+          ? [2, nth(seg(t, RISE.emerge, RISE.open), 6)]
+          : t < RISE.gulp
+            ? [3, nth(seg(t, RISE.open, RISE.gulp), 2)]
+            : t < RISE.close
+              ? [3, 2 + nth(seg(t, RISE.gulp, RISE.close), 4)]
+              : [4, Math.floor((t - RISE.close) * 7.5) % 6]; // 냠냠 (배 속으로 넘어가는 동안에도)
+    whaleCell(ctx, row, col, a.x, a.y, a.size);
+  } else if (w.phase === 'spit') {
+    const [row, col] =
+      t < SPIT.emerge
+        ? [1, 3 + nth(seg(t, 0, SPIT.emerge), 3)]
+        : t < SPIT.open
+          ? [2, nth(seg(t, SPIT.emerge, SPIT.open), 6)]
+          : t < SPIT.close
+            ? [3, nth(seg(t, SPIT.open, SPIT.close), 6)]
+            : [5, nth(seg(t, SPIT.close, SPIT.end), 6)];
+    whaleCell(ctx, row, col, a.x, a.y, a.size, Math.min(1, (SPIT.end - t) / 0.3));
+  }
+}
+
+/**
+ * 고래와 함께 움직이는 배: 삼킬 땐 입속으로 빨려 들어가고(꿀꺽 뒤엔 안 보인다), 뱉을 땐 입에서 튀어나와 날아와 떨어진다.
+ * null = 그대로 · 'hide' = 안 보임 · 아니면 배 가운데(평소 자리 cx, cy 에서 출발)가 갈 곳과 크기 배율 · 회전
+ */
+function boatWithWhale(w: Whale, cx: number, cy: number): null | 'hide' | { x: number; y: number; scale: number; spin: number } {
+  const m = whaleAt(w);
+  if (w.phase === 'rise' || w.phase === 'gulped') {
+    if (w.t >= RISE.gulp) return 'hide';
+    if (w.t < RISE.open) return null;
+    const k = seg(w.t, RISE.open, RISE.gulp) ** 2;
+    return { x: cx + (m.x - cx) * k, y: cy + (m.my - cy) * k, scale: 1 - 0.6 * k, spin: k * 1.4 };
+  }
+  if (w.phase === 'spit') {
+    if (w.t < SPIT.out) return 'hide';
+    if (w.t >= SPIT.land) return null;
+    const k = seg(w.t, SPIT.out, SPIT.land);
+    return { x: m.x + (cx - m.x) * k, y: m.my + (cy - m.my) * k - Math.sin(Math.PI * k) * 2.4 * FIELD.catBody, scale: 0.4 + 0.6 * k, spin: (1 - k) * Math.PI * 2 };
+  }
+  return null;
+}
+
+/** 고래가 물 위로 튀어나오는 순간 · 배를 뱉는 순간 화면이 살짝 흔들린다 (px) */
+function whaleShake(w: Whale) {
+  if (w.phase === 'rise' && w.t >= RISE.dash) return 3.5 * (1 - seg(w.t, RISE.dash, RISE.dash + 0.5));
+  if (w.phase === 'spit') return 3 * (1 - seg(w.t, 0, 0.45)) + (w.t >= SPIT.out ? 2 * (1 - seg(w.t, SPIT.out, SPIT.out + 0.3)) : 0);
+  return 0;
+}
+
+/** 고래 사건 → 물보라 · 물결 */
+function whaleFx(what: string, x: number, y: number) {
+  const a = whaleAt({ x, y });
+  const K = a.size;
+  const spray = (n: number, px: number, py: number, spread: number, up: number) => {
+    for (let i = 0; i < n; i++)
+      parts.push({ kind: 'drop', x: px + rand(-spread, spread), y: py - rand(0, K * 0.1), vx: rand(-K * 0.5, K * 0.5), vy: -rand(up * 0.5, up), t: 0, life: rand(0.55, 0.95), size: rand(1, 2.2) * U * 1.6, rot: 0, vr: 0, color: 'rgba(235, 250, 255, 0.95)' });
+  };
+  if (what === 'near') ring(x, y, K * 0.35, 1.6);
+  else if (what === 'breach') {
+    ring(a.x, a.y, K * 0.55, 1.2);
+    ring(a.x, a.y, K * 0.8, 1.7);
+    spray(28, a.x, a.y, K * 0.35, K * 1.2);
+  } else if (what === 'gulp') spray(12, a.x, a.my, K * 0.2, K * 0.8);
+  else if (what === 'spit') spray(18, a.x, a.my, K * 0.2, K * 1.1);
+  else if (what === 'dive') {
+    ring(a.x, a.y, K * 0.45, 1.4);
+    ring(a.x, a.y, K * 0.7, 2);
+  }
 }
 
 // ── 숲에서 발 앞을 가리는 수풀: 발밑의 배경 그림을 고양이 다리 위에 다시 그린다 ─────────────
@@ -328,8 +469,9 @@ export function drawField(
   const sc = Math.min(Math.max(cw / V0, ch / V1), cw / 480);
   const vw = cw / sc;
   const vh = ch / sc;
-  const cx = vw >= W ? W / 2 : Math.min(W - vw / 2, Math.max(vw / 2, look ? look.x : s.camX));
-  const cy = vh >= H ? H / 2 : Math.min(H - vh / 2, Math.max(vh / 2, look ? look.y : s.camY));
+  const amp = whaleShake(s.whale);
+  const cx = (vw >= W ? W / 2 : Math.min(W - vw / 2, Math.max(vw / 2, look ? look.x : s.camX))) + amp * Math.sin(t * 71);
+  const cy = (vh >= H ? H / 2 : Math.min(H - vh / 2, Math.max(vh / 2, look ? look.y : s.camY))) + amp * Math.cos(t * 53);
   fieldView.sc = sc;
   fieldView.ox = cw / 2 - cx * sc;
   fieldView.oy = ch / 2 - cy * sc;
@@ -377,7 +519,10 @@ export function drawField(
     ring(s.x - (s.moving ? s.flip * 7 * U : 0), s.y + U, (s.moving ? 11 : 16) * U, s.moving ? 0.9 : 1.6);
   }
   stepParts(dt);
+  if (afloat) whaleSheet(); // 배를 타면 고래 그림을 미리 불러 둔다
+  drawWhaleUnder(ctx, s.whale, t);
   drawRings(ctx);
+  drawWhaleAbove(ctx, s.whale);
 
   // 시트마다 고양이 키를 맞춘다. 배 시트는 배를 크게 그리느라 고양이가 절반 크기라서,
   // 배 옆에 서 있는 컷(오르기 첫 컷 · 내리기 마지막 컷)의 키로 맞춘다 — 대기 행은 배 높이라 기준이 못 된다
@@ -436,10 +581,23 @@ export function drawField(
     ctx.ellipse(s.x, s.y, r, r * 0.36, 0, 0, Math.PI * 2);
     ctx.fill();
   }
-  drawFrame(ctx, sheet, row, col, s.x, s.y + bob, size, s.flip, rs);
+  // 고래가 삼키거나 뱉는 중이면 배가 고래를 따라 움직인다 (가운데 = 그 컷 그림 상자의 가운데)
+  const fr = sheet.frames[row]?.[Math.min(col, sheet.frames[row].length - 1)];
+  const q0 = (size / sheet.base) * (rs ?? sheet.rowScale[row] ?? 1);
+  const mid = fr ? { x: s.x + s.flip * (fr.ox + fr.sw / 2) * q0, y: s.y + bob + (fr.oy + fr.sh / 2) * q0 } : { x: s.x, y: s.y };
+  const ride = boatWithWhale(s.whale, mid.x, mid.y);
+  if (ride === null || !fr) drawFrame(ctx, sheet, row, col, s.x, s.y + bob, size, s.flip, rs);
+  else if (ride !== 'hide') {
+    const q = q0 * ride.scale;
+    ctx.save();
+    ctx.translate(ride.x, ride.y);
+    ctx.rotate(ride.spin);
+    drawFrame(ctx, sheet, row, col, -s.flip * (fr.ox + fr.sw / 2) * q, -(fr.oy + fr.sh / 2) * q, size * ride.scale, s.flip, rs);
+    ctx.restore();
+  }
   if (s.mode === 'axe') drawFoliage(ctx, s.x, s.y, body);
   drawBits(ctx);
-  drawEmote(ctx, s.x, s.y - body * (afloat ? 1.5 : 1.2), body * 0.8);
+  if (ride === null) drawEmote(ctx, s.x, s.y - body * (afloat ? 1.5 : 1.2), body * 0.8);
 }
 
 /**

@@ -5,7 +5,7 @@ import { makeBag } from './bag.ts';
 import { hitPlayer, makeDungeon, maxHp, pick, PLAYER, strike, updateDungeon, WAVES, waveKinds, type Dungeon } from './dungeon.ts';
 import { ENEMY_DEFS, makeEnemy, type Enemy } from './enemy.ts';
 import { room, ROOMS } from './iso.ts';
-import { gainXp, learn, MAX_LV, need, rollCards, SKILL_IDS, SKILLS, XP, type SkillId } from './skills.ts';
+import { gainXp, learn, MAX_LV, need, rollCards, SKILL_IDS, SKILLS, SLOTS, XP, type SkillId } from './skills.ts';
 
 const sheets = {} as never;
 const DT = 1 / 60;
@@ -52,6 +52,27 @@ const run = (d: Dungeon, secs: number, input = still) => {
       } else if (c.id === 'hairball') other++;
     }
   assert.ok(spool > other * 1.8, `가진 기술이 더 잘 나온다 (${spool} vs ${other})`);
+  // 기술 칸: SLOTS 가지를 가지면 새 기술은 안 나오고 가진 기술(최대가 아닌 것) 레벨 업만
+  const five = SKILL_IDS.slice(0, SLOTS);
+  const capped = makeDungeon(sheets, 'alley');
+  five.forEach((id, i) => {
+    for (let k = 0; k <= i % 3; k++) learn(capped.run, id);
+  });
+  while (capped.run.skills[five[0]]! < MAX_LV) learn(capped.run, five[0]); // five[0] 은 최대
+  assert.equal(capped.run.skills[five[0]], MAX_LV);
+  for (let i = 0; i < 300; i++)
+    for (const c of rollCards(capped.run, rng)) {
+      assert.ok(five.includes(c.id as SkillId) && c.id !== five[0], `기술 칸이 다 차면 가진 기술 레벨 업만 (${c.id})`);
+      assert.equal(c.lv, capped.run.skills[c.id as SkillId]! + 1);
+    }
+  for (const id of five) capped.run.skills[id] = MAX_LV;
+  assert.deepEqual(rollCards(capped.run, rng), [{ id: 'heal', lv: 0 }], '가진 기술이 다 최대면 간식');
+  const four = makeDungeon(sheets, 'alley');
+  for (const id of SKILL_IDS.slice(0, SLOTS - 1)) learn(four.run, id);
+  assert.ok(
+    Array.from({ length: 200 }, () => rollCards(four.run, rng)).some((cs) => cs.some((c) => c.lv === 1)),
+    '한 칸 남았으면 새 기술도 나온다',
+  );
   for (const id of SKILL_IDS) d.run.skills[id] = MAX_LV;
   assert.deepEqual(rollCards(d.run, rng), [{ id: 'heal', lv: 0 }]);
   // 모든 기술: 레벨 5개 · 이름 · 그림
@@ -167,8 +188,22 @@ const one = (id: SkillId, lvl: number, mons: [string, number, number][], secs: n
   assert.ok(d.enemies.every((e) => lost(e) === 10), '둘러싸이면 하악');
 }
 {
-  let d = one('red_dot', 1, [['fat', 4, 0]], 2);
-  assert.ok(lost(d.enemies[0]) >= 8, `빨간 점: 쫓아가 지진다 (${lost(d.enemies[0])})`);
+  // 빨간 점: 평소엔 없다 → 0.3초 뒤 조준(아프지 않다) → 발사(초당 dps × fire) → 사라진다 → cd 마다 다시
+  let d = arena({ red_dot: 1 }, [['fat', 4, 0]]);
+  const L1 = SKILLS.red_dot.levels[0] as Record<string, number>;
+  const lasers = () => d.run.ents.filter((e) => e.k === 'laser').length;
+  run(d, 0.25);
+  assert.equal(lasers(), 0, '빨간 점: 쏘기 전엔 아무것도 없다');
+  run(d, 0.1 + L1.aim / 2);
+  assert.ok(lasers() === 1 && lost(d.enemies[0]) === 0, '조준하는 동안은 안 아프다');
+  run(d, L1.aim / 2 + L1.fire + 0.05);
+  assert.ok(lasers() === 0, '쏘고 나면 사라진다');
+  assert.ok(Math.abs(lost(d.enemies[0]) - Math.floor(L1.dps * L1.fire)) <= 1, `발사 동안만 지진다 (${lost(d.enemies[0])})`);
+  run(d, L1.cd);
+  assert.ok(lost(d.enemies[0]) > L1.dps * L1.fire, 'cd 마다 다시 쏜다');
+  d = arena({ red_dot: 5 }, [['fat', 3, 0], ['sword', -3, 1], ['bow', 0, 4], ['fat', 30, 30]]);
+  run(d, 0.3 + 0.01);
+  assert.equal(lasers(), 3, '빨간 점 5: 레이저 3줄 (사거리 밖 적은 안 노린다)');
   d = arena({ pounce: 1 }, [['sword', 3, 0], ['fat', -3, 0]]);
   d.enemies[1].hp = 1500; // 가장 튼튼한 적
   run(d, 1.0); // 0.3초 뒤 찍고 0.6초 뒤 치명타

@@ -149,6 +149,46 @@ async function walk(page, getPos, target, keysFor, done, ms = 8000) {
 }
 
 /**
+ * 지금 미로(__game.maze)를 BFS 로 풀어 모퉁이마다 WASD 로 걸어 출구까지 간다. 세 번째 모퉁이에서 shot 화면을 찍는다.
+ * 돌려주는 것: 걸음 수
+ */
+async function solveMaze(page, shot) {
+  const m = await page.evaluate(() => ({ w: __game.maze.w, h: __game.maze.h, solid: __game.maze.grid.solid, exit: __game.maze.exit }));
+  const W = m.w;
+  const dist = new Int32Array(W * m.h).fill(-1);
+  const q = [1 * W + 1];
+  dist[q[0]] = 0;
+  for (let h = 0; h < q.length; h++) {
+    const c = q[h];
+    const x = c % W;
+    const z = (c - x) / W;
+    for (const [nx, nz] of [[x + 1, z], [x - 1, z], [x, z + 1], [x, z - 1]])
+      if (nx >= 0 && nz >= 0 && nx < W && nz < m.h && !m.solid[nz * W + nx] && dist[nz * W + nx] < 0) {
+        dist[nz * W + nx] = dist[c] + 1;
+        q.push(nz * W + nx);
+      }
+  }
+  const path = [m.exit];
+  for (let [x, z] = m.exit; dist[z * W + x] > 0; ) {
+    [x, z] = [[x + 1, z], [x - 1, z], [x, z + 1], [x, z - 1]].find(([nx, nz]) => nx >= 0 && nz >= 0 && nx < W && nz < m.h && !m.solid[nz * W + nx] && dist[nz * W + nx] === dist[z * W + x] - 1);
+    path.push([x, z]);
+  }
+  path.reverse();
+  const corners = path.filter((p, i) => i === path.length - 1 || (i > 0 && path[i - 1][0] !== path[i + 1][0] && path[i - 1][1] !== path[i + 1][1]));
+  const mazeKeys = (p, t) => [
+    ...(t[0] - p.x > 0.08 ? ['KeyD'] : t[0] - p.x < -0.08 ? ['KeyA'] : []),
+    ...(t[1] - p.y > 0.08 ? ['KeyS'] : t[1] - p.y < -0.08 ? ['KeyW'] : []),
+  ];
+  const mazePos = () => ({ x: __game.maze.x / 2, y: __game.maze.z / 2 });
+  for (const [i, [cx, cz]] of corners.entries()) {
+    const done = eval(`() => __game.maze.phase === 'done' || Math.hypot(__game.maze.x / 2 - ${cx + 0.5}, __game.maze.z / 2 - ${cz + 0.5}) < 0.12`);
+    await walk(page, mazePos, [cx + 0.5, cz + 0.5], mazeKeys, done, 6000);
+    if (i === 3 && shot) await page.screenshot({ path: fsPath(new URL(shot, OUT)) });
+  }
+  return path.length - 1;
+}
+
+/**
  * 필드에서 지형 마스크를 따라 목표까지 걸어간다. 걸을 수 있는 칸(걷기·숲) 위로 BFS 길을 찾아
  * 경유점을 하나씩 밟는다 — 암벽·바위이 가로막아도 돌아간다. 마스크를 고쳐도 그대로 쓸 수 있다.
  */
@@ -927,46 +967,11 @@ try {
     const inMaze = await page.waitForFunction(() => __game.scene === 'maze', { timeout: 6000 }).then(() => true, () => false);
     check(inMaze, `${w.label} 포탈에 서 있으면 미로`);
     const coins0 = await page.evaluate(() => __game.bag.coins);
-    const m = await page.evaluate(() => ({ w: __game.maze.w, h: __game.maze.h, solid: __game.maze.grid.solid, exit: __game.maze.exit, seen: __game.maze.seen.reduce((a, b) => a + b, 0) }));
+    const m = await page.evaluate(() => ({ w: __game.maze.w, h: __game.maze.h, seen: __game.maze.seen.reduce((a, b) => a + b, 0) }));
     check(m.seen < m.w * m.h * 0.12, `처음엔 횃불 둘레만 보인다 (${m.seen}/${m.w * m.h}칸)`);
-    // 길을 풀어 모퉁이만 경유점으로
-    const W = m.w;
-    const dist = new Int32Array(W * m.h).fill(-1);
-    const q = [1 * W + 1];
-    dist[q[0]] = 0;
-    for (let h = 0; h < q.length; h++) {
-      const c = q[h];
-      const x = c % W;
-      const z = (c - x) / W;
-      for (const [nx, nz] of [[x + 1, z], [x - 1, z], [x, z + 1], [x, z - 1]])
-        if (nx >= 0 && nz >= 0 && nx < W && nz < m.h && !m.solid[nz * W + nx] && dist[nz * W + nx] < 0) {
-          dist[nz * W + nx] = dist[c] + 1;
-          q.push(nz * W + nx);
-        }
-    }
-    const path = [m.exit];
-    for (let [x, z] = m.exit; dist[z * W + x] > 0; ) {
-      [x, z] = [[x + 1, z], [x - 1, z], [x, z + 1], [x, z - 1]].find(([nx, nz]) => nx >= 0 && nz >= 0 && nx < W && nz < m.h && !m.solid[nz * W + nx] && dist[nz * W + nx] === dist[z * W + x] - 1);
-      path.push([x, z]);
-    }
-    path.reverse();
-    const corners = path.filter((p, i) => i === path.length - 1 || (i > 0 && (path[i - 1][0] !== path[i + 1][0] && path[i - 1][1] !== path[i + 1][1])));
-    const mazeKeys = (p, t) => [
-      ...(t[0] - p.x > 0.08 ? ['KeyD'] : t[0] - p.x < -0.08 ? ['KeyA'] : []),
-      ...(t[1] - p.y > 0.08 ? ['KeyS'] : t[1] - p.y < -0.08 ? ['KeyW'] : []),
-    ];
-    const mazePos = () => ({ x: __game.maze.x / 2, y: __game.maze.z / 2 });
-    let shot = false;
-    for (const [cx, cz] of corners) {
-      const done = eval(`() => __game.maze.phase === 'done' || Math.hypot(__game.maze.x / 2 - ${cx + 0.5}, __game.maze.z / 2 - ${cz + 0.5}) < 0.12`);
-      await walk(page, mazePos, [cx + 0.5, cz + 0.5], mazeKeys, done, 6000);
-      if (!shot && corners.indexOf(corners.find((c) => c[0] === cx && c[1] === cz)) >= 3) {
-        shot = true;
-        await page.screenshot({ path: fsPath(new URL('maze-fog.png', OUT)) });
-      }
-    }
+    const steps = await solveMaze(page, 'maze-fog.png');
     const end = await page.evaluate(() => ({ phase: __game.maze.phase, got: __game.maze.got, bonus: __game.maze.bonus, t: __game.maze.t, coins: __game.bag.coins, best: __game.records.maze }));
-    check(end.phase === 'done', `길을 따라 걸으면 출구에서 탈출 (${path.length - 1}걸음, ${end.t.toFixed(1)}초)`);
+    check(end.phase === 'done', `길을 따라 걸으면 출구에서 탈출 (${steps}걸음, ${end.t.toFixed(1)}초)`);
     check(end.coins === coins0 + end.got + end.bonus && end.bonus >= 5, `냥코인: 주운 ${end.got} + 탈출 보너스 ${end.bonus}`);
     check(end.best !== null && end.best <= end.t + 0.1, `최고 기록 저장 (${end.best}초)`);
     await sleep(400);
@@ -975,6 +980,65 @@ try {
     const out = await page.waitForFunction(() => __game.scene === 'field', { timeout: 4000 }).then(() => true, () => false);
     const pos = await page.evaluate(() => [__game.field.x, __game.field.y]);
     check(out && Math.hypot(pos[0] - w.back[0], pos[1] - w.back[1]) < 5, '돌아가기 → 피라미드 포탈 앞');
+    check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
+    await page.close();
+  }
+  // 고래 (실제 키): 바다 한가운데 배를 세워 두면 3초 뒤 그림자가 맴돌고, 움직이면 흐려져 사라진다 → 다시 세워 두면 3~8초 뒤 솟구쳐 삼킨다
+  // (솟구치는 동안 키를 눌러도 안 움직인다) → 고래 배 속 미로를 BFS 로 풀어 숨구멍으로 탈출 · 기록 · R 로 다시 안 됨 →
+  // 가운데 '바다로' 버튼 → 삼켰던 자리에서 배째 뱉어 낸다 → 나온 뒤 10초 동안은 가만히 있어도 안 나온다 (화면 whale-*.png)
+  {
+    const { page, errors } = await open('field');
+    const SEA = [3700, 1600];
+    const phase = () => page.evaluate(() => __game.field.whale.phase);
+    const until = (fn, ms) => page.waitForFunction(fn, { polling: 'raf', timeout: ms }).then(() => true, () => false);
+    await page.evaluate(([x, y]) => Object.assign(__game.field, { x, y, camX: x, camY: y, mode: 'boat', armed: true }), SEA);
+    const t0 = Date.now();
+    const lurk = await until(() => __game.field.whale.phase === 'lurk', 6000);
+    check(lurk && Date.now() - t0 > 2500, `바다에 배를 3초 세워 두면 고래 그림자가 맴돈다 (${((Date.now() - t0) / 1000).toFixed(1)}초)`);
+    await sleep(1300);
+    await page.screenshot({ path: fsPath(new URL('whale-shadow.png', OUT)) });
+    await page.keyboard.down('KeyW');
+    await sleep(300);
+    const leaving = await phase();
+    await sleep(1700);
+    await page.keyboard.up('KeyW');
+    check(leaving === 'leave' && (await phase()) === 'none', `배가 움직이면 그림자가 흐려져 사라진다 (${leaving} → ${await phase()})`);
+    // 다시 세워 두면 그림자 → 3~8초 맴돌고 솟구친다
+    await page.evaluate(([x, y]) => Object.assign(__game.field, { x, y }), SEA); // 처음 자리(넓은 바다)로
+    check(await until(() => __game.field.whale.phase === 'lurk', 6000), '다시 세워 두면 그림자가 돌아온다');
+    const hold = await page.evaluate(() => __game.field.whale.hold);
+    const rose = await until(() => __game.field.whale.phase === 'rise', 10000);
+    check(rose && hold >= 3 && hold <= 8, `그림자가 ${hold.toFixed(1)}초(3~8초 무작위) 맴돌다 솟구친다`);
+    const pos0 = await page.evaluate(() => [__game.field.x, __game.field.y]);
+    await page.keyboard.down('KeyA');
+    await until(() => __game.field.whale.phase !== 'rise' || __game.field.whale.t >= 2.35, 5000);
+    await page.screenshot({ path: fsPath(new URL('whale-gulp.png', OUT)) });
+    const pos1 = await page.evaluate(() => [__game.field.x, __game.field.y]);
+    await page.keyboard.up('KeyA');
+    check(pos1[0] === pos0[0] && pos1[1] === pos0[1], '솟구쳐 삼키는 동안은 키를 눌러도 안 움직인다');
+    const inBelly = await until(() => __game.scene === 'maze' && __game.maze.theme === 'whale', 8000);
+    check(inBelly, '삼켜지면 고래 배 속 미로');
+    await sleep(500);
+    await page.screenshot({ path: fsPath(new URL('whale-maze.png', OUT)) });
+    const coins0 = await page.evaluate(() => __game.bag.coins);
+    const steps = await solveMaze(page, 'whale-maze-fog.png');
+    const end = await page.evaluate(() => ({ phase: __game.maze.phase, got: __game.maze.got, bonus: __game.maze.bonus, t: __game.maze.t, coins: __game.bag.coins, best: __game.records.whale, w: __game.maze.w }));
+    check(end.phase === 'done' && end.w === 19, `숨구멍까지 걸어 탈출 (${steps}걸음, ${end.t.toFixed(1)}초)`);
+    check(end.coins === coins0 + end.got + end.bonus && end.best !== null && end.best <= end.t + 0.1, `냥코인 ${end.got} + 보너스 ${end.bonus} · 고래 기록 ${end.best}초`);
+    await page.keyboard.press('KeyR');
+    await sleep(600);
+    check((await page.evaluate(() => __game.maze.phase)) === 'done', '고래 배 속은 R 로 다시 할 수 없다');
+    await page.screenshot({ path: fsPath(new URL('whale-done.png', OUT)) });
+    await click2(page, (await page.evaluate(() => __game.miniScreen())).solo);
+    const out = await until(() => __game.scene === 'field' && __game.field.whale.phase === 'spit', 4000);
+    const back = await page.evaluate(() => ({ x: __game.field.x, y: __game.field.y, mode: __game.field.mode }));
+    check(out && back.x === SEA[0] && back.y === SEA[1] && back.mode === 'boat', `'바다로' → 삼켰던 자리에서 배째 뱉어 낸다 (${back.x | 0}, ${back.y | 0})`);
+    await until(() => __game.field.whale.phase !== 'spit' || __game.field.whale.t >= 1.4, 4000);
+    await page.screenshot({ path: fsPath(new URL('whale-spit.png', OUT)) });
+    await until(() => __game.field.whale.phase === 'none', 5000);
+    const cool = await page.evaluate(() => __game.field.whale.cool);
+    await sleep(7000);
+    check(cool > 9 && (await phase()) === 'none', `나온 뒤 10초 동안은 가만히 있어도 안 나온다 (${cool.toFixed(1)}초 · 7초 뒤 ${await phase()})`);
     check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
     await page.close();
   }
@@ -1173,6 +1237,47 @@ try {
     await sleep(200);
     const got = await page.evaluate((id) => ({ open: !!__game.dungeon.choose, lv: __game.dungeon.run.skills[id] ?? 0 }), id);
     check(!got.open && got.lv >= 1, `휴대폰: 세 번째 카드를 눌러 고른다 (${id})`);
+    check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
+    await page.close();
+  }
+
+  // 3-8-0) 빨간 점: 평소엔 아무것도 없고, 쏠 때만 조준선(가는 점선 + 조여드는 조준경) → 레이저 빔. 화면 dungeon-laser-aim.png · dungeon-laser-fire.png
+  //  기술 칸: 5가지를 배우면 카드엔 가진 기술 레벨 업만 (위에 "기술 칸 5/5"), 오른쪽 위엔 빈 칸 점선. 화면 dungeon-cards-full.png
+  {
+    const { page, errors } = await open('dungeon');
+    await page.evaluate(() => {
+      setInterval(() => (__game.dungeon.P.invT = 1), 40);
+      __game.dungeon.auto = false; // 냥펀치로 먼저 쓰러뜨리지 않게
+      __game.dungeon.enemies.forEach((e) => (e.hp = 9999));
+      __game.learnSkill('red_dot', 3);
+    });
+    const seen = await page.evaluate(async () => {
+      const out = [];
+      const t0 = performance.now();
+      while (performance.now() - t0 < 3200) {
+        const ls = __game.dungeon.run.ents.filter((e) => e.k === 'laser' && e.t >= 0);
+        const k = ls.length ? (ls[0].t < ls[0].aim ? 'aim' : 'fire') : '-';
+        if (out[out.length - 1] !== k) out.push(k);
+        await new Promise((r) => requestAnimationFrame(r));
+      }
+      return out;
+    });
+    const cycle = seen.join(' ');
+    check(/- aim fire -.*aim fire/.test(cycle), `빨간 점: 평소엔 없고 쏠 때만 조준 → 발사, 되풀이 (${cycle})`);
+    await page.waitForFunction(() => __game.dungeon.run.ents.some((e) => e.k === 'laser' && e.t > 0.15 && e.t < e.aim), { polling: 'raf', timeout: 4000 });
+    await page.screenshot({ path: fsPath(new URL('dungeon-laser-aim.png', OUT)) });
+    await page.waitForFunction(() => __game.dungeon.run.ents.some((e) => e.k === 'laser' && e.t > e.aim + 0.15), { polling: 'raf', timeout: 4000 });
+    await page.screenshot({ path: fsPath(new URL('dungeon-laser-fire.png', OUT)) });
+    // 기술 칸 5가지 (빨간 점 + 넷)
+    await page.evaluate(() => {
+      for (const id of ['yarn_ball', 'spool', 'hairball', 'snare']) __game.learnSkill(id, 1);
+      __game.dungeon.run.pending = 1;
+    });
+    await page.waitForFunction(() => __game.dungeon.choose, { timeout: 3000 });
+    const cards = await page.evaluate(() => ({ ids: __game.dungeon.choose.map((c) => c.id), owned: Object.keys(__game.dungeon.run.skills) }));
+    check(cards.owned.length === 5 && cards.ids.every((id) => cards.owned.includes(id)), `기술 5가지면 카드엔 가진 기술만 (${cards.ids.join(', ')})`);
+    await sleep(250);
+    await page.screenshot({ path: fsPath(new URL('dungeon-cards-full.png', OUT)) });
     check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
     await page.close();
   }

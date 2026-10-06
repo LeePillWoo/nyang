@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { ITEMS } from './bag.ts';
 import { CELL, isSolid } from './collide.ts';
-import { CHEST, distances, makeMaze, MAZE, updateMaze, type MazeState } from './maze.ts';
+import { CHEST, distances, makeMaze, MAZE, updateMaze, WHALE_CHEST, WHALE_MAZE, type MazeState } from './maze.ts';
 
 const seeded = (seed: number) => () => {
   seed |= 0;
@@ -127,5 +127,17 @@ for (let seed = 1; seed <= 30; seed++) {
   assert.equal(s.phase, 'done', '출구에 발을 들이면 탈출');
   console.log(`  미로 ${s.w}×${s.h}: 출구까지 ${path.length - 1}걸음, 곧장 걸으면 ${t.toFixed(1)}초`);
 }
+
+// 4) 고래 배 속: 같은 규칙의 조금 작은 미로 — 늘 풀리고, 출구(숨구멍)는 가장 먼 칸, 상자엔 바다 보물
+for (let seed = 1; seed <= 30; seed++) {
+  const s = makeMaze(seeded(seed), 'whale');
+  assert.ok(s.theme === 'whale' && s.w === WHALE_MAZE.w && s.h === WHALE_MAZE.h, '고래 배 속 크기');
+  const d = distances(s.grid, 1, 1);
+  const max = Math.max(...d);
+  assert.ok(d[s.exit[1] * s.w + s.exit[0]] === max && max >= 30, `고래 seed ${seed}: 숨구멍은 가장 먼 칸 (${max}걸음)`);
+  assert.ok(WHALE_CHEST.some(([id]) => id === s.chest.item) && ITEMS[s.chest.item], `고래 seed ${seed}: 진주 조개 속 ${s.chest.item}`);
+  assert.equal(solve(s)[0].join(), '1,1');
+}
+assert.ok(WHALE_CHEST.every(([id]) => ITEMS[id]), '고래 보물은 다 있는 아이템');
 
 console.log('maze.check: ok');

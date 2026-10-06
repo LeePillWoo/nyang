@@ -251,3 +251,24 @@ export function sfxWave(clear: boolean) {
 }
 /** 퐁 — 몬스터가 나타날 때 (정예는 낮고 크게) */
 export const sfxSpawn = (elite: boolean) => (elite ? tone('sawtooth', 120, 80, 0.12, 0.5) : burst('lowpass', 700, 0.8, 0.05, 0.12, 300));
+
+/** 우웅— 우웅 — 고래 그림자가 나타날 때 (낮고 길게 두 번) */
+export function sfxWhale() {
+  tone('sine', 150, 95, 0.14, 1.1);
+  tone('sine', 120, 78, 0.11, 1.3, 0.85);
+}
+/** 촤아악 — 고래가 물 위로 솟구칠 때 */
+export function sfxBreach() {
+  burst('lowpass', 1600, 0.6, 0.42, 0.9, 220);
+  tone('sine', 90, 50, 0.16, 0.5);
+}
+/** 꿀꺽 */
+export function sfxGulp() {
+  tone('sine', 300, 70, 0.22, 0.35);
+  burst('lowpass', 600, 1, 0.12, 0.3, 150);
+}
+/** 퉤 — 고래가 배를 뱉어 낼 때 */
+export function sfxSpit() {
+  burst('bandpass', 900, 0.8, 0.25, 0.35, 2600);
+  tone('triangle', 260, 700, 0.1, 0.25);
+}

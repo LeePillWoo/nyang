@@ -7,7 +7,7 @@ import { drawCoin, drawIcon } from './bag-draw.ts';
 import fxData from './data/skill-fx.json' with { type: 'json' };
 import { PLAYER, WAVES, type Dungeon } from './dungeon.ts';
 import type { Enemy } from './enemy.ts';
-import { FAMILIES, FX_ANIMS, fxLife, LINK_LIFE, lv, MAX_LV, need, orbitBoxes, punchReach, SKILLS, SNACK, type Card, type SkillFx, type SkillId } from './skills.ts';
+import { FAMILIES, FX_ANIMS, fxLife, LINK_LIFE, lv, MAX_LV, need, orbitBoxes, punchReach, SKILLS, SLOTS, SNACK, type Card, type SkillFx, type SkillId } from './skills.ts';
 import { fitText, wrapText } from './touch.ts';
 
 const CELL = fxData.cell;
@@ -74,6 +74,10 @@ const RING: Record<string, string> = {
   box_land: FAMILIES.box.color,
   mouse_burst: FAMILIES.laser.color,
 };
+
+/** 빨간 점 레이저 색 · 발사 끝 0.12초 동안 흐려진다 */
+const LASER = '#ff3b5c';
+const laserFade = (en: { t: number; aim: number; fire: number }) => Math.max(0, Math.min(1, (en.aim + en.fire - en.t) / 0.12));
 
 type ToScreen = (x: number, z: number) => { sx: number; sy: number };
 /** 그 자리에서 1m 가 화면 가로로 몇 px (아이소메트릭이라 화면 오른쪽 = 월드 (1, −1)/√2) */
@@ -228,14 +232,21 @@ export function drawSkillFloor(ctx: CanvasRenderingContext2D, d: Dungeon, t: num
       const p = to(en.x, en.z);
       const m = pxPerM(to, en.x, en.z);
       drawAnim(ctx, 'green_flame', frameAt('green_flame', t + en.x), p.sx, p.sy - 0.5 * m * 1.4, SIZE.green_flame * m * BIG, 0, 1, FX_ALPHA * Math.min(1, en.life / 0.4));
-    } else if (en.k === 'dot') {
-      const p = to(en.x, en.z);
-      const m = pxPerM(to, en.x, en.z);
-      ctx.fillStyle = 'rgba(255, 60, 90, 0.28)';
-      ctx.beginPath();
-      ctx.ellipse(p.sx, p.sy, 0.8 * m, 0.34 * m, 0, 0, Math.PI * 2);
-      ctx.fill();
-      drawAnim(ctx, 'red_dot', frameAt('red_dot', t), p.sx, p.sy, SIZE.red_dot * m * BIG);
+    } else if (en.k === 'laser' && en.t >= 0) {
+      // 조준: 바닥에 조여드는 표적 고리 · 발사: 발밑이 붉게 달아오른다
+      const e = en.e;
+      if (en.t < en.aim) {
+        const k = en.t / en.aim;
+        ring(ctx, to, e.x, e.z, 1.2 - 0.7 * k, LASER, 0.35 + 0.6 * k, 3, { dash: [8, 6], offset: -t * 80 });
+      } else {
+        const p = to(e.x, e.z);
+        const m = pxPerM(to, e.x, e.z);
+        const a = laserFade(en) * (0.3 + 0.12 * Math.sin(t * 30));
+        ctx.fillStyle = `rgba(255, 60, 90, ${a})`;
+        ctx.beginPath();
+        ctx.ellipse(p.sx, p.sy, 0.85 * m, 0.36 * m, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
     } else if (en.k === 'drop') {
       const p = to(en.x, en.z);
       const k = Math.min(1, en.t / en.T);
@@ -440,27 +451,78 @@ export function drawSkillAir(ctx: CanvasRenderingContext2D, d: Dungeon, t: numbe
         drawAnim(ctx, 'target_spawn', Math.min(7, Math.floor(k * 8)), b.sx, b.sy - e.def.size * 0.45, e.def.size * 1.05);
         break;
       }
-      case 'dot': {
-        // 레이저 빔: 고양이 앞발에서 점까지 — 넓은 빛 + 진한 심 + 하얀 속
+      case 'laser': {
+        // 빨간 점 — 조준: 가는 조준선을 따라 점이 적에게 날아가 붙는다 · 발사: 앞발에서 적까지 굵은 레이저 빔 (넓은 빛 + 진한 심 + 하얀 속).
+        // 줄이 여럿이면 나오는 자리를 옆으로 벌려 한 적에게 모여도 따로 보이게
+        if (en.t < 0) break;
+        const e = en.e;
         const a = at(P.x, P.z, 0.9);
-        const b = to(en.x, en.z);
-        const flick = 0.8 + 0.2 * Math.sin(t * 40 + en.x * 7);
+        a.x += [0, -16, 16][en.i % 3];
+        a.y += [0, 6, 6][en.i % 3];
+        const b = to(e.x, e.z);
+        const bx = b.sx;
+        const by = b.sy - e.def.size * 0.35;
+        const m = pxPerM(to, e.x, e.z);
         ctx.save();
         ctx.lineCap = 'round';
-        ctx.beginPath();
-        ctx.moveTo(a.x, a.y);
-        ctx.lineTo(b.sx, b.sy);
-        ctx.globalAlpha = 0.32 * flick;
-        ctx.strokeStyle = '#ff4d6a';
-        ctx.lineWidth = 22;
-        ctx.stroke();
-        ctx.globalAlpha = 0.95;
-        ctx.strokeStyle = '#ff2f55';
-        ctx.lineWidth = 7;
-        ctx.stroke();
-        ctx.strokeStyle = '#fff0f3';
-        ctx.lineWidth = 2.5;
-        ctx.stroke();
+        if (en.t < en.aim) {
+          const k = en.t / en.aim;
+          const ease = 1 - (1 - k) ** 3;
+          ctx.globalAlpha = 0.3 + 0.55 * k;
+          ctx.setLineDash([10, 8]);
+          ctx.lineDashOffset = -t * 120;
+          ctx.beginPath();
+          ctx.moveTo(a.x, a.y);
+          ctx.lineTo(bx, by);
+          ctx.strokeStyle = 'rgba(70, 30, 35, 0.5)';
+          ctx.lineWidth = 5;
+          ctx.stroke();
+          ctx.strokeStyle = LASER;
+          ctx.lineWidth = 2.5;
+          ctx.stroke();
+          ctx.setLineDash([]);
+          // 조여드는 조준경 (+ 모양)
+          const r = (0.75 - 0.4 * k) * m;
+          ctx.globalAlpha = 0.5 + 0.5 * k;
+          ctx.strokeStyle = LASER;
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.arc(bx, by, r, 0, Math.PI * 2);
+          for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+            ctx.moveTo(bx + dx * r * 0.55, by + dy * r * 0.55);
+            ctx.lineTo(bx + dx * r * 1.35, by + dy * r * 1.35);
+          }
+          ctx.stroke();
+          ctx.globalAlpha = 1;
+          drawAnim(ctx, 'red_dot', frameAt('red_dot', t), a.x + (bx - a.x) * ease, a.y + (by - a.y) * ease, SIZE.red_dot * m * (1 + k));
+        } else {
+          const f = laserFade(en);
+          const flick = 0.8 + 0.2 * Math.sin(t * 40 + e.x * 7);
+          ctx.beginPath();
+          ctx.moveTo(a.x, a.y);
+          ctx.lineTo(bx, by);
+          ctx.globalAlpha = 0.34 * flick * f;
+          ctx.strokeStyle = '#ff4d6a';
+          ctx.lineWidth = 24;
+          ctx.stroke();
+          ctx.globalAlpha = 0.95 * f;
+          ctx.strokeStyle = '#ff2f55';
+          ctx.lineWidth = 8;
+          ctx.stroke();
+          ctx.strokeStyle = '#fff0f3';
+          ctx.lineWidth = 3;
+          ctx.stroke();
+          const glow = ctx.createRadialGradient(bx, by, 0, bx, by, 0.9 * m);
+          glow.addColorStop(0, 'rgba(255, 240, 240, 0.9)');
+          glow.addColorStop(0.35, 'rgba(255, 60, 90, 0.55)');
+          glow.addColorStop(1, 'rgba(255, 60, 90, 0)');
+          ctx.fillStyle = glow;
+          ctx.beginPath();
+          ctx.arc(bx, by, 0.9 * m, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.globalAlpha = f;
+          drawAnim(ctx, 'red_dot', frameAt('red_dot', t), bx, by, SIZE.red_dot * m * BIG * flick);
+        }
         ctx.restore();
         break;
       }
@@ -589,11 +651,24 @@ export function drawXpBar(ctx: CanvasRenderingContext2D, d: Dungeon, t: number) 
   ctx.textAlign = 'left';
 }
 
-/** 오른쪽 위: 가진 기술 (아이콘 + 레벨 점) — 오른쪽 끝 x = right, 위 y = top */
+/** 오른쪽 위: 가진 기술 (아이콘 + 레벨 점) + 남은 기술 칸(점선) — 오른쪽 끝 x = right, 위 y = top */
 export function drawSkillIcons(ctx: CanvasRenderingContext2D, d: Dungeon, right: number, top: number, t: number) {
   const owned = Object.entries(d.run.skills) as [SkillId, number][];
   const S = 42;
   const per = 6;
+  // 빈 칸: 기술은 SLOTS 가지까지라는 걸 보여 준다
+  ctx.save();
+  ctx.setLineDash([5, 4]);
+  ctx.strokeStyle = 'rgba(120, 85, 55, 0.45)';
+  ctx.fillStyle = 'rgba(255, 250, 240, 0.35)';
+  ctx.lineWidth = 2;
+  for (let i = owned.length; i < SLOTS; i++) {
+    ctx.beginPath();
+    ctx.roundRect(right - (S + 6) * ((i % per) + 1), top + Math.floor(i / per) * (S + 14), S, S, 10);
+    ctx.fill();
+    ctx.stroke();
+  }
+  ctx.restore();
   owned.forEach(([id, n], i) => {
     const x = right - (S + 6) * ((i % per) + 1);
     const y = top + Math.floor(i / per) * (S + 14);
@@ -713,7 +788,10 @@ export function drawCards(ctx: CanvasRenderingContext2D, cw: number, ch: number,
   ctx.fillText(title, W / 2, L.title);
   ctx.font = '16px system-ui, sans-serif';
   ctx.fillStyle = '#fff6e4';
-  ctx.fillText(touch ? '기술 하나를 눌러 골라요' : '기술 하나를 골라요 (1 · 2 · 3 또는 클릭)', W / 2, L.title + 28);
+  // 기술 칸: 다 차면 새 기술은 안 나오고 가진 기술만 강해진다
+  const owned = Object.keys(d.run.skills).length;
+  const how = touch ? '기술 하나를 눌러 골라요' : '기술 하나를 골라요 (1 · 2 · 3 또는 클릭)';
+  ctx.fillText(owned >= SLOTS ? `기술 칸 ${SLOTS}/${SLOTS} — 가진 기술만 강해져요 · ${touch ? '눌러 골라요' : '1 · 2 · 3'}` : `${how} · 기술 칸 ${owned}/${SLOTS}`, W / 2, L.title + 28);
   cards.forEach((c, i) => {
     const r = L.cards[i];
     if (!L.wide) return drawCard(ctx, r, c, i, i === hover, false, t, d);

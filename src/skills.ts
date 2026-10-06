@@ -1,6 +1,7 @@
 /**
  * 던전 기술 (로그라이크) — 쓰러진 몬스터의 생선뼈(경험치)를 모아 레벨이 오르면 카드 3장 중 하나를 골라
- * 새 기술을 배우거나 가진 기술의 레벨을 올린다 (최대 5). 기술은 그 방에서만 — 나가면 사라진다.
+ * 새 기술을 배우거나 가진 기술의 레벨을 올린다 (최대 5). 기술은 SLOTS(5) 가지까지 — 다 차면 가진 기술 레벨 업만 나온다.
+ * 기술은 그 방에서만 — 나가면 사라진다.
  * 수치는 src/data/skills.json, 효과 그림 이름은 src/data/skill-fx.json (그림은 skills-draw.ts 가 그린다).
  * 던전과는 SkillHost 로만 이야기한다 (고양이 · 몬스터 목록 · 때리기 · 계속 피해 · 효과 · 소리 · 벽). 그림을 안 불러와서 node 에서 체크된다.
  */
@@ -19,6 +20,8 @@ export const XP = data.xp;
 /** 생선 비스킷 — 주우면 바로 먹는 회복 (포인트 아이템) */
 export const SNACK = data.snack;
 export const MAX_LV = 5;
+/** 배울 수 있는 기술 가짓수 — 다 차면 카드엔 가진 기술 레벨 업만 */
+export const SLOTS = data.slots;
 /** 효과 동작: [시트, 행, fps, 반복, 바닥, 오른쪽 방향] */
 export const FX_ANIMS = fxData.anims as unknown as Record<string, [string, number, number, number, number, number]>;
 
@@ -40,7 +43,8 @@ export type Ent =
   | { k: 'hair'; x0: number; z0: number; x1: number; z1: number; t: number; T: number; dmg: number; r: number }
   | { k: 'flame'; x: number; z: number; life: number; max: number; dps: number }
   | { k: 'drop'; x: number; z: number; e: Enemy | null; t: number; T: number; dmg: number; r: number; stun: number }
-  | { k: 'dot'; x: number; z: number; tgt: Enemy | null }
+  /** 빨간 점 레이저: 조준 aim 초(아프지 않다) → 발사 fire 초(초당 dps). 쏠 때만 있다. i = 몇 번째 줄 (줄마다 조금씩 늦게, 나오는 자리도 옆으로) */
+  | { k: 'laser'; e: Enemy; t: number; aim: number; fire: number; dps: number; i: number }
   | { k: 'mark'; e: Enemy; t: number; T: number; dmg: number }
   | { k: 'mouse'; x: number; z: number; dx: number; dz: number; tgt: Enemy | null; life: number; dmg: number; r: number; speed: number; t: number }
   | { k: 'snare'; e: Enemy; t: number };
@@ -110,9 +114,10 @@ export function gainXp(run: Run, n: number) {
   return up;
 }
 
-/** 카드 3장: 아직 최대가 아닌 기술 중에서 (가진 기술은 owned 배로 잘 나온다). 다 배웠으면 간식 */
+/** 카드 3장: 아직 최대가 아닌 기술 중에서 (가진 기술은 owned 배로 잘 나온다). 기술 칸(SLOTS)이 다 찼으면 가진 기술만, 다 최대면 간식 */
 export function rollCards(run: Run, rng: () => number = Math.random, n = 3): Card[] {
-  const pool = SKILL_IDS.filter((id) => (run.skills[id] ?? 0) < MAX_LV).map((id) => ({ id, w: run.skills[id] ? XP.owned : 1 }));
+  const full = Object.keys(run.skills).length >= SLOTS;
+  const pool = SKILL_IDS.filter((id) => (run.skills[id] ?? 0) < MAX_LV && (!full || run.skills[id])).map((id) => ({ id, w: run.skills[id] ? XP.owned : 1 }));
   const out: Card[] = [];
   while (out.length < n && pool.length) {
     let r = rng() * pool.reduce((s, p) => s + p.w, 0);
@@ -362,27 +367,14 @@ export function tickSkills(run: Run, h: SkillHost, dt: number) {
         break;
       }
       case 'red_dot': {
-        const dots = run.ents.filter((e): e is Extract<Ent, { k: 'dot' }> => e.k === 'dot');
-        for (let i = dots.length; i < num(p, 'n'); i++) {
-          const dot: Ent = { k: 'dot', x: P.x + 0.6, z: P.z, tgt: null };
-          run.ents.push(dot);
-          dots.push(dot);
-        }
-        for (const dot of dots) {
-          if (!live(dot.tgt)) {
-            const taken = new Set(dots.map((o) => o.tgt).filter(live));
-            dot.tgt = near(dot.x, dot.z, 12, taken)[0] ?? near(dot.x, dot.z, 12)[0] ?? null;
-          }
-          const tx = dot.tgt ? dot.tgt.x : P.x + 0.6;
-          const tz = dot.tgt ? dot.tgt.z : P.z;
-          const d = dist(dot.x, dot.z, tx, tz);
-          const step = Math.min(d, num(p, 'speed') * dt);
-          if (d > 1e-3) {
-            dot.x += ((tx - dot.x) / d) * step;
-            dot.z += ((tz - dot.z) / d) * step;
-          }
-          if (dot.tgt && d < 0.5) h.soak(dot.tgt, num(p, 'dps') * dt);
-        }
+        // 쏠 때만 보인다 (2026-10-06 사용자 의견 — 늘 떠다니던 점): 가까운 적 n 마리를 조준했다가 지진다.
+        // 적이 n 보다 적으면 남는 줄도 같은 적에게 (정예처럼 혼자 남은 센 적에게 몰린다)
+        if (!due(id)) break;
+        const tg = near(P.x, P.z, num(p, 'range')).slice(0, num(p, 'n'));
+        if (!tg.length) break;
+        for (let i = 0; i < num(p, 'n'); i++)
+          run.ents.push({ k: 'laser', e: tg[i % tg.length], t: -0.08 * i, aim: num(p, 'aim'), fire: num(p, 'fire'), dps: num(p, 'dps'), i });
+        rearm(id, p);
         break;
       }
       case 'pounce': {
@@ -536,8 +528,16 @@ function step(run: Run, h: SkillHost, en: Ent, dt: number, near: Near, within: W
       h.sound('thud');
       return false;
     }
-    case 'dot':
-      return !!run.skills.red_dot;
+    case 'laser': {
+      const was = en.t;
+      en.t += dt;
+      if (!live(en.e)) return false;
+      if (was < en.aim && en.t >= en.aim) h.sound('zap');
+      // 발사 구간에 걸친 만큼만 (조준하는 동안은 안 아프다)
+      const on = Math.min(en.t, en.aim + en.fire) - Math.max(was, en.aim);
+      if (on > 0) h.soak(en.e, en.dps * on);
+      return en.t < en.aim + en.fire;
+    }
     case 'mark': {
       en.t += dt;
       if (!live(en.e)) return false;

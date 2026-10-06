@@ -1,5 +1,6 @@
 /**
  * 피라미드 미로찾기 — 횃불 빛이 닿는 길만 보이는 미로에서 출구를 찾는다. 길에 떨어진 냥코인, 막다른 길 끝의 보물 상자.
+ * 고래 배 속(theme 'whale') — 바다에서 고래에게 삼켜지면 같은 규칙의 조금 작은 미로. 빛은 플랑크톤, 출구는 숨구멍, 상자엔 바다 보물.
  * 빨리 나올수록 탈출 보너스 냥코인이 크다. 좌표는 던전처럼 월드 단위 (길 한 칸 = CELL), 화면 기준 WASD 로 그대로 움직인다.
  * 그림을 불러오지 않는 순수 로직이라 node 에서 체크된다 (그리기는 maze-draw.ts). 무작위는 rng 로 주입한다.
  */
@@ -18,6 +19,20 @@ export const MAZE = {
   /** 탈출 보너스 냥코인: bonusMax − 초/2, 최소 5 */
   bonusMax: 40,
 };
+export type MazeTheme = 'pyramid' | 'whale';
+/** 고래 배 속 미로 크기 (바다를 가다 잠깐 들르는 곳이라 피라미드보다 작다) */
+export const WHALE_MAZE = { w: 19, h: 13 };
+/** 고래 배 속 보물 상자 → 비율 (고래가 삼킨 바다 것들) */
+export const WHALE_CHEST: [string, number][] = [
+  ['curios_24', 5],
+  ['materials_20', 4],
+  ['materials_21', 4],
+  ['curios_19', 3],
+  ['curios_23', 2],
+  ['curios_16', 2],
+  ['equipment_23', 0.6],
+  ['equipment_17', 0.4],
+];
 /** 보물 상자에서 나오는 것 → 비율 (사막다운 것들) */
 export const CHEST: [string, number][] = [
   ['curios_23', 5],
@@ -33,6 +48,7 @@ export type MazeEvent = { type: 'coin' } | { type: 'chest'; item: string } | { t
 export type MazeInput = { mx: number; my: number };
 export type Pickup = { cx: number; cz: number; got: boolean };
 export type MazeState = {
+  theme: MazeTheme;
   w: number;
   h: number;
   grid: Grid;
@@ -77,8 +93,8 @@ export function distances(g: Grid, sx: number, sz: number) {
 
 const openNeighbors = (g: Grid, x: number, z: number) => [[1, 0], [-1, 0], [0, 1], [0, -1]].filter(([dx, dz]) => !isSolid(g, x + dx, z + dz)).length;
 
-export function makeMaze(rng: () => number = Math.random): MazeState {
-  const { w, h } = MAZE;
+export function makeMaze(rng: () => number = Math.random, theme: MazeTheme = 'pyramid'): MazeState {
+  const { w, h } = theme === 'whale' ? WHALE_MAZE : MAZE;
   const solid: boolean[] = Array(w * h).fill(true);
   const carve = (x: number, z: number) => (solid[z * w + x] = false);
   // 되돌아가기(recursive backtracker): (1,1) 에서 두 칸씩 뚫으며 막히면 되돌아온다 — 길이 하나뿐인 미로
@@ -114,9 +130,11 @@ export function makeMaze(rng: () => number = Math.random): MazeState {
     taken.add(`${x},${z}`);
     coins.push({ cx: x, cz: z, got: false });
   }
-  let r = rng() * CHEST.reduce((a, [, v]) => a + v, 0);
-  const item = CHEST.find(([, v]) => (r -= v) < 0)?.[0] ?? CHEST[0][0];
+  const table = theme === 'whale' ? WHALE_CHEST : CHEST;
+  let r = rng() * table.reduce((a, [, v]) => a + v, 0);
+  const item = table.find(([, v]) => (r -= v) < 0)?.[0] ?? table[0][0];
   const s: MazeState = {
+    theme,
     w,
     h,
     grid,

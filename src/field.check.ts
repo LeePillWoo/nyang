@@ -10,7 +10,11 @@ import {
   inWarp,
   isOpen,
   makeFieldState,
+  RISE,
+  SPIT,
   updateField,
+  WHALE,
+  whaleSpit,
   warpLocked,
   WALK,
   WATER,
@@ -315,3 +319,89 @@ console.log('terrain.check: ok');
 }
 
 console.log('bridge.check: ok');
+
+// ── 고래 ── 바다(whale.sea 조각 · 둘레가 다 물)에서 배를 타고 가만히 3초 → 그림자가 맴돈다 → 3~8초 뒤 솟구쳐 삼킨다.
+// 움직이면 그림자가 흐려져 사라지고, 뱉어 낸 뒤 cooldown 초 동안은 안 나온다
+{
+  const ocean: TerrainAt = () => WATER;
+  const DT = 1 / 60;
+  const sea = (): FieldState => {
+    const s = makeFieldState([3760, 1640], ocean); // r3_c4 — 바다 조각
+    s.mode = 'boat';
+    return s;
+  };
+  const events: string[] = [];
+  const tick = (s: FieldState, secs: number, mx = 0, my = 0, at = ocean, rng: () => number = () => 0.5) => {
+    for (let i = 0; i < Math.round(secs / DT); i++) {
+      updateField(s, mx, my, DT, at, rng);
+      for (const e of s.events) if (e.type === 'whale' || e.type === 'splash') events.push(e.type === 'whale' ? e.what : 'splash');
+    }
+  };
+  // 가만히 3초가 안 되면 아무 일 없고, 넘으면 그림자 (맴돌 시간은 3~8초 중 무작위)
+  let s = sea();
+  tick(s, WHALE.still - 0.1);
+  assert.equal(s.whale.phase, 'none', '3초 전엔 안 나온다');
+  tick(s, 0.2);
+  assert.ok(s.whale.phase === 'lurk' && events.includes('near'), '바다에 3초 가만히 있으면 그림자가 맴돈다');
+  assert.equal(s.whale.hold, WHALE.hold[0] + 0.5 * (WHALE.hold[1] - WHALE.hold[0]));
+  for (const r of [0, 0.999]) {
+    const q = sea();
+    tick(q, WHALE.still + 0.1, 0, 0, ocean, () => r);
+    assert.ok(q.whale.hold >= WHALE.hold[0] && q.whale.hold <= WHALE.hold[1], `맴도는 시간 ${q.whale.hold.toFixed(2)} 은 3~8초`);
+  }
+  // 움직이면 흐려지다 사라진다 (그 뒤로도 움직이는 동안은 안 나온다)
+  tick(s, 1);
+  assert.ok(s.whale.alpha > 0.7, '그림자가 짙어진다');
+  tick(s, 0.1, 1, 0);
+  assert.equal(s.whale.phase, 'leave', '배가 움직이면 흐려지기 시작');
+  tick(s, WHALE.fadeOut + 0.1, 1, 0);
+  assert.ok(s.whale.phase === 'none' && s.whale.alpha === 0 && events.includes('gone'), '서서히 사라진다');
+  tick(s, 6, 0.6, 0.6);
+  assert.equal(s.whale.phase, 'none', '움직이는 동안은 안 나온다');
+  // 맴돌 시간이 다 되면 솟구친다: 조작을 받지 않고 → 물 위로 → 꿀꺽 → 배 속으로 (gulped 에 머문다)
+  s = sea();
+  events.length = 0;
+  tick(s, WHALE.still + 0.05);
+  const hold = s.whale.hold;
+  tick(s, hold - 0.1);
+  assert.equal(s.whale.phase, 'lurk');
+  tick(s, 0.15);
+  assert.ok(s.whale.phase === 'rise' && events.includes('rise'), '그림자가 hold 초 맴돌면 솟구친다');
+  const x0 = s.x;
+  tick(s, RISE.end - 0.1, 1, 0);
+  assert.equal(s.x, x0, '솟구치는 동안은 못 움직인다');
+  assert.deepEqual(events.filter((e) => ['breach', 'gulp', 'in'].includes(e)), ['breach', 'gulp']);
+  tick(s, 0.2, 1, 0);
+  assert.ok(s.whale.phase === 'gulped' && events.includes('in') && s.x === x0, '삼키면 배 속으로 (main 이 미로로 데려간다)');
+  tick(s, 2, 1, 0);
+  assert.ok(s.whale.phase === 'gulped' && s.x === x0, '데려갈 때까지 그대로');
+  // 뱉어 내기: 배가 물에 떨어질 때까지 못 움직이고, 떨어지면 움직일 수 있다. 다 끝나면 cooldown 초 동안 안 나온다
+  events.length = 0;
+  whaleSpit(s);
+  tick(s, SPIT.land - 0.05, 1, 0);
+  assert.ok(s.x === x0 && events.includes('spit') && s.mode === 'boat', '뱉어 내는 동안 못 움직인다 (배를 탄 채)');
+  tick(s, 0.1);
+  assert.ok(events.includes('splash'), '배가 물에 떨어진다');
+  tick(s, 0.3, 1, 0);
+  assert.ok(s.x > x0, '떨어지면 다시 움직인다');
+  for (let i = 0; i < 300 && s.whale.phase === 'spit'; i++) tick(s, DT);
+  assert.ok(s.whale.phase === 'none' && Math.abs(s.whale.cool - WHALE.cooldown) < 0.02 && events.includes('dive'), '잠수하고 cooldown');
+  tick(s, WHALE.cooldown - 0.5);
+  assert.equal(s.whale.phase, 'none', '나온 뒤 10초 동안은 가만히 있어도 안 나온다');
+  tick(s, 1);
+  assert.equal(s.whale.phase, 'lurk', '10초가 지나면 다시 나올 수 있다');
+  // 좁은 물(강)·바다 조각 밖(호수)·뭍에서는 안 나온다
+  const river: TerrainAt = (x) => (Math.abs(x - 3760) < 30 ? WATER : WALK);
+  const r = makeFieldState([3760, 1640], river);
+  r.mode = 'boat';
+  tick(r, 12, 0, 0, river);
+  assert.equal(r.whale.phase, 'none', '좁은 물엔 안 나온다');
+  const lake = makeFieldState([2900, 700], ocean); // r1_c3 — 바다 조각이 아니다
+  lake.mode = 'boat';
+  tick(lake, 12, 0, 0, ocean);
+  assert.equal(lake.whale.phase, 'none', '바다가 아닌 물엔 안 나온다');
+  const land = makeFieldState([3760, 1640]);
+  tick(land, 12, 0, 0, () => WALK);
+  assert.equal(land.whale.phase, 'none', '뭍에선 안 나온다');
+}
+console.log('whale.check: ok');

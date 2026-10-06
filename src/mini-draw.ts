@@ -14,13 +14,16 @@ export function miniLayout(w: number, h: number) {
   const card: R = { x: w / 2 - cw / 2, y: h / 2 - ch / 2, w: cw, h: ch };
   const again: R = { x: card.x + 20 * k, y: card.y + ch - 66 * k, w: cw / 2 - 30 * k, h: 48 * k };
   const back: R = { x: card.x + cw / 2 + 10 * k, y: again.y, w: cw / 2 - 30 * k, h: 48 * k };
-  return { k, s, leave, card, again, back };
+  /** 다시 버튼이 없는 카드의 가운데 버튼 */
+  const solo: R = { x: card.x + cw / 2 - (cw / 2 - 30 * k) / 2, y: again.y, w: cw / 2 - 30 * k, h: 48 * k };
+  return { k, s, leave, card, again, back, solo };
 }
 
-/** 누른 곳 — 돌아가기 · (끝났으면) 다시 · 카드의 돌아가기 */
-export function miniButtonAt(w: number, h: number, x: number, y: number, done: boolean): MiniButton {
+/** 누른 곳 — 돌아가기 · (끝났으면) 다시 · 카드의 돌아가기. solo = 다시 버튼이 없는 카드 */
+export function miniButtonAt(w: number, h: number, x: number, y: number, done: boolean, solo = false): MiniButton {
   const L = miniLayout(w, h);
   if (inR(L.leave, x, y)) return 'leave';
+  if (done && solo) return inR(L.solo, x, y) ? 'leave' : null;
   if (done) {
     if (inR(L.again, x, y)) return 'again';
     if (inR(L.back, x, y)) return 'leave';
@@ -62,8 +65,8 @@ export function drawLeave(ctx: CanvasRenderingContext2D, L: ReturnType<typeof mi
   button(ctx, L.leave, touch ? '돌아가기' : '돌아가기 (Esc)', hover === 'leave', false, L.k);
 }
 
-/** 결과 카드: 제목 · 줄들(글, 색) · 다시/돌아가기 */
-export function drawCard(ctx: CanvasRenderingContext2D, L: ReturnType<typeof miniLayout>, title: string, lines: [string, string][], hover: MiniButton, againLabel: string) {
+/** 결과 카드: 제목 · 줄들(글, 색) · 다시/돌아가기 (againLabel 이 null 이면 가운데에 backLabel 하나) */
+export function drawCard(ctx: CanvasRenderingContext2D, L: ReturnType<typeof miniLayout>, title: string, lines: [string, string][], hover: MiniButton, againLabel: string | null, backLabel = '돌아가기') {
   const { card: c, k } = L;
   ctx.fillStyle = 'rgba(255,250,240,0.96)';
   ctx.strokeStyle = 'rgba(120,85,55,0.35)';
@@ -79,8 +82,9 @@ export function drawCard(ctx: CanvasRenderingContext2D, L: ReturnType<typeof min
     ctx.fillStyle = color;
     fitText(ctx, t, c.x + c.w / 2, c.y + (96 + i * 28) * k, c.w - 40 * k, 19 * k, i === 0 ? 'bold ' : '');
   });
+  if (againLabel === null) return button(ctx, L.solo, backLabel, hover === 'leave', true, k);
   button(ctx, L.again, againLabel, hover === 'again', true, k);
-  button(ctx, L.back, '돌아가기', hover === 'leave', false, k);
+  button(ctx, L.back, backLabel, hover === 'leave', false, k);
 }
 
 /** 초 → 0:12.3 */

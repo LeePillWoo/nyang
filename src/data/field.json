@@ -36,6 +36,22 @@
       "bridge": 90
     }
   },
+  "whale": {
+    "_comment": "바다 고래 (2026-10-06). 바다(sea 조각 안, 둘레 room×catBody 가 다 물)에서 배를 타고 still 초 가만히 있으면 고래 그림자가 맴돈다 (fadeIn 초에 걸쳐 짙어짐). 배가 움직이면 fadeOut 초에 걸쳐 사라진다. 그림자가 hold 초(범위에서 무작위) 맴돌면 고래가 솟구쳐 고양이와 배를 삼킨다 → 고래 배 속 미로 → 탈출하면 그 자리로 뱉어 낸다. 나온 뒤 cooldown 초 동안은 안 나온다. 크기는 catBody 배: size = 앞모습 칸 한 변(벌린 입에 배가 쏙 들어가게), shadow = 그림자 칸 한 변, orbit = 그림자가 맴도는 반지름, behind = 고래가 배 뒤(위쪽)로 물러선 거리. spin = 맴도는 속도(rad/s). 그림 art/characters/whale/whale_sheet_v1 (6×6: 그림자 · 솟구침 · 입 벌림 · 꿀꺽 · 냠냠 · 잠수).",
+    "sheet": "characters/whale/whale_sheet_v1",
+    "sea": [[2, 4], [3, 4], [4, 4], [5, 4], [2, 5], [3, 5]],
+    "room": 5,
+    "still": 3,
+    "hold": [3, 8],
+    "cooldown": 10,
+    "fadeIn": 1.2,
+    "fadeOut": 1.5,
+    "size": 7.5,
+    "shadow": 8,
+    "orbit": 3,
+    "behind": 0.35,
+    "spin": 0.6
+  },
   "warps": [
     {
       "id": "cat_harbor",

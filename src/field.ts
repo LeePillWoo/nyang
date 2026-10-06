@@ -3,6 +3,8 @@
  * 워프(던전 입구)에 잠시 머물면 그 던전으로 간다. 입구는 src/data/field.json 의 warps 에 추가한다.
  * 포탈은 이정표(docs/signposts.json) 기둥 바로 앞에 있다. to 가 빈 값이면 아직 연결 전이다.
  *
+ * 바다에서 배를 타고 가만히 있으면 고래가 나타난다 (그림자 → 솟구쳐 삼킴 → 고래 배 속 미로 → 뱉어 냄, field.json whale).
+ *
  * 지형(조각마다 src/assets/field/mask_rR_cC.png)에 따라 움직임이 바뀐다.
  *   걷기 · 숲 = 도끼 들고 헤치며 전진 · 물 = 배 · 막힘(암석·절벽) = 못 감
  * 물은 "다음 걸음"으로 판단해서 물 위를 걷거나 땅 위에서 노 젓는 순간이 없다.
@@ -50,7 +52,35 @@ export type FieldEvent =
   | { type: 'ripple'; x: number; y: number }
   | { type: 'stroke'; x: number; y: number }
   /** 미개방 구역으로 밀고 들어가려 했다 (막힘) */
-  | { type: 'locked' };
+  | { type: 'locked' }
+  /** 고래: near 그림자가 나타남 · gone 그림자가 사라짐 · rise 솟구치기 시작 · breach 물 위로 · gulp 꿀꺽 · in 배 속으로 · spit 퉤 · dive 잠수 */
+  | { type: 'whale'; what: WhaleWhat; x: number; y: number };
+export type WhaleWhat = 'near' | 'gone' | 'rise' | 'breach' | 'gulp' | 'in' | 'spit' | 'dive';
+
+export const WHALE = data.whale;
+/** 고래가 솟구쳐 삼키는 순서 (초, 그리기도 같은 시계): 그림자가 배 밑으로 → 물 위로 → 입 벌림 → 꿀꺽(배가 입속으로) → 입 다묾 → 냠냠 → 배 속으로 */
+export const RISE = { dash: 0.6, emerge: 1.4, open: 2.1, gulp: 2.7, close: 3.1, end: 3.9 };
+/** 뱉어 내는 순서: 솟구침 → 입 벌림 → 퉤(배가 날아 나온다) → 물에 떨어짐(여기서부터 움직일 수 있다) → 입 다묾 → 잠수 */
+export const SPIT = { emerge: 0.5, open: 1.1, out: 1.2, land: 1.8, close: 2.2, end: 3.3 };
+export type Whale = {
+  /** none 없음 · lurk 그림자가 맴돈다 · leave 배가 움직여 흐려진다 · rise 솟구쳐 삼킨다 · gulped 삼켰다(main 이 배 속으로) · spit 뱉어 낸다 */
+  phase: 'none' | 'lurk' | 'leave' | 'rise' | 'gulped' | 'spit';
+  /** 바다 위에 가만히 있던 시간 */
+  still: number;
+  /** 지금 단계에 들어온 뒤 흐른 시간 */
+  t: number;
+  /** 이번 그림자가 맴돌 시간 (hold 범위에서 무작위) */
+  hold: number;
+  /** 그림자 진하기 0..1 */
+  alpha: number;
+  /** 그림자가 맴도는 각도 */
+  ang: number;
+  /** 다시 나올 수 있을 때까지 (초) */
+  cool: number;
+  /** 그림자가 맴도는 가운데 · 고래가 솟는 자리 (배가 있던 곳) */
+  x: number;
+  y: number;
+};
 
 const EDGE = 24; // 그림 가장자리 여백
 const CAM_EASE = 8; // 카메라가 따라오는 속도
@@ -88,6 +118,7 @@ export type FieldState = {
   dwell: number;
   /** 워프 안에서 시작했으면 한 번 나갔다 들어와야 작동한다 (도착하자마자 되돌아가지 않게) */
   armed: boolean;
+  whale: Whale;
 };
 
 /** 바닥에 눕힌 타원 안인가 (필드는 비스듬히 내려다본 그림이라 세로가 눌려 있다) */
@@ -124,6 +155,7 @@ export function makeFieldState([x, y]: number[], terrainAt0: TerrainAt = everywh
     warp: null,
     dwell: 0,
     armed: !warpAt(x, y),
+    whale: { phase: 'none', still: 0, t: 0, hold: 0, alpha: 0, ang: 0, cool: 0, x, y },
   };
 }
 
@@ -174,6 +206,78 @@ function waterPast(s: FieldState, ux: number, uy: number, at: TerrainAt) {
 /** 배가 다리 위를 지나는 중인가 (그때만 배가 땅 위에 있어도 된다) */
 export const bridging = (s: FieldState, at: TerrainAt) => s.mode === 'boat' && at(s.x, s.y) === BRIDGE;
 
+/** 고래가 사는 바다: whale.sea 조각 안의 물이고, 둘레 room×catBody 도 다 물이다 (강·호수·물가엔 안 나온다) */
+export function deepSea(x: number, y: number, at: TerrainAt) {
+  const c = Math.floor((x * data.grid[0]) / data.size[0]);
+  const r = Math.floor((y * data.grid[1]) / data.size[1]);
+  if (!WHALE.sea.some(([sr, sc]) => sr === r && sc === c) || at(x, y) !== WATER) return false;
+  const R = WHALE.room * data.catBody;
+  for (let i = 0; i < 12; i++) {
+    const a = (i * Math.PI) / 6;
+    if (at(x + Math.cos(a) * R, y + Math.sin(a) * R * data.vertical) !== WATER) return false;
+  }
+  return true;
+}
+
+/** 고래 한 프레임. 솟구치는 동안 · 뱉어 내다 배가 물에 떨어지기 전까지는 true (조작을 받지 않는다) */
+function stepWhale(s: FieldState, input: boolean, dt: number, at: TerrainAt, rng: () => number): boolean {
+  const w = s.whale;
+  const emit = (what: WhaleWhat) => s.events.push({ type: 'whale', what, x: w.x, y: w.y });
+  const was = w.t;
+  w.t += dt;
+  const passed = (k: number) => was < k && w.t >= k;
+  if (w.phase === 'rise') {
+    if (passed(RISE.dash)) emit('breach');
+    if (passed(RISE.gulp)) emit('gulp');
+    if (w.t >= RISE.end) {
+      w.phase = 'gulped';
+      emit('in');
+    }
+    return true;
+  }
+  if (w.phase === 'gulped') return true; // main 이 고래 배 속(미로)으로 데려간다
+  if (w.phase === 'spit') {
+    if (passed(SPIT.out)) emit('spit');
+    if (passed(SPIT.land)) s.events.push({ type: 'splash', x: s.x, y: s.y });
+    if (passed(SPIT.close)) emit('dive');
+    if (w.t >= SPIT.end) Object.assign(w, { phase: 'none', cool: WHALE.cooldown, still: 0, alpha: 0 });
+    return w.t < SPIT.land;
+  }
+  if (w.cool > 0) w.cool = Math.max(0, w.cool - dt);
+  const sea = s.mode === 'boat' && deepSea(s.x, s.y, at);
+  w.still = sea && !input ? w.still + dt : 0;
+  w.ang += WHALE.spin * dt * (w.phase === 'leave' ? 0.6 : 1);
+  if (w.phase === 'none') {
+    if (w.still >= WHALE.still && w.cool <= 0) {
+      const [h0, h1] = WHALE.hold;
+      Object.assign(w, { phase: 'lurk', t: 0, x: s.x, y: s.y, hold: h0 + rng() * (h1 - h0), ang: rng() * Math.PI * 2 });
+      emit('near');
+    }
+  } else if (w.phase === 'lurk') {
+    w.alpha = Math.min(1, w.alpha + dt / WHALE.fadeIn);
+    if (!sea || input) Object.assign(w, { phase: 'leave', t: 0 });
+    else if (w.t >= w.hold) {
+      Object.assign(w, { phase: 'rise', t: 0, x: s.x, y: s.y });
+      emit('rise');
+      return true;
+    }
+  } else if (w.phase === 'leave') {
+    w.alpha = Math.max(0, w.alpha - dt / WHALE.fadeOut);
+    if (w.alpha <= 0) {
+      w.phase = 'none';
+      emit('gone');
+    }
+  }
+  return false;
+}
+
+/** 고래 배 속에서 나왔다 — 삼켰던 자리에서 배를 탄 채로 뱉어 낸다 (나온 뒤 cooldown 초는 고래가 안 나온다) */
+export function whaleSpit(s: FieldState) {
+  Object.assign(s.whale, { phase: 'spit', t: 0, x: s.x, y: s.y, alpha: 0, still: 0 });
+  setMode(s, 'boat');
+  s.moving = false;
+}
+
 /** 한 프레임 진행. 워프에 충분히 머물렀으면 그 워프를 돌려준다. mx, my 는 화면 기준 -1..1 */
 export function updateField(
   s: FieldState,
@@ -181,6 +285,7 @@ export function updateField(
   my: number,
   dt: number,
   at0: TerrainAt = everywhereWalk,
+  rng: () => number = Math.random,
 ): Warp | null {
   const at = gated(at0);
   s.events.length = 0;
@@ -204,6 +309,12 @@ export function updateField(
         setMode(s, at(s.x, s.y) === FOREST ? 'axe' : 'walk');
       }
     }
+    return null;
+  }
+
+  // 고래: 솟구쳐 삼키는 동안 · 뱉어 내는 동안은 조작을 받지 않는다
+  if (stepWhale(s, mx !== 0 || my !== 0, dt, at, rng)) {
+    s.moving = false;
     return null;
   }
 
