@@ -49,7 +49,7 @@ export function wrapText(ctx: CanvasRenderingContext2D, text: string, maxW: numb
   return lines;
 }
 
-export type ButtonId = 'punch' | 'dash' | 'dex' | 'bag' | 'jump';
+export type ButtonId = 'punch' | 'dash' | 'dex' | 'bag' | 'jump' | 'left' | 'right';
 export type Button = { id: ButtonId; x: number; y: number; r: number; label: string };
 /** k = HUD 배율 (그리기용) */
 export type Controls = { stick: { x: number; y: number; r: number } | null; buttons: Button[]; k: number };
@@ -84,7 +84,14 @@ export function controls(w: number, h: number, scene: Scene, touch: boolean): Co
     buttons.push({ id: 'punch', x: px, y: py, r: pr, label: '냥펀치' });
     buttons.push({ id: 'dash', x: px - pr * 1.95, y: py + pr * 0.28, r: pr * 0.72, label: '구르기' });
   }
-  if (scene === 'sandboard') buttons.push({ id: 'jump', x: px, y: py, r: pr, label: '점프' });
+  if (scene === 'sandboard') {
+    // 샌드보드는 좌우만 — 조이스틱 대신 ← → 버튼 (누르고 있는 동안)
+    const ar = Math.round(44 * tk);
+    buttons.push({ id: 'left', x: s.l + pad + ar, y: py, r: ar, label: '◀' });
+    buttons.push({ id: 'right', x: s.l + pad + ar * 3.4, y: py, r: ar, label: '▶' });
+    buttons.push({ id: 'jump', x: px, y: py, r: pr * 1.1, label: '점프' });
+    return { stick: null, buttons, k };
+  }
   return { stick, buttons, k };
 }
 
@@ -152,7 +159,7 @@ export function drawControls(ctx: CanvasRenderingContext2D, c: Controls, knob: {
     ctx.fill();
     ctx.stroke();
     ctx.fillStyle = on ? '#fff' : '#5b4a3f';
-    ctx.font = `bold ${Math.round(b.r * 0.36)}px system-ui, sans-serif`;
+    ctx.font = `bold ${Math.round(b.r * (b.id === 'left' || b.id === 'right' ? 0.62 : 0.36))}px system-ui, sans-serif`;
     ctx.fillText(b.label, b.x, b.y + b.r * 0.13);
   }
   ctx.restore();

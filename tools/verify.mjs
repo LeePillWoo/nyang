@@ -16,6 +16,7 @@ const OUT = new URL('./out/', import.meta.url);
 const fsPath = (u) => fileURLToPath(u);
 const readJson = (rel) => JSON.parse(fs.readFileSync(new URL(rel, import.meta.url), 'utf8'));
 const FIELD = readJson('../src/data/field.json');
+const { OBS: SAND_OBS } = await import('../src/sandboard.ts');
 /** 개방 구역(field.json open) 안의 워프 — 잠긴 구역 밖 워프는 갈 수 없는 게 맞다 */
 const inOpen = (x, y) => {
   const c = Math.min(FIELD.grid[0] - 1, Math.floor((x * FIELD.grid[0]) / FIELD.size[0]));
@@ -957,16 +958,17 @@ try {
     const inSand = await page.waitForFunction(() => __game.scene === 'sandboard', { timeout: 10000 }).then(() => true, () => false);
     check(inSand, `${w.label} 포탈에 서 있으면 샌드보드`);
     const coins0 = await page.evaluate(() => __game.bag.coins);
-    // 자동 조종: 빈 레인으로 A/D, 7m 안의 장애물은 Space 로 점프
+    // 자동 조종: 빈 레인으로 A/D, 6m 안의 낮은 장애물은 Space 로 점프 (높은 것·구덩이는 피하기만)
+    const roles = Object.fromEntries(Object.entries(SAND_OBS).map(([k, o]) => [k, [o.role, o.r]]));
     let held = null;
     let shot = false;
     const t0 = Date.now();
     while (Date.now() - t0 < 120000) {
-      const s = await page.evaluate(() => {
+      const s = await page.evaluate((roles) => {
         const s = __game.sandboard;
-        const solid = (o) => (o.kind === 'rock' || o.kind === 'cactus' || o.kind === 'armadillo') && !o.hit;
-        return { phase: s.phase, x: s.x, d: s.d, t: s.t, air: s.air, obs: s.obs.filter((o) => solid(o) && o.d > s.d && o.d < s.d + 22).map((o) => [o.x, o.d, o.r]) };
-      });
+        const bad = (o) => ['hit', 'tall', 'pit'].includes(roles[o.kind][0]) && !o.hit;
+        return { phase: s.phase, x: s.x, d: s.d, t: s.t, air: s.air, obs: s.obs.filter((o) => bad(o) && o.d > s.d && o.d < s.d + 22).map((o) => [o.x, o.d, roles[o.kind][1], roles[o.kind][0]]) };
+      }, roles);
       if (s.phase !== 'play') break;
       const lanes = [-0.8, -0.4, 0, 0.4, 0.8];
       const lane = lanes.map((l) => ({ l, bad: s.obs.filter(([x, , r]) => Math.abs(x - l) < r + 0.2).length + Math.abs(l - s.x) * 0.01 })).sort((a, b) => a.bad - b.bad)[0].l;
@@ -976,7 +978,7 @@ try {
         if (want) await page.keyboard.down(want);
         held = want;
       }
-      if (s.air <= 0 && s.obs.some(([x, d, r]) => d - s.d < 7 && Math.abs(x - s.x) < r + 0.13)) await page.keyboard.press('Space');
+      if (s.air <= 0 && s.obs.some(([x, d, r, role]) => role === 'hit' && d - s.d < 6 && Math.abs(x - s.x) < r + 0.11)) await page.keyboard.press('Space');
       if (!shot && s.t > 5) {
         shot = true;
         await page.screenshot({ path: fsPath(new URL('sandboard-run.png', OUT)) });
@@ -984,8 +986,8 @@ try {
       await sleep(40);
     }
     if (held) await page.keyboard.up(held);
-    const end = await page.evaluate(() => ({ phase: __game.sandboard.phase, coins: __game.sandboard.coins, crashes: __game.sandboard.crashes, score: __game.sandboard.score, t: __game.sandboard.t, bag: __game.bag.coins, best: __game.records.sandboard }));
-    check(end.phase === 'done', `피하고 점프하며 끝까지 가면 완주 (${end.t.toFixed(1)}초 · 냥코인 ${end.coins} · 부딪힘 ${end.crashes} · 점수 ${end.score})`);
+    const end = await page.evaluate(() => ({ fell: __game.sandboard.fell, hearts: __game.sandboard.hearts, phase: __game.sandboard.phase, coins: __game.sandboard.coins, crashes: __game.sandboard.crashes, score: __game.sandboard.score, t: __game.sandboard.t, bag: __game.bag.coins, best: __game.records.sandboard }));
+    check(end.phase === 'done' && !end.fell, `피하고 점프하며 끝까지 가면 완주 (${end.t.toFixed(1)}초 · 냥코인 ${end.coins} · 부딪힘 ${end.crashes} · 하트 ${end.hearts} · 점수 ${end.score})`);
     check(end.coins > 0 && end.bag === coins0 + end.coins, '주운 냥코인이 가방에');
     check(end.best !== null && end.best >= end.score, `최고 점수 저장 (${end.best})`);
     await sleep(400);

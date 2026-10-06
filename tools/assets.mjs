@@ -180,6 +180,26 @@ if (fs.existsSync(ITEM_CAT) && (all || !fs.existsSync(ICONS_OUT) || fs.statSync(
   console.log(`  아이템 아이콘  src/data/item-icons.json (${cat.items.length}종)`);
 }
 
+// 샌드보드 시트 좌표 art/sandboarding/sprites.json + backgrounds.json → src/data/sandboard-atlas.json
+//   frames: id → [시트, x, y, w, h, 피벗x, 피벗y] (칸 rect 기준 피벗), anims: id → { f: 프레임 id 목록, fps, loop }, bg: 배경 조각 · 주행 폭
+const SAND_DIR = path.join(ART, 'sandboarding');
+const SAND_OUT = path.join(ROOT, 'src/data/sandboard-atlas.json');
+const sandSrc = ['sprites.json', 'backgrounds.json'].map((f) => path.join(SAND_DIR, f));
+if (sandSrc.every((f) => fs.existsSync(f)) && (all || !fs.existsSync(SAND_OUT) || sandSrc.some((f) => fs.statSync(f).mtimeMs > fs.statSync(SAND_OUT).mtimeMs))) {
+  const [sp, bg] = sandSrc.map((f) => JSON.parse(fs.readFileSync(f, 'utf8').replace(/^﻿/, '')));
+  // JSON 의 경로(minigames/sandboarding/…)가 아니라 실제 자리(sandboarding/…) — 파일 이름만 쓴다
+  const sheetOf = (file) => 'sandboarding/' + path.basename(file).replace(/\.png$/, '');
+  const frames = {};
+  const anims = {};
+  for (const sh of sp.sheets) {
+    for (const f of sh.frames) frames[f.id] = [sheetOf(sh.file), ...f.rect, ...f.pivotPixels.map((v) => Math.round(v))];
+    for (const a of sh.animations ?? []) anims[a.id] = { f: a.frames.map((i) => sh.frames[i].id), fps: a.fps, loop: a.loop };
+  }
+  const out = { bg: { tiles: bg.topToBottomOrder.map((id) => 'sandboarding/' + id), w: bg.tileWidth, h: bg.tileHeight, playX: bg.playableX }, anims, frames };
+  fs.writeFileSync(SAND_OUT, JSON.stringify(out).replace(/\],"/g, '],\n"') + '\n');
+  console.log(`  샌드보드 좌표  src/data/sandboard-atlas.json (프레임 ${Object.keys(frames).length})`);
+}
+
 // 원본 PNG 는 art/ 에 둔다 — src/assets 는 git 에 올라가는 게임용(WebP)이라 원본이 들어오면 알려 준다 (지형 마스크는 예외)
 const stray = [];
 (function find(dir) {

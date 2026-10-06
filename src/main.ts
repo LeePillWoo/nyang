@@ -1,6 +1,6 @@
 // 게임 뼈대 — 캔버스·입력·장면 전환(필드 ↔ 던전 · 낚시터)·소리·감정·불러오기.
 // 필드는 field.ts(로직) / field-draw.ts(그리기), 던전은 dungeon.ts / dungeon-draw.ts, 낚시는 fishing.ts / fishing-draw.ts.
-import { assetUrl } from './assets.ts';
+import { assetUrl, image } from './assets.ts';
 import { bagLayout, bagTap, drawBag, drawShop, itemIconsReady, resetBagView, resetShopView, shopLayout, shopTap, shopView } from './bag-draw.ts';
 import { count, fromSave, obtain, stats, tickBuffs, type Bag } from './bag.ts';
 import { bookLayout, bookTap, bookView, drawBook, groupOf, openBook, ungrouped, type BookData } from './book-draw.ts';
@@ -51,7 +51,7 @@ import { drawMinimap, fromMini, inMinimap, minimapPick, minimapRect, toMini } fr
 import { drawMaze, mazeView } from './maze-draw.ts';
 import { makeMaze, updateMaze, type MazeEvent, type MazeState } from './maze.ts';
 import { miniButtonAt, miniLayout, type MiniButton } from './mini-draw.ts';
-import { drawSandboard, resetSandFx, sandView } from './sandboard-draw.ts';
+import { drawSandboard, SAND_IMAGES, sandView, type SandArt } from './sandboard-draw.ts';
 import { makeSandboard, updateSandboard, type SandEvent, type SandState } from './sandboard.ts';
 import { loadSheet, type Sheet } from './sheet.ts';
 import { buttonAt, controls, drawControls, drawRotateHint, onStick, safe, stickVector, ui, type ButtonId } from './touch.ts';
@@ -403,8 +403,9 @@ const held = (...codes: string[]) => codes.some((c) => keys.has(c));
 function input() {
   const v = stick ? stickVector(ctl(), stick.x, stick.y) : { mx: 0, my: 0 };
   const clamp = (a: number) => Math.max(-1, Math.min(1, a));
+  const btn = [...pressing.values()];
   return {
-    mx: clamp((held('KeyD', 'ArrowRight') ? 1 : 0) - (held('KeyA', 'ArrowLeft') ? 1 : 0) + v.mx),
+    mx: clamp((held('KeyD', 'ArrowRight') || btn.includes('right') ? 1 : 0) - (held('KeyA', 'ArrowLeft') || btn.includes('left') ? 1 : 0) + v.mx),
     my: clamp((held('KeyS', 'ArrowDown') ? 1 : 0) - (held('KeyW', 'ArrowUp') ? 1 : 0) + v.my),
   };
 }
@@ -574,7 +575,7 @@ if (trace)
       /** 샌드보드 가로 자리 x · 거리 dd 의 화면 위치 (CSS px) */
       sandScreen: (x: number, dd: number) => {
         const d = Math.min(devicePixelRatio, 2);
-        return { x: (sandView.cx + x * sandView.half) / d, y: (sandView.y0 + (dd - sand.d) * sandView.ppm) / d };
+        return { x: (sandView.cx + x * sandView.half) / d, y: (sandView.y0 - (dd - sand.d) * sandView.ppm) / d };
       },
       /** 미니게임 버튼(돌아가기 · 다시 · 카드의 돌아가기) 가운데 (CSS px) */
       miniScreen: () => {
@@ -858,16 +859,18 @@ const enterMaze = () =>
     say('focus', 1.6);
     sayHelp();
   });
-/** 모래 미끄럼틀 샌드보드 — 굴러오는 아르마딜로 시트를 먼저 불러온다 */
+/** 샌드보드 그림 (배경 3장 + 시트 5장) — 처음 들어갈 때 한 번 */
+const sandArt: SandArt = {};
+const loadSandArt = () => Promise.all(SAND_IMAGES.map((p) => image(p).ready.then((img) => (sandArt[p] = img))));
+/** 모래 미끄럼틀 샌드보드 — 그림을 먼저 불러온다 */
 const enterSandboard = () =>
   goTo(async () => {
     step('모래 미끄럼틀');
-    await enemySheet('cactus_armadillo');
+    await loadSandArt();
     scene = 'sandboard';
     roomId = 'sandboard';
     canvas.style.cursor = '';
     sand = makeSandboard();
-    resetSandFx();
     miniHover = null;
     quiet();
     say('rhythm', 1.6);
@@ -877,10 +880,7 @@ const enterSandboard = () =>
 const restartMini = () =>
   goTo(() => {
     if (scene === 'maze') maze = makeMaze();
-    else {
-      sand = makeSandboard();
-      resetSandFx();
-    }
+    else sand = makeSandboard();
     miniHover = null;
     quiet();
     sayHelp();
@@ -917,23 +917,39 @@ function mazeEvent(e: MazeEvent) {
 function sandEvent(e: SandEvent) {
   switch (e.type) {
     case 'coin':
-      bag.coins++;
-      sfxCoin();
+      bag.coins += e.n;
+      if (e.n > 1) sfxPickup();
+      else sfxCoin();
       break;
     case 'jump':
+    case 'bump':
       sfxJump();
       break;
     case 'ramp':
+    case 'boost':
       sfxCast();
       say('exertion', 0.8);
+      break;
+    case 'pit':
+      sfxHurt();
+      say('frustration', 0.8);
       break;
     case 'crash':
       sfxHurt();
       say('dizzy', 1);
       break;
+    case 'block':
+      sfxCast();
+      say('relief', 1);
+      break;
+    case 'power':
+      sfxPickup();
+      say('delight', 1);
+      break;
     case 'finish':
-      sfxCatch();
-      say(e.clean ? 'pride' : 'relief', 3);
+      if (e.fell) sfxHurt();
+      else sfxCatch();
+      say(e.fell ? 'frustration' : e.clean ? 'pride' : 'relief', 3);
       if (records.sandboard === null || e.score > records.sandboard) records.sandboard = e.score;
       saveRecords();
       saveBag();
@@ -1035,8 +1051,8 @@ function frame(now: number) {
       canvas.width,
       canvas.height,
       sand,
-      { cat: catSheet, snow: snowSheet, armadillo: sheets.cactus_armadillo },
-      { t: last / 1000, dt: lastDt, touch: touchOn, hover: miniHover, best: records.sandboard },
+      sandArt,
+      { t: last / 1000, touch: touchOn, hover: miniHover, best: records.sandboard },
     );
   else
     drawDungeon(ctx, canvas.width, canvas.height, dungeon, catSheet, { t: last / 1000, dt: lastDt, fps, grid: debug, trace: trace ? traceDraw : undefined, touch: touchOn });
@@ -1096,13 +1112,13 @@ const HELP = {
   field: 'WASD 이동 · 숲은 도끼로, 물은 배로 · 이정표 앞 포탈에 잠시 서 있으면 던전 · 지도 끌기·미니맵으로 둘러보기, 포탈 클릭 = 워프 · 강아지마을은 고등어 상점 · I 가방 · B 도감 · M 미니맵 · T 지형 보기',
   dungeon: 'WASD 이동 · 클릭/J 냥펀치 · Space 구르기 · 쓰러진 몬스터가 떨군 건 다가가면 주워요 · I 가방 · 빛나는 칸으로 나가기 · G 격자',
   maze: 'WASD 이동 · 횃불이 닿는 길만 보여요 · 냥코인을 줍고 막다른 길 끝의 보물 상자를 찾아 출구로 · 빠를수록 탈출 보너스 · R 새 미로 · Esc 돌아가기',
-  sandboard: 'A/D 좌우 · Space 점프로 바위·선인장·아르마딜로를 뛰어넘어요 · 냥코인 줍기 · 점프대를 타면 공중 냥코인 · 부딪히면 느려져요 · R 다시 · Esc 돌아가기',
+  sandboard: 'A/D 좌우 · Space 점프 (높은 바위·선인장·기둥은 점프대로만) · 부딪히면 하트 -1 · 자석·방패·하트·가속 발판 · R 다시 · Esc 돌아가기',
 };
 const HELP_TOUCH = {
   field: '왼쪽 조이스틱으로 이동 · 숲은 도끼로, 물은 배로 · 포탈에 잠시 서 있으면 던전·낚시터 (강아지마을은 상점) · 화면을 끌어 둘러보고 포탈을 누르면 워프',
   dungeon: '조이스틱 이동 · 냥펀치 · 구르기 · 빛나는 칸으로 나가기',
   maze: '조이스틱으로 이동 · 횃불이 닿는 길만 보여요 · 냥코인과 보물 상자를 찾아 출구로',
-  sandboard: '조이스틱 좌우 · 점프 버튼이나 화면 누르기 = 점프 · 바위·선인장·아르마딜로를 뛰어넘고 냥코인을 주워요',
+  sandboard: '◀ ▶ 좌우 · 점프 버튼이나 화면 누르기 = 점프 · 높은 건 피하고 낮은 건 뛰어넘어요 · 하트 3개',
 };
 function sayHelp() {
   const t = scene === 'fishing' ? fishingHelp(fishing, touchOn) : (touchOn ? HELP_TOUCH : HELP)[scene];
@@ -1128,7 +1144,7 @@ const step = (t: string) => {
   await prepareRoom(startRoom);
   dungeon = makeDungeon(sheets, startRoom, bag);
   if (scene === 'dungeon') enteredRoom();
-  if (scene === 'sandboard') await enemySheet('cactus_armadillo');
+  if (scene === 'sandboard') await loadSandArt();
   if (scene === 'fishing') {
     step('낚시터');
     await fishingReady(startSpot);
