@@ -25,6 +25,8 @@ export const FX = {
 } satisfies Record<string, [FxSheet, number]>;
 export type FxId = keyof typeof FX;
 export const FX_LIFE = 0.27; // 8프레임 30fps
+/** 타격 이펙트 진하기 — 그림이 거의 불투명해서(가운데 알파 253) 맞은 몬스터를 덮는다. 살짝 비치게 */
+const HIT_ALPHA = 0.78;
 
 export type Fx = { x: number; z: number; id: FxId; t: number; size: number; rot: number };
 
@@ -32,6 +34,7 @@ export function drawFx(ctx: CanvasRenderingContext2D, sheets: Record<FxSheet, Ca
   const [sheet, row] = FX[f.id];
   const col = Math.min(COLS - 1, Math.floor((f.t / FX_LIFE) * COLS));
   ctx.save();
+  ctx.globalAlpha *= HIT_ALPHA;
   ctx.translate(sx, sy);
   ctx.rotate(f.rot);
   ctx.drawImage(sheets[sheet], col * SIZE, row * SIZE, SIZE, SIZE, -f.size / 2, -f.size / 2, f.size, f.size);

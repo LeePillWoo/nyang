@@ -5,7 +5,7 @@ import { drawCoin, drawIcon, RARE } from './bag-draw.ts';
 import { ITEMS } from './bag.ts';
 import { CAT_FPS, CAT_ROW } from './cat.ts';
 import { CELL } from './collide.ts';
-import { maxHp, PLAYER, POP_LIFE, POP_OUT, TOAST_LIFE, type Dungeon } from './dungeon.ts';
+import { EXIT_DWELL, maxHp, PLAYER, POP_LIFE, POP_OUT, TOAST_LIFE, type Dungeon } from './dungeon.ts';
 import { enemyFrame, type Enemy } from './enemy.ts';
 import { drawEmote } from './emote.ts';
 import { drawFx, FX_SHEETS, type FxSheet } from './fx.ts';
@@ -257,6 +257,7 @@ export function drawDungeon(ctx: CanvasRenderingContext2D, cw: number, ch: numbe
   }
 
   drawSkillAir(ctx, d, v.t);
+  drawExitGauge(ctx, d);
   drawPops(ctx, d);
   if (v.grid) drawGrid(ctx, R);
   drawHud(ctx, cw, ch, d, v);
@@ -441,6 +442,43 @@ function tilePath(ctx: CanvasRenderingContext2D, r: Room, tx: number, tz: number
   ctx.lineTo(e.sx, e.sy);
   ctx.closePath();
   return { a, c };
+}
+
+/** 나가는 칸에 서 있으면: 고양이 머리 위에 차오르는 고리 + 남은 초 ("밖으로 2.4") */
+function drawExitGauge(ctx: CanvasRenderingContext2D, d: Dungeon) {
+  if (d.exitT <= 0) return;
+  const k = Math.min(1, d.exitT / EXIT_DWELL);
+  const p = d.room.toScreen(d.P.x, d.P.z);
+  const x = p.sx;
+  const y = p.sy - PLAYER.size * 1.12;
+  const r = 30;
+  ctx.save();
+  ctx.fillStyle = 'rgba(70, 52, 42, 0.78)';
+  ctx.beginPath();
+  ctx.arc(x, y, r + 7, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.lineCap = 'round';
+  ctx.lineWidth = 8;
+  ctx.strokeStyle = 'rgba(255, 246, 216, 0.25)';
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.strokeStyle = '#ffe07a';
+  ctx.beginPath();
+  ctx.arc(x, y, r, -Math.PI / 2, -Math.PI / 2 + k * Math.PI * 2);
+  ctx.stroke();
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#fff6d8';
+  ctx.font = 'bold 22px system-ui, sans-serif';
+  ctx.fillText((EXIT_DWELL - d.exitT).toFixed(1), x, y + 8);
+  ctx.font = 'bold 18px system-ui, sans-serif';
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = 5;
+  ctx.strokeStyle = 'rgba(86, 58, 44, 0.85)';
+  ctx.strokeText('밖으로 나가는 중…', x, y - r - 16);
+  ctx.fillText('밖으로 나가는 중…', x, y - r - 16);
+  ctx.restore();
+  ctx.textAlign = 'left';
 }
 
 /** 나가는 곳(노란 매트) — 바닥을 은은하게 깜빡인다. 방을 비우면 더 밝게 */

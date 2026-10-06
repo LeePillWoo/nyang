@@ -1177,6 +1177,24 @@ try {
     await page.close();
   }
 
+  // 3-8-1) 나가는 칸: 밟자마자 나가지 않고 3초 서 있어야 나간다 (머리 위에 남은 시간 고리). 화면 dungeon-exit-gauge.png
+  {
+    const { page, errors } = await open('dungeon');
+    await autoPick(page);
+    await page.evaluate((e) => {
+      setInterval(() => (__game.dungeon.P.invT = 1), 40);
+      Object.assign(__game.dungeon.P, { x: e[0], z: e[1] });
+    }, EXIT);
+    await sleep(1500);
+    const mid = await page.evaluate(() => ({ scene: __game.scene, exitT: __game.dungeon.exitT }));
+    check(mid.scene === 'dungeon' && mid.exitT > 1, `나가는 칸을 밟아도 바로 나가지 않는다 (1.5초 뒤 ${mid.exitT.toFixed(1)}초 서 있음)`);
+    await page.screenshot({ path: fsPath(new URL('dungeon-exit-gauge.png', OUT)) });
+    const out = await page.waitForFunction(() => __game.scene === 'field', { timeout: 3500 }).then(() => true, () => false);
+    check(out, '3초 서 있으면 밖으로 나간다');
+    check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
+    await page.close();
+  }
+
   // 3-9) 샌드보드 미끄러짐 연속 촬영 (sandboard-drift.png): 오른쪽으로 눌러 미끄러지기 시작 → 놓기 → 왼쪽으로 홱.
   //  보드가 먼저 꺾이고(넘쳤다 돌아옴) 몸은 늦게 따라오고, 꼬리에서 모래가 튀는지 눈으로 본다. 컷이 바뀌어도 보드가 튀지 않는지(보드 중심 위치)도 잰다
   console.log('\n[샌드보드 미끄러짐]');

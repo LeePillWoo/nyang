@@ -109,6 +109,8 @@ export type Result = { win: boolean };
 const END_WIN = 1;
 const END_WIN_MAX = 2.5;
 const END_NAP = 1.2;
+/** 나가는 칸(노란 매트)에 이만큼 서 있어야 나간다 (초) — 밟자마자 나가지 않게. 벗어나면 처음부터 */
+export const EXIT_DWELL = 3;
 /** 화면 기준 입력. mx, my 는 -1..1 */
 export type DungeonInput = { mx: number; my: number; punch: boolean; dash: boolean };
 
@@ -175,6 +177,8 @@ export type Dungeon = {
   stats: RunStats;
   result: Result | null;
   endT: number;
+  /** 나가는 칸에 서 있은 시간 (EXIT_DWELL 이 되면 나간다) */
+  exitT: number;
 };
 
 /** 장비·먹은 것까지 더한 최대 체력 */
@@ -261,6 +265,7 @@ export function resetDungeon(d: Dungeon, roomId = d.room.id) {
   d.stats = { t: 0, kills: 0, elites: 0, coins: 0, items: {}, dealt: 0, taken: 0 };
   d.result = null;
   d.endT = 0;
+  d.exitT = 0;
   d.wave = d.classic ? null : { i: 0, total: WAVES.counts.length, state: 'intro', t: 0, queue: waveKinds(d.room, WAVES.counts[0] - d.enemies.length, WAVES.elites[0] ?? 0), marks: [], spawnT: 0 };
 }
 
@@ -584,7 +589,7 @@ export function pick(d: Dungeon, i: number) {
 const onExit = (r: Room, x: number, z: number) =>
   r.exits.some(([tx, tz]) => tx === Math.floor(x / CELL) && tz === Math.floor(z / CELL));
 
-/** 한 프레임 진행. 나가는 곳(노란 매트)을 밟았으면 'exit'. 카드를 고르는 동안은 멈춘다 */
+/** 한 프레임 진행. 나가는 곳(노란 매트)에 EXIT_DWELL 초 서 있었으면 'exit'. 카드를 고르는 동안 · 결과창이 떠 있으면 멈춘다 */
 export function updateDungeon(d: Dungeon, input: DungeonInput, dt: number): 'exit' | null {
   const P = d.P;
   d.events.length = 0;
@@ -674,7 +679,10 @@ export function updateDungeon(d: Dungeon, input: DungeonInput, dt: number): 'exi
   const p = resolveCircle(d.room.grid, P.x + vx * dt, P.z + vz * dt, player.radius);
   P.x = p.x;
   P.z = p.z;
-  const leave = d.phase !== 'napped' && onExit(d.room, P.x, P.z);
+  // 나가는 칸: EXIT_DWELL 초 서 있어야 나간다 (벗어나면 처음부터 — 싸우다 도망치려면 버텨야 한다)
+  const onMat = d.phase !== 'napped' && onExit(d.room, P.x, P.z);
+  d.exitT = onMat ? d.exitT + dt : 0;
+  const leave = d.exitT >= EXIT_DWELL;
 
   if (alive && !d.classic) tickSkills(d.run, d.host, dt);
   else {

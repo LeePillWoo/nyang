@@ -12,9 +12,41 @@ import { fitText, wrapText } from './touch.ts';
 
 const CELL = fxData.cell;
 const SHEETS = fxData.sheets as Record<string, string>;
-const imgs = Object.fromEntries(Object.entries(SHEETS).map(([k, p]) => [k, image(p).img])) as Record<string, HTMLImageElement>;
-/** 기술 효과 시트 5장 (던전에 들어갈 때 기다린다) */
-export const skillFxReady = Promise.all(Object.values(SHEETS).map((p) => image(p).ready));
+const imgs = Object.fromEntries(Object.entries(SHEETS).map(([k, p]) => [k, image(p).img])) as Record<string, CanvasImageSource>;
+/**
+ * 물체(털뭉치 · 실타래 · 헤어볼 · 올가미 · 빙글 상자 · 기절 별 · 빨간 점 · 표적 · 태엽 쥐 · 생선뼈 · 보호막)는 꽉 차게, 효과(타격 · 폭발 · 궤적 · 장판)는 살짝 투명하게
+ * (2026-10-06 사용자 의견). 기술 그림은 전부 알파가 옅게 그려져 있어서(불투명한 픽셀이 하나도 없고 가운데도 70% 쯤) 물체 줄은 불러올 때 알파를 끌어올린다 —
+ * 보이는 픽셀 알파의 70% 지점이 255 가 되게 비율로 곱해서, 가장자리의 부드러운 경계는 그대로 남는다
+ */
+const SOLID = new Set(['yarn_fly', 'spool_boomerang', 'hairball_spit', 'yarn_snare', 'box_spin', 'dizzy_stars', 'red_dot', 'target_spawn', 'clockwork_mouse', 'xp_fishbone', 'loaf_shield']);
+/** 효과(물체가 아닌 것)를 그리는 진하기 — 물체와 캐릭터가 먼저 보이게 */
+const FX_ALPHA = 0.8;
+const alphaOf = (anim: string) => (SOLID.has(anim) ? 1 : FX_ALPHA);
+function solidify() {
+  for (const [sheet, img] of Object.entries(imgs)) {
+    const rows = [...SOLID].filter((a) => FX_ANIMS[a]?.[0] === sheet).map((a) => FX_ANIMS[a][1]);
+    if (!rows.length) continue;
+    const im = img as HTMLImageElement;
+    const c = document.createElement('canvas');
+    c.width = im.naturalWidth;
+    c.height = im.naturalHeight;
+    const g = c.getContext('2d', { willReadFrequently: true })!;
+    g.drawImage(im, 0, 0);
+    for (const row of rows) {
+      const data = g.getImageData(0, row * CELL, c.width, CELL);
+      const d = data.data;
+      const al: number[] = [];
+      for (let i = 3; i < d.length; i += 4) if (d[i] > 16) al.push(d[i]);
+      al.sort((a, b) => a - b);
+      const k = Math.min(3, 255 / Math.max(1, al[Math.floor(al.length * 0.7)] ?? 255));
+      for (let i = 3; i < d.length; i += 4) d[i] = Math.min(255, Math.round(d[i] * k));
+      g.putImageData(data, 0, row * CELL);
+    }
+    imgs[sheet] = c;
+  }
+}
+/** 기술 효과 시트 5장 (던전에 들어갈 때 기다린다) — 불러온 뒤 물체 줄을 꽉 차게 */
+export const skillFxReady = Promise.all(Object.values(SHEETS).map((p) => image(p).ready)).then(solidify);
 
 /** 효과 지름(m) 기본값 — 그림 속 효과는 칸의 약 78% 를 차지한다 */
 const SIZE: Record<string, number> = {
@@ -27,7 +59,7 @@ const SIZE: Record<string, number> = {
 const FILL = 0.78;
 /**
  * 시안성 (2026-10-06 사용자 요청 — 2배): 물체·투사체·타격 효과는 BIG 배로 그린다.
- * 범위 효과(AREA — 그림 크기가 곧 실제 피해 범위)는 키우면 범위를 속이게 되니 크기는 그대로 두고, 두 번 겹쳐 진하게 + 실제 범위에 계열 색 테두리.
+ * 범위 효과(AREA — 그림 크기가 곧 실제 피해 범위)는 키우면 범위를 속이게 되니 크기는 그대로 두고, 실제 범위에 계열 색 테두리 (효과라 살짝 투명 — FX_ALPHA).
  */
 const BIG = 2;
 const AREA = new Set(['cloud_spawn', 'cloud_idle', 'hairball_burst', 'tail_swirl', 'shock_ring', 'hiss_wave', 'box_land', 'fall_shadow', 'mouse_burst', 'pounce_land', 'level_up', 'wind_fragments']);
@@ -129,7 +161,7 @@ const frameAt = (anim: string, t: number) => {
 const isFloor = (anim: string) => FX_ANIMS[anim]?.[4] === 1;
 const isRight = (anim: string) => FX_ANIMS[anim]?.[5] === 1;
 
-/** 한 번 재생 효과 하나 (범위 효과는 두 번 겹쳐 진하게) */
+/** 한 번 재생 효과 하나 (물체는 꽉 차게, 효과는 FX_ALPHA) */
 function drawOne(ctx: CanvasRenderingContext2D, to: ToScreen, f: SkillFx) {
   const p = to(f.x, f.z);
   const m = pxPerM(to, f.x, f.z);
@@ -137,8 +169,7 @@ function drawOne(ctx: CanvasRenderingContext2D, to: ToScreen, f: SkillFx) {
   const fade = Math.min(1, (fxLife(f.anim) - f.t) / 0.15);
   const rot = isRight(f.anim) ? screenAngle(to, f.x, f.z, Math.cos(f.rot), Math.sin(f.rot)) : 0;
   const y = p.sy - f.h * m * 1.4;
-  drawAnim(ctx, f.anim, frameAt(f.anim, f.t), p.sx, y, size, rot, f.flip, fade);
-  if (AREA.has(f.anim)) drawAnim(ctx, f.anim, frameAt(f.anim, f.t), p.sx, y, size, rot, f.flip, fade * 0.6);
+  drawAnim(ctx, f.anim, frameAt(f.anim, f.t), p.sx, y, size, rot, f.flip, fade * alphaOf(f.anim));
 }
 
 /**
@@ -187,8 +218,7 @@ export function drawSkillFloor(ctx: CanvasRenderingContext2D, d: Dungeon, t: num
     const r = cloud.r as number;
     const p = to(P.x, P.z);
     const size = r * 2 * 1.08 * pxPerM(to, P.x, P.z);
-    drawAnim(ctx, 'cloud_idle', frameAt('cloud_idle', t), p.sx, p.sy, size);
-    drawAnim(ctx, 'cloud_idle', frameAt('cloud_idle', t + 0.4), p.sx, p.sy, size, 0, 1, 0.55);
+    drawAnim(ctx, 'cloud_idle', frameAt('cloud_idle', t), p.sx, p.sy, size, 0, 1, FX_ALPHA);
     ring(ctx, to, P.x, P.z, r, FAMILIES.catnip.color, 0.7, 4, { dash: [18, 10], offset: -t * 30, fill: 0.14 });
   }
   const orbit = lv(run, 'box_orbit');
@@ -197,7 +227,7 @@ export function drawSkillFloor(ctx: CanvasRenderingContext2D, d: Dungeon, t: num
     if (en.k === 'flame') {
       const p = to(en.x, en.z);
       const m = pxPerM(to, en.x, en.z);
-      drawAnim(ctx, 'green_flame', frameAt('green_flame', t + en.x), p.sx, p.sy - 0.5 * m * 1.4, SIZE.green_flame * m * BIG, 0, 1, Math.min(1, en.life / 0.4));
+      drawAnim(ctx, 'green_flame', frameAt('green_flame', t + en.x), p.sx, p.sy - 0.5 * m * 1.4, SIZE.green_flame * m * BIG, 0, 1, FX_ALPHA * Math.min(1, en.life / 0.4));
     } else if (en.k === 'dot') {
       const p = to(en.x, en.z);
       const m = pxPerM(to, en.x, en.z);
@@ -209,7 +239,7 @@ export function drawSkillFloor(ctx: CanvasRenderingContext2D, d: Dungeon, t: num
     } else if (en.k === 'drop') {
       const p = to(en.x, en.z);
       const k = Math.min(1, en.t / en.T);
-      drawAnim(ctx, 'fall_shadow', Math.min(7, Math.floor(k * 8)), p.sx, p.sy, en.r * 2 * pxPerM(to, en.x, en.z), 0, 1, 0.9);
+      drawAnim(ctx, 'fall_shadow', Math.min(7, Math.floor(k * 8)), p.sx, p.sy, en.r * 2 * pxPerM(to, en.x, en.z), 0, 1, FX_ALPHA);
       ring(ctx, to, en.x, en.z, en.r, FAMILIES.box.color, 0.35 + 0.6 * k, 5, { dash: [12, 8], offset: -t * 60 });
     } else if (en.k === 'hair') {
       // 헤어볼이 떨어질 자리 (원거리) — 날아가는 동안 점점 진하게

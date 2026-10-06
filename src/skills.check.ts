@@ -191,6 +191,8 @@ const one = (id: SkillId, lvl: number, mons: [string, number, number][], secs: n
   const W = d.wave!;
   assert.equal(d.enemies.length + W.queue.length, WAVES.counts[0], '웨이브 1 수');
   let seen = d.enemies.length;
+  // 새로 나온 몬스터는 하나하나 기억해서 센다 (같은 프레임에 쓰러진 게 목록에서 빠지면 "뒤쪽 칸" 으로는 놓친다)
+  const known = new Set(d.enemies);
   let maxAlive = 0;
   const clearAll = () => {
     for (const e of d.enemies) strike(d, e, 9999, e.x, e.z);
@@ -199,12 +201,13 @@ const one = (id: SkillId, lvl: number, mons: [string, number, number][], secs: n
   let elite: Enemy | null = null;
   const elitesAt: number[] = [];
   for (let t = 0; t < 240 && d.phase === 'playing'; t += DT) {
-    const before = d.enemies.length;
     d.P.invT = 1; // 웨이브 흐름만 본다 — 고양이는 안 맞는다
     updateDungeon(d, still, DT);
     d.choose = null;
     d.run.pending = 0;
-    for (const e of d.enemies.slice(before)) {
+    for (const e of d.enemies) {
+      if (known.has(e)) continue;
+      known.add(e);
       seen++;
       assert.ok(Math.hypot(e.x - d.P.x, e.z - d.P.z) >= WAVES.minDist - 0.6, '고양이 가까이에선 안 나온다');
       if (e.elite) {

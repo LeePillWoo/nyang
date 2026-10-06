@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { addItem, makeBag, type Bag } from './bag.ts';
 import { CELL } from './collide.ts';
-import { hitPlayer, makeDungeon, maxHp, PLAYER, updateDungeon, type Dungeon, type DungeonEvent } from './dungeon.ts';
+import { EXIT_DWELL, hitPlayer, makeDungeon, maxHp, PLAYER, updateDungeon, type Dungeon, type DungeonEvent } from './dungeon.ts';
 import data from './data/field.json' with { type: 'json' };
 import { ENEMY_DEFS, makeEnemy } from './enemy.ts';
 import { FX } from './fx.ts';
@@ -172,7 +172,7 @@ function run(d: Dungeon, input: typeof still, seconds: number) {
   d.loot.push({ id: 'coin', n: 7, x: 1, z: 1, h: 0, vh: 0, vx: 0, vz: 0, t: 0 });
   const [tx, tz] = d.room.exits[0];
   Object.assign(d.P, { x: (tx + 0.5) * CELL, z: (tz + 0.5) * CELL });
-  assert.equal(run(d, still, 0.016).out, 'exit');
+  assert.equal(run(d, still, EXIT_DWELL + 0.05).out, 'exit');
   assert.equal(d.bag.coins, 7, '나갈 때 남은 냥코인도');
   assert.equal(d.bag.slots[0]?.id, 'equipment_13', '나갈 때 남은 장비도 빈 칸에');
 }
@@ -214,16 +214,26 @@ function run(d: Dungeon, input: typeof still, seconds: number) {
   assert.ok(kite.P.dashX < -0.9, `움직이는 쪽으로 구른다 (${kite.P.dashX.toFixed(2)})`);
 }
 
-// 노란 매트를 밟으면 'exit'. 낮잠 중에는 안 나간다
+// 노란 매트에 EXIT_DWELL(3초) 서 있으면 'exit' — 밟자마자는 아니다. 벗어나면 처음부터. 낮잠 중에는 안 나간다
 {
   const d = fresh();
   const [tx, tz] = d.room.exits[0];
   d.enemies = [];
-  Object.assign(d.P, { x: (tx + 0.5) * CELL, z: (tz + 0.5) * CELL });
-  assert.equal(run(d, still, 0.016).out, 'exit');
+  const onMat = () => Object.assign(d.P, { x: (tx + 0.5) * CELL, z: (tz + 0.5) * CELL });
+  onMat();
+  assert.equal(run(d, still, EXIT_DWELL - 0.2).out, null, '3초가 되기 전엔 안 나간다');
+  assert.ok(d.exitT > EXIT_DWELL - 0.3, '서 있은 시간을 센다');
+  Object.assign(d.P, { x: d.P.x + CELL * 2, z: d.P.z + CELL * 2 }); // 매트에서 내려온다
+  run(d, still, 0.05);
+  assert.equal(d.exitT, 0, '벗어나면 처음부터');
+  onMat();
+  assert.equal(run(d, still, EXIT_DWELL + 0.05).out, 'exit', '3초 서 있으면 나간다');
 
-  d.phase = 'napped';
-  assert.equal(run(d, still, 0.016).out, null);
+  const n = fresh();
+  n.enemies = [];
+  Object.assign(n.P, { x: (tx + 0.5) * CELL, z: (tz + 0.5) * CELL });
+  n.phase = 'napped';
+  assert.equal(run(n, still, EXIT_DWELL + 0.5).out, null, '낮잠이면 안 나간다');
 }
 
 // 클리어한 뒤에도 걸을 수 있다 (나가는 칸까지 걸어가야 한다). 낮잠이면 못 걷는다
