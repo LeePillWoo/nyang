@@ -17,7 +17,8 @@ import {
   sfxHit,
   sfxHurt,
   sfxJump,
-  sfxCarve,
+  sfxSlide,
+  sfxRush,
   sfxNibble,
   sfxPlop,
   sfxPickup,
@@ -26,11 +27,28 @@ import {
   sfxRow,
   sfxSnap,
   sfxSplash,
+  sfxBone,
+  sfxBoom,
+  sfxBox,
+  sfxHiss,
+  sfxLevel,
+  sfxRing,
+  sfxShield,
+  sfxSnack,
+  sfxSnare,
+  sfxSpawn,
+  sfxSwirl,
+  sfxThrow,
+  sfxThud,
+  sfxWave,
+  sfxZap,
   unlockAudio,
 } from './audio.ts';
+import { cardAt, cardRects, drawCards, skillFxReady } from './skills-draw.ts';
+import { learn as learnSkill, type SkillId } from './skills.ts';
 import { loadAxe, loadBoat, loadCat, loadSnow } from './cat.ts';
 import { drawDungeon, dungeonReady, roomReady } from './dungeon-draw.ts';
-import { makeDungeon, maxHp, resetDungeon, updateDungeon, type Dungeon, type DungeonEvent } from './dungeon.ts';
+import { makeDungeon, maxHp, pick, resetDungeon, skipWaves, updateDungeon, type Dungeon, type DungeonEvent } from './dungeon.ts';
 import { emotesReady, quiet, say, saying, tickEmote, type EmoteId } from './emote.ts';
 import { ENEMY_DEFS, type Kind } from './enemy.ts';
 import { biomeAt, drawField, fieldFx, fieldReady, fieldView, terrainAt, terrainReady } from './field-draw.ts';
@@ -92,6 +110,8 @@ function traceDraw(who: string, sh: Sheet, row: number, col: number, sx: number,
   trace.push({ t: performance.now(), who, row, col, clamped: col >= r.length, flip, sx, sy, left: Math.min(a, b), right: Math.max(a, b), ...extra });
 }
 let punchQueued = false;
+/** 레벨 업 카드에 마우스가 올라간 카드 */
+let cardHover = -1;
 /** 샌드보드 점프 (이번 프레임) */
 let jumpQueued = false;
 addEventListener('keydown', (e) => {
@@ -106,6 +126,15 @@ addEventListener('keydown', (e) => {
   if (panel) {
     if (e.code === 'Escape') closePanel();
     return;
+  }
+  // 레벨 업 카드: 1 · 2 · 3 (숫자패드도). 고르는 동안 다른 키는 R(방 다시)만
+  if (scene === 'dungeon' && dungeon.choose) {
+    const n = /^(?:Digit|Numpad)([1-9])$/.exec(e.code)?.[1];
+    if (n && pick(dungeon, Number(n) - 1)) {
+      sfxPickup();
+      cardHover = -1;
+    }
+    if (e.code !== 'KeyR') return;
   }
   keys.add(e.code);
   if (e.code === 'KeyG') debug = !debug;
@@ -260,6 +289,14 @@ canvas.addEventListener('pointerdown', (e) => {
     if (bookTap(innerWidth, innerHeight, p.x, p.y) === 'close') closePanel();
     return;
   }
+  if (scene === 'dungeon' && dungeon.choose) {
+    const i = cardAt(innerWidth, innerHeight, p.x, p.y, dungeon.choose.length);
+    if (i >= 0 && pick(dungeon, i)) {
+      sfxPickup();
+      cardHover = -1;
+    }
+    return;
+  }
   if (panel === 'shop') {
     const r = shopTap(innerWidth, innerHeight, p.x, p.y, bag, SHOP.stock);
     if (r === 'close') closePanel();
@@ -336,6 +373,11 @@ canvas.addEventListener('pointermove', (e) => {
     return;
   }
   if (panel) return;
+  if (scene === 'dungeon' && dungeon.choose) {
+    cardHover = cardAt(innerWidth, innerHeight, p.x, p.y, dungeon.choose.length);
+    if (e.pointerType === 'mouse') canvas.style.cursor = cardHover >= 0 ? 'pointer' : '';
+    return;
+  }
   if (scene === 'fishing') {
     if (fishPtr !== null && fishPtr !== e.pointerId) return;
     const f = toFishing(p);
@@ -423,7 +465,7 @@ function enemySheet(k: Kind) {
   return p;
 }
 /** 방 배경 + 그 방 몬스터 시트 */
-const prepareRoom = (id: string) => Promise.all([roomReady(id), ...ROOMS[id].spawns.map(([k]) => enemySheet(k as Kind))]);
+const prepareRoom = (id: string) => Promise.all([roomReady(id), skillFxReady, ...ROOMS[id].spawns.map(([k]) => enemySheet(k as Kind))]);
 
 let catSheet: Sheet;
 let axeSheet: Sheet;
@@ -544,6 +586,17 @@ if (trace)
       get field() { return field; },
       get cat() { return { x: dungeon.P.x, z: dungeon.P.z }; },
       get dungeon() { return dungeon; },
+      /** 레벨 업 카드 고르기 · 웨이브 건너뛰기 · 기술 배우기 (검증용) */
+      pick: (i: number) => pick(dungeon, i),
+      skipWaves: () => skipWaves(dungeon),
+      learnSkill: (id: SkillId, n = 1) => {
+        for (let i = 0; i < n; i++) learnSkill(dungeon.run, id);
+      },
+      /** 카드 i 의 가운데 (CSS px) */
+      cardPoint: (i: number) => {
+        const r = cardRects(innerWidth, innerHeight, dungeon.choose?.length ?? 3).cards[i];
+        return { x: r.x + r.w / 2, y: r.y + r.h / 2 };
+      },
       get emote() { return saying(); },
       get sheets() { return sheets; },
       terrain: terrainAt,
@@ -658,7 +711,22 @@ function dungeonSound(e: DungeonEvent) {
   else if (e.type === 'hurt') sfxHurt();
   else if (e.type === 'loot') (e.coin ? sfxCoin : sfxPickup)();
   else if (e.type === 'full') sfxFull();
+  else if (e.type === 'skill') once(e.sound, SKILL_SFX[e.sound]);
+  else if (e.type === 'bone') once('bone', sfxBone);
+  else if (e.type === 'snack') sfxSnack();
+  else if (e.type === 'level') sfxLevel();
+  else if (e.type === 'wave') sfxWave(e.clear);
+  else if (e.type === 'spawn') once(e.elite ? 'elite' : 'spawn', () => sfxSpawn(e.elite));
 }
+/** 같은 소리가 한꺼번에 몰리지 않게 (70ms 에 한 번) */
+const lastSfx = new Map<string, number>();
+function once(id: string, play: () => void) {
+  const now = performance.now();
+  if (now - (lastSfx.get(id) ?? 0) < 70) return;
+  lastSfx.set(id, now);
+  play();
+}
+const SKILL_SFX = { throw: sfxThrow, boom: sfxBoom, zap: sfxZap, shield: sfxShield, hiss: sfxHiss, thud: sfxThud, snare: sfxSnare, swirl: sfxSwirl, ring: sfxRing, box: sfxBox };
 /** 낚시 사건 → 소리 · 감정 */
 function fishingEvent(e: FishEvent) {
   switch (e.type) {
@@ -791,6 +859,10 @@ function dungeonMood() {
   for (const e of dungeon.events) {
     if (e.type === 'hurt') say('sweat', 1.2);
     else if (e.type === 'pop') say('pride', 1.3);
+    else if (e.type === 'level') say('delight', 1.6);
+    else if (e.type === 'wave') say(e.clear ? 'pride' : 'determination', 1.6);
+    else if (e.type === 'spawn' && e.elite) say('danger', 2);
+    else if (e.type === 'snack') say('heart', 1.2);
   }
   if (P.lives < mood.lives) say('dizzy', 2);
   mood.lives = P.lives;
@@ -936,8 +1008,11 @@ function sandEvent(e: SandEvent) {
       sfxHurt();
       say('frustration', 0.8);
       break;
+    case 'slide':
+      sfxSlide(e.k);
+      break;
     case 'carve':
-      sfxCarve(e.k);
+      if (e.gain > 0.5) sfxRush(e.gain);
       break;
     case 'crash':
       sfxHurt();
@@ -1101,6 +1176,10 @@ function drawOverlay() {
   const c = ctl();
   drawControls(ctx, c, stick && stickVector(c, stick.x, stick.y), new Set(pressing.values()));
   if (touchOn && innerHeight > innerWidth) drawRotateHint(ctx, innerWidth);
+  // 레벨 업 카드는 맨 위에 (조이스틱·버튼도 덮는다). 도움말 줄은 고르는 동안 숨긴다
+  if (scene === 'dungeon' && dungeon.choose) drawCards(ctx, canvas.width, canvas.height, dungeon, cardHover, last / 1000, touchOn);
+  const hideHelp = scene === 'dungeon' && !!dungeon.choose;
+  if (help.classList.contains('choosing') !== hideHelp) help.classList.toggle('choosing', hideHelp);
 }
 
 /** 장면 전환 덮개 */
@@ -1115,13 +1194,13 @@ function drawFade() {
 const help = document.getElementById('help')!;
 const HELP = {
   field: 'WASD 이동 · 숲은 도끼로, 물은 배로 · 이정표 앞 포탈에 잠시 서 있으면 던전 · 지도 끌기·미니맵으로 둘러보기, 포탈 클릭 = 워프 · 강아지마을은 고등어 상점 · I 가방 · B 도감 · M 미니맵 · T 지형 보기',
-  dungeon: 'WASD 이동 · 클릭/J 냥펀치 · Space 구르기 · 쓰러진 몬스터가 떨군 건 다가가면 주워요 · I 가방 · 빛나는 칸으로 나가기 · G 격자',
+  dungeon: 'WASD 이동 · 클릭/J 냥펀치 · Space 구르기 · 웨이브 4번을 버티면 클리어 · 생선뼈를 모으면 레벨 업 → 기술 카드 (1·2·3) · I 가방 · 빛나는 칸으로 나가기',
   maze: 'WASD 이동 · 횃불이 닿는 길만 보여요 · 냥코인을 줍고 막다른 길 끝의 보물 상자를 찾아 출구로 · 빠를수록 탈출 보너스 · R 새 미로 · Esc 돌아가기',
   sandboard: 'A/D 좌우 · Space 점프 (높은 바위·선인장·기둥은 점프대로만) · 부딪히면 하트 -1 · 자석·방패·하트·가속 발판 · R 다시 · Esc 돌아가기',
 };
 const HELP_TOUCH = {
   field: '왼쪽 조이스틱으로 이동 · 숲은 도끼로, 물은 배로 · 포탈에 잠시 서 있으면 던전·낚시터 (강아지마을은 상점) · 화면을 끌어 둘러보고 포탈을 누르면 워프',
-  dungeon: '조이스틱 이동 · 냥펀치 · 구르기 · 빛나는 칸으로 나가기',
+  dungeon: '조이스틱 이동 · 냥펀치 · 구르기 · 생선뼈로 레벨 업 → 기술 카드를 눌러 골라요 · 빛나는 칸으로 나가기',
   maze: '조이스틱으로 이동 · 횃불이 닿는 길만 보여요 · 냥코인과 보물 상자를 찾아 출구로',
   sandboard: '◀ ▶ 좌우 · 점프 버튼이나 화면 누르기 = 점프 · 높은 건 피하고 낮은 건 뛰어넘어요 · 하트 3개',
 };

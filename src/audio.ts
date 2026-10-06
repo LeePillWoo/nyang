@@ -195,4 +195,59 @@ export const sfxFull = () => tone('sine', 300, 200, 0.14, 0.22);
 /** 폴짝 — 샌드보드 점프 */
 export const sfxJump = () => tone('triangle', 420, 880, 0.12, 0.16);
 /** 촤악 — 샌드보드가 미끄러지기 시작할 때 모래를 긁는 소리 (k = 미끄러짐 세기 0..1) */
-export const sfxCarve = (k = 1) => burst('bandpass', 2600, 0.7, 0.05 + 0.08 * k, 0.32, 800);
+export const sfxSlide = (k = 1) => burst('bandpass', 2600, 0.7, 0.05 + 0.08 * k, 0.32, 800);
+/** 슈욱 — 엣지가 물려 카빙으로 빨라질 때 올라가는 바람 소리 (gain = 붙는 속도 m/s) */
+export const sfxRush = (gain: number) => burst('bandpass', 420, 1.1, Math.min(0.16, 0.03 + gain * 0.02), 0.42, 2600);
+
+// ── 던전 기술 · 웨이브 ──
+/** 휙 — 털뭉치·실타래·헤어볼·태엽 쥐를 던질 때 (작게) */
+export const sfxThrow = () => burst('bandpass', 900, 1, 0.05, 0.12, 1900);
+/** 펑 — 헤어볼·태엽 쥐가 터질 때 */
+export function sfxBoom() {
+  burst('lowpass', 1100, 0.8, 0.2, 0.3, 180);
+  tone('sine', 140, 60, 0.18, 0.22);
+}
+/** 쿵 — 상자가 떨어질 때 */
+export function sfxThud() {
+  burst('lowpass', 500, 0.9, 0.26, 0.24, 110);
+  tone('sine', 110, 50, 0.22, 0.2);
+}
+/** 찌릿 — 치명타 */
+export const sfxZap = () => tone('square', 1300, 320, 0.05, 0.14);
+/** 퐁 — 보호막이 막을 때 */
+export function sfxShield() {
+  tone('triangle', 700, 1400, 0.1, 0.16);
+  burst('highpass', 2400, 0.8, 0.06, 0.18);
+}
+/** 하악 */
+export const sfxHiss = () => burst('highpass', 2800, 0.6, 0.12, 0.38, 5200);
+/** 휘익 — 꼬리 회오리 */
+export const sfxSwirl = () => burst('bandpass', 600, 1.1, 0.1, 0.34, 1700);
+/** 둥 — 충격파 */
+export const sfxRing = () => tone('sine', 320, 110, 0.14, 0.24);
+/** 톡 — 털실 올가미 */
+export const sfxSnare = () => tone('sine', 480, 820, 0.07, 0.12);
+/** 탁 — 빙글 상자가 부딪힐 때 */
+export const sfxBox = () => burst('bandpass', 520, 1.6, 0.08, 0.07);
+/** 틱 — 생선뼈를 먹을 때 (작게) */
+export const sfxBone = () => tone('triangle', 1500, 1900, 0.04, 0.06);
+/** 냠 — 생선 비스킷 */
+export const sfxSnack = () => {
+  tone('triangle', 620, 900, 0.1, 0.1);
+  tone('triangle', 820, 1200, 0.08, 0.1, 0.09);
+};
+/** 띠리링 — 레벨 업 */
+export function sfxLevel() {
+  tone('triangle', 660, 660, 0.12, 0.12);
+  tone('triangle', 880, 880, 0.12, 0.12, 0.1);
+  tone('triangle', 1320, 1320, 0.14, 0.22, 0.2);
+}
+/** 뿌우 — 웨이브 시작 (clear 면 밝게) */
+export function sfxWave(clear: boolean) {
+  if (clear) {
+    tone('triangle', 520, 520, 0.1, 0.12);
+    tone('triangle', 780, 780, 0.12, 0.2, 0.12);
+  } else tone('sawtooth', 180, 240, 0.07, 0.45);
+}
+/** 퐁 — 몬스터가 나타날 때 (정예는 낮고 크게) */
+export const sfxSpawn = (elite: boolean) => (elite ? tone('sawtooth', 120, 80, 0.12, 0.5) : burst('lowpass', 700, 0.8, 0.05, 0.12, 300));

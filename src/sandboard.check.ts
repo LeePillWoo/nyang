@@ -165,8 +165,9 @@ const until = (s: SandState, f: () => boolean, input = still, max = 10) => {
   assert.ok(s.phase === 'done' && s.fell && fin?.type === 'finish' && fin.fell && fin.score === s.coins, '하트 0 → 넘어져 끝');
 }
 
-// 6-1) 미끄러짐 손맛 (드리프트): 누르면 보드가 먼저 꺾이고(살짝 넘쳤다 돌아옴) 몸은 늦게 옆으로 흐른다.
-//      시작할 때 미끄러짐이 커서 "촤악"(carve) 하고 모래를 튀기며 속도가 조금 깎이고, 떼면 한 레인 안에서 미끄러지다 선다.
+// 6-1) 미끄러짐 손맛 (드리프트 → 카빙): 누르면 보드가 먼저 꺾이고(살짝 넘쳤다 돌아옴) 몸은 늦게 옆으로 흐른다.
+//      시작할 때 미끄러짐이 커서 "촤악"(slide) 하고 모래를 튀기며 확 느려지고, 엣지가 물리면(carve) 잃은 것보다 더 빨라진다.
+//      떼면 한 레인 안에서 미끄러지다 선다.
 //      숫자를 바꾸면 여기 표가 손맛을 보여 준다 — 범위를 벗어나면 실패
 {
   const s = fresh();
@@ -180,6 +181,10 @@ const until = (s: SandState, f: () => boolean, input = still, max = 10) => {
   };
   step(1, 1);
   const at = (sec: number) => rows[Math.round(sec / DT) - 1];
+  // 속도: 가장 느려지는 때 · 카빙으로 가장 빨라지는 때 (누른 지 1초 안)
+  const low = rows.reduce((m, r) => (r.v < m.v ? r : m));
+  // 카빙이 끝나는 때(가장 느린 때 + 카빙 시간)의 속도 — 그 뒤로는 그냥 가속이라 재지 않는다
+  const high = at(Math.round((low.t + SAND.carveTime + 0.05) / DT) * DT);
   const yaw90 = rows.find((r) => r.yaw >= SAND.yawMax * 0.9)!.t;
   const over = Math.max(...rows.map((r) => r.yaw)) / SAND.yawMax - 1;
   const vx90 = rows.find((r) => r.vx >= SAND.steer * 0.9)!.t;
@@ -208,31 +213,36 @@ const until = (s: SandState, f: () => boolean, input = still, max = 10) => {
   console.log('  미끄러짐 손맛:');
   console.log(`    보드 각도  최대 ${deg(SAND.yawMax)} · 90% 까지 ${yaw90.toFixed(2)}초 · 넘침 ${(over * 100).toFixed(0)}% (살짝 넘쳤다 돌아옴)`);
   console.log(`    0.1초 뒤   보드 ${deg(kick.yaw)} 꺾였는데 옆으로는 ${kick.x.toFixed(2)} 만 — 보드가 먼저, 몸은 나중`);
-  console.log(`    가로 속도  90% 까지 ${vx90.toFixed(2)}초 · 최대 미끄러짐 ${peakSlip.toFixed(2)} · 0.3초 동안 감속 ${lost.toFixed(2)} m/s (20 m/s 에서, 가속 포함)`);
+  console.log(`    가로 속도  90% 까지 ${vx90.toFixed(2)}초 · 최대 미끄러짐 ${peakSlip.toFixed(2)}`);
+  console.log(`    앞 속도    20 m/s → 드리프트로 ${low.v.toFixed(1)} (${low.t.toFixed(2)}초) → 카빙으로 ${high.v.toFixed(1)} (${high.t.toFixed(2)}초) · 0.3초 감속 ${lost.toFixed(1)}`);
   console.log(`    떼면       ${out.toFixed(2)} 더 미끄러지고 ${restT.toFixed(2)}초 만에 섬 (한 레인 = 0.4) · 미리 셈 ${pred.toFixed(2)} → 실제 ${r.x.toFixed(2)}`);
   console.log(`    톡 누르기  0.1초 → ${tap(0.1).toFixed(2)} · 0.15초 → ${tap(0.15).toFixed(2)} · 0.25초 → ${tap(0.25).toFixed(2)}`);
   assert.ok(yaw90 >= 0.1 && yaw90 <= 0.2, `보드는 빨리 꺾인다 (${yaw90})`);
   assert.ok(over > 0.04 && over < 0.2, `살짝 넘쳤다 돌아온다 (${over})`);
   assert.ok(kick.yaw > SAND.yawMax * 0.6 && kick.x < 0.05, '처음엔 보드만 꺾이고 몸은 거의 그대로 (드리프트 시작)');
   assert.ok(vx90 > yaw90 + 0.1 && vx90 < 0.5, `몸은 늦게 따라온다 (${vx90})`);
-  assert.ok(peakSlip > SAND.carveAt && lost > 0.5 && lost < 2.5, `시작할 때 미끄러지며 속도가 조금 깎인다 (${peakSlip}, ${lost})`);
+  assert.ok(peakSlip > SAND.slideAt && 20 - low.v > 1.8 && 20 - low.v < 4 && low.t < 0.4, `드리프트: 미끄러지며 확 느려진다 (${low.v.toFixed(2)} @ ${low.t.toFixed(2)})`);
+  assert.ok(high.v > 20 + 1 && high.t - low.t < 0.6, `카빙: 엣지가 물리면 처음보다 빨라진다 (${high.v.toFixed(2)} @ ${high.t.toFixed(2)})`);
   assert.ok(out > 0.2 && out < 0.4 && restT < 0.6, `떼면 한 레인 안에서 미끄러지다 선다 (${out}, ${restT})`);
   assert.ok(Math.abs(pred - r.x) < 0.01, '떼면 멈출 자리를 미리 셀 수 있다 (자동 조종이 쓴다)');
   const t1 = tap(0.15);
   assert.ok(t1 > 0.25 && t1 < 0.45, `0.15초 톡 = 한 레인쯤 (${t1})`);
 
-  // "촤악": 시작할 때 한 번, 미끄러짐이 가라앉기 전엔 다시 안 난다. 반대로 홱 틀면 또 난다 (가장자리에 안 닿게 왼쪽 끝에서 출발)
+  // "촤악"(slide): 시작할 때 한 번, 엣지가 물려 카빙(carve)이 되기 전엔 다시 안 난다. 반대로 홱 틀면 또 난다 (가장자리에 안 닿게 왼쪽 끝에서 출발)
   const c = fresh();
   c.x = -0.9;
   let carves = 0;
+  let boosts = 0;
   const run = (mx: number, secs: number) => {
     for (let k = 0; k < Math.round(secs / DT); k++) {
       updateSandboard(c, { mx, jump: false }, DT);
-      carves += c.events.filter((e) => e.type === 'carve').length;
+      carves += c.events.filter((e) => e.type === 'slide').length;
+      boosts += c.events.filter((e) => e.type === 'carve').length;
     }
   };
   run(1, 0.5);
   assert.equal(carves, 1, '누르면 촤악 한 번');
+  assert.equal(boosts, 1, '이어서 엣지가 물리며 카빙 한 번');
   assert.ok(c.fx.some((f) => f.id === 'carve_spray' && f.flip === -1), '오른쪽으로 틀면 모래는 왼쪽(뒤집음)으로');
   run(-1, 0.4);
   assert.equal(carves, 2, '반대로 홱 틀면 또 촤악');
@@ -242,6 +252,26 @@ const until = (s: SandState, f: () => boolean, input = still, max = 10) => {
   run(1, 0.5);
   assert.ok(c.x >= SAND.edge - 0.03 && Math.abs(c.vx) < 0.01 && Math.abs(c.yaw) < 0.02 && c.slip === 0 && c.v >= vEdge, `가장자리: 멈추고 보드가 펴진다 (자리 ${c.x.toFixed(3)}, 각도 ${c.yaw.toFixed(3)})`);
   assert.equal(carves, 3, '가장자리에 닿을 땐 촤악 안 함 (오른쪽으로 다시 틀 때 한 번만)');
+  // 좌우로 흔들어도(0.3초씩 6번) 끝없이 빨라지지 않는다 — 잃은 만큼만 돌려주니 오히려 느려진다
+  const w = fresh();
+  w.v = SAND.vMax;
+  let wmax = 0;
+  for (let i = 0; i < 6; i++)
+    for (let k = 0; k < 18; k++) {
+      updateSandboard(w, { mx: i % 2 ? -1 : 1, jump: false }, DT);
+      wmax = Math.max(wmax, w.v);
+    }
+  assert.ok(wmax <= SAND.vMax + SAND.carveMax && w.v < SAND.vMax, `흔들기는 이득이 없다 (최고 ${wmax.toFixed(1)}, 끝 ${w.v.toFixed(1)})`);
+  // 톡 치고 바로 펴면 카빙이 짧다 — 길게 그은 것보다 덜 빨라진다
+  const short = fresh();
+  short.v = 20;
+  for (let k = 0; k < 9; k++) updateSandboard(short, { mx: 1, jump: false }, DT);
+  let smax = 0;
+  for (let k = 0; k < 60; k++) {
+    updateSandboard(short, still, DT);
+    smax = Math.max(smax, short.v);
+  }
+  assert.ok(smax < high.v, `톡 친 것보다 길게 그은 카빙이 더 빠르다 (${smax.toFixed(1)} < ${high.v.toFixed(1)})`);
   // 공중에선 감속·촤악이 없다
   const a = fresh();
   a.air = a.airMax = 1;

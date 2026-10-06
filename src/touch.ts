@@ -70,7 +70,7 @@ export function controls(w: number, h: number, scene: Scene, touch: boolean): Co
     pill('dex', 0, 56, '📖 도감');
     pill('bag', 1, 56, '🎒 가방');
   }
-  if (scene === 'dungeon') pill('bag', 0, 100, '🎒 가방');
+  if (scene === 'dungeon') pill('bag', 0, 122, '🎒 가방'); // 체력·경험치 판(14, 14, 높이 100) 밑
   if (!touch || scene === 'fishing') return { stick: null, buttons, k };
   // 엄지로 누르는 것들은 휴대폰에서도 너무 작아지지 않게
   const tk = Math.max(0.85, k);

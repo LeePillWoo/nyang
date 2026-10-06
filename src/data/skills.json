@@ -1,0 +1,189 @@
+{
+  "_comment": "던전 기술 (로그라이크). 쓰러진 몬스터가 생선뼈(경험치)를 떨군다 — 체력 perHp 마다 1개, 정예는 waves.json elite.bones. 가끔(snack.chance, 정예는 늘) 생선 비스킷도 — 주우면 바로 먹어 체력 snack.heal (가방에 안 들어간다). 생선뼈는 magnet(m) 안이면 빨려 오고 웨이브를 깨면 전부 날아온다. 레벨 L → L+1 에 first + grow×(L−1) 개. 레벨이 오르면 게임이 멈추고 카드 3장 — 새 기술 또는 가진 기술 레벨 업(최대 5). 가진 기술은 owned 배로 더 잘 나온다. 기술은 그 방에서만 (나가면 사라진다). 수치: cd 초마다 · n 개수 · dmg 피해 · r 반지름(m) · range 거리(m) · dur/stun 지속(초) · slow 속도 배율 · dps 초당 피해 · speed m/s. text = 그 레벨 카드에 쓰는 말. anim = 카드 그림 (skill-fx.json 동작 id).",
+  "xp": { "first": 3, "grow": 5, "magnet": 2.6, "perHp": 12, "owned": 2.5 },
+  "snack": { "item": "curios_08", "chance": 0.07, "heal": 25 },
+  "families": {
+    "yarn": { "name": "털실", "color": "#f08fae" },
+    "catnip": { "name": "캣닢", "color": "#86bf62" },
+    "box": { "name": "상자", "color": "#c49a62" },
+    "laser": { "name": "레이저", "color": "#e8615f" }
+  },
+  "skills": {
+    "yarn_ball": {
+      "family": "yarn", "name": "털뭉치 던지기", "anim": "yarn_fly",
+      "desc": "가장 가까운 적에게 털뭉치를 저절로 던져요",
+      "levels": [
+        { "cd": 1.3, "n": 1, "dmg": 9, "bounce": 0, "text": "1.3초마다 털뭉치 1개" },
+        { "cd": 1.2, "n": 2, "dmg": 9, "bounce": 0, "text": "털뭉치 2개" },
+        { "cd": 1.1, "n": 2, "dmg": 12, "bounce": 0, "text": "피해 9 → 12, 더 자주" },
+        { "cd": 1.0, "n": 3, "dmg": 12, "bounce": 0, "text": "털뭉치 3개" },
+        { "cd": 0.9, "n": 3, "dmg": 15, "bounce": 1, "text": "맞으면 옆 적에게 한 번 튕겨요" }
+      ]
+    },
+    "spool": {
+      "family": "yarn", "name": "실타래 부메랑", "anim": "spool_boomerang",
+      "desc": "앞으로 날아갔다 돌아오며 닿는 적을 다 꿰뚫어요",
+      "levels": [
+        { "cd": 2.6, "n": 1, "dmg": 12, "range": 5, "text": "2.6초마다 실타래 1개" },
+        { "cd": 2.4, "n": 1, "dmg": 16, "range": 6, "text": "피해 12 → 16, 더 멀리" },
+        { "cd": 2.2, "n": 2, "dmg": 16, "range": 6, "text": "실타래 2개 (양옆으로)" },
+        { "cd": 2.0, "n": 2, "dmg": 20, "range": 7, "text": "피해 16 → 20, 더 멀리" },
+        { "cd": 1.8, "n": 3, "dmg": 22, "range": 7, "text": "실타래 3개" }
+      ]
+    },
+    "hairball": {
+      "family": "yarn", "name": "헤어볼 웩", "anim": "hairball_burst",
+      "desc": "적이 모인 곳에 헤어볼을 뱉어 펑 터뜨려요",
+      "levels": [
+        { "cd": 2.4, "n": 1, "dmg": 14, "r": 1.6, "text": "2.4초마다 헤어볼 1개" },
+        { "cd": 2.2, "n": 1, "dmg": 18, "r": 1.8, "text": "피해 14 → 18, 범위 넓게" },
+        { "cd": 2.0, "n": 1, "dmg": 18, "r": 2.2, "text": "범위 더 넓게, 더 자주" },
+        { "cd": 1.8, "n": 1, "dmg": 24, "r": 2.2, "text": "피해 18 → 24" },
+        { "cd": 1.6, "n": 2, "dmg": 26, "r": 2.5, "text": "헤어볼 2개" }
+      ]
+    },
+    "snare": {
+      "family": "yarn", "name": "털실 올가미", "anim": "yarn_snare",
+      "desc": "가까운 적을 털실로 묶어 못 움직이게 해요",
+      "levels": [
+        { "cd": 3.2, "n": 2, "dur": 1.6, "dmg": 6, "range": 4.5, "text": "3.2초마다 2마리를 1.6초 묶어요" },
+        { "cd": 3.0, "n": 3, "dur": 1.8, "dmg": 6, "range": 4.5, "text": "3마리" },
+        { "cd": 2.8, "n": 3, "dur": 2.2, "dmg": 10, "range": 5, "text": "더 오래 · 피해 6 → 10" },
+        { "cd": 2.6, "n": 4, "dur": 2.4, "dmg": 10, "range": 5, "text": "4마리" },
+        { "cd": 2.4, "n": 5, "dur": 2.6, "dmg": 14, "range": 5.5, "text": "5마리 · 피해 14" }
+      ]
+    },
+    "catnip_cloud": {
+      "family": "catnip", "name": "캣닢 구름", "anim": "cloud_idle",
+      "desc": "고양이 주위에 캣닢 구름 — 안의 적은 느려지고 계속 따끔해요",
+      "levels": [
+        { "r": 1.8, "dps": 6, "slow": 0.7, "text": "반지름 1.8m · 초당 6 · 느리게" },
+        { "r": 2.1, "dps": 8, "slow": 0.65, "text": "구름 넓게 · 초당 8" },
+        { "r": 2.4, "dps": 10, "slow": 0.6, "text": "구름 넓게 · 초당 10" },
+        { "r": 2.7, "dps": 13, "slow": 0.55, "text": "구름 넓게 · 초당 13" },
+        { "r": 3.0, "dps": 16, "slow": 0.5, "text": "구름 넓게 · 초당 16 · 반쯤 느리게" }
+      ]
+    },
+    "zoom": {
+      "family": "catnip", "name": "우다다 잔상", "anim": "green_flame",
+      "desc": "구르면 지나간 자리에 초록 불꽃이 남아요",
+      "levels": [
+        { "dps": 14, "life": 1.6, "cut": 0, "text": "구른 자리에 1.6초 불꽃 (초당 14)" },
+        { "dps": 18, "life": 1.8, "cut": 0.15, "text": "불꽃 세게 · 구르기 15% 더 자주" },
+        { "dps": 22, "life": 2.0, "cut": 0.25, "text": "불꽃 세게 · 구르기 25% 더 자주" },
+        { "dps": 26, "life": 2.3, "cut": 0.35, "text": "불꽃 오래 · 구르기 35% 더 자주" },
+        { "dps": 32, "life": 2.6, "cut": 0.45, "text": "불꽃 세게 · 구르기 45% 더 자주" }
+      ]
+    },
+    "tail_swirl": {
+      "family": "catnip", "name": "꼬리 회오리", "anim": "tail_swirl",
+      "desc": "꼬리를 한 바퀴 휘둘러 둘레의 적을 밀쳐내요",
+      "levels": [
+        { "cd": 3.0, "r": 2.2, "dmg": 12, "push": 7, "text": "3초마다 한 바퀴 (피해 12)" },
+        { "cd": 2.7, "r": 2.4, "dmg": 15, "push": 7, "text": "피해 15 · 더 자주" },
+        { "cd": 2.4, "r": 2.6, "dmg": 18, "push": 8, "text": "더 넓게 · 피해 18" },
+        { "cd": 2.2, "r": 2.8, "dmg": 22, "push": 8, "text": "더 넓게 · 피해 22" },
+        { "cd": 2.0, "r": 3.0, "dmg": 26, "push": 9, "text": "2초마다 · 피해 26" }
+      ]
+    },
+    "paw_combo": {
+      "family": "catnip", "name": "냥냥 펀치", "anim": "paw_punch",
+      "desc": "냥펀치가 세지고, 몇 번에 한 번 충격파가 퍼져요",
+      "levels": [
+        { "bonus": 3, "every": 3, "ring": 12, "r": 2.0, "text": "냥펀치 +3 · 3번째마다 충격파" },
+        { "bonus": 5, "every": 3, "ring": 15, "r": 2.0, "text": "냥펀치 +5 · 충격파 15" },
+        { "bonus": 6, "every": 2, "ring": 15, "r": 2.2, "text": "2번째마다 충격파" },
+        { "bonus": 8, "every": 2, "ring": 20, "r": 2.4, "text": "냥펀치 +8 · 충격파 20" },
+        { "bonus": 10, "every": 2, "ring": 25, "r": 2.8, "text": "냥펀치 +10 · 충격파 넓게" }
+      ]
+    },
+    "box_orbit": {
+      "family": "box", "name": "빙글 상자", "anim": "box_spin",
+      "desc": "상자가 고양이 둘레를 빙글빙글 돌며 부딪혀요",
+      "levels": [
+        { "n": 1, "dmg": 8, "spin": 2.6, "r": 1.7, "text": "상자 1개" },
+        { "n": 2, "dmg": 8, "spin": 2.6, "r": 1.7, "text": "상자 2개" },
+        { "n": 2, "dmg": 12, "spin": 3.2, "r": 1.8, "text": "피해 8 → 12, 더 빠르게" },
+        { "n": 3, "dmg": 12, "spin": 3.2, "r": 1.9, "text": "상자 3개" },
+        { "n": 4, "dmg": 15, "spin": 3.8, "r": 2.0, "text": "상자 4개 · 피해 15" }
+      ]
+    },
+    "box_drop": {
+      "family": "box", "name": "상자 낙하", "anim": "box_land",
+      "desc": "하늘에서 상자가 쿵 — 맞은 적은 잠깐 기절해요",
+      "levels": [
+        { "cd": 3.4, "n": 1, "dmg": 20, "r": 1.3, "stun": 1.0, "text": "3.4초마다 상자 1개 (피해 20)" },
+        { "cd": 3.2, "n": 2, "dmg": 20, "r": 1.3, "stun": 1.0, "text": "상자 2개" },
+        { "cd": 3.0, "n": 2, "dmg": 28, "r": 1.5, "stun": 1.3, "text": "피해 28 · 더 오래 기절" },
+        { "cd": 2.8, "n": 3, "dmg": 28, "r": 1.5, "stun": 1.3, "text": "상자 3개" },
+        { "cd": 2.5, "n": 4, "dmg": 34, "r": 1.7, "stun": 1.6, "text": "상자 4개 · 피해 34" }
+      ]
+    },
+    "loaf_shield": {
+      "family": "box", "name": "식빵 보호막", "anim": "loaf_shield",
+      "desc": "한 대를 대신 막아 주는 보호막이 다시 차올라요",
+      "levels": [
+        { "cd": 9, "charges": 1, "burst": 0, "text": "한 대를 막아요 (9초마다 다시)" },
+        { "cd": 7.5, "charges": 1, "burst": 0, "text": "7.5초마다 다시" },
+        { "cd": 6.5, "charges": 1, "burst": 12, "text": "깨질 때 둘레를 밀쳐내요" },
+        { "cd": 5.5, "charges": 1, "burst": 12, "text": "5.5초마다 다시" },
+        { "cd": 4.5, "charges": 2, "burst": 16, "text": "보호막 2겹" }
+      ]
+    },
+    "hiss": {
+      "family": "box", "name": "하악!", "anim": "hiss_wave",
+      "desc": "맞거나 둘러싸이면 하악! — 둘레의 적을 세게 밀쳐내요",
+      "levels": [
+        { "cd": 4.0, "r": 2.4, "dmg": 10, "push": 10, "crowd": 3, "text": "맞거나 3마리에 둘러싸이면 하악" },
+        { "cd": 3.6, "r": 2.6, "dmg": 14, "push": 10, "crowd": 3, "text": "피해 14 · 더 자주" },
+        { "cd": 3.2, "r": 2.8, "dmg": 18, "push": 11, "crowd": 3, "text": "더 넓게 · 피해 18" },
+        { "cd": 2.8, "r": 3.0, "dmg": 22, "push": 11, "crowd": 2, "text": "2마리만 붙어도 하악" },
+        { "cd": 2.4, "r": 3.3, "dmg": 28, "push": 12, "crowd": 2, "text": "더 넓게 · 피해 28" }
+      ]
+    },
+    "red_dot": {
+      "family": "laser", "name": "빨간 점", "anim": "red_dot",
+      "desc": "레이저 점이 적을 쫓아다니며 지져요",
+      "levels": [
+        { "n": 1, "dps": 12, "speed": 6, "text": "점 1개 (초당 12)" },
+        { "n": 1, "dps": 16, "speed": 6.5, "text": "초당 16" },
+        { "n": 2, "dps": 16, "speed": 6.5, "text": "점 2개" },
+        { "n": 2, "dps": 22, "speed": 7, "text": "초당 22 · 더 빠르게" },
+        { "n": 3, "dps": 26, "speed": 7.5, "text": "점 3개 · 초당 26" }
+      ]
+    },
+    "pounce": {
+      "family": "laser", "name": "사냥 덮치기", "anim": "critical_hit",
+      "desc": "가장 튼튼한 적을 노려 찍고 치명타를 꽂아요",
+      "levels": [
+        { "cd": 3.0, "n": 1, "dmg": 30, "range": 7, "text": "3초마다 치명타 30" },
+        { "cd": 2.8, "n": 1, "dmg": 38, "range": 7, "text": "치명타 38" },
+        { "cd": 2.6, "n": 2, "dmg": 38, "range": 7.5, "text": "2마리를 노려요" },
+        { "cd": 2.4, "n": 2, "dmg": 48, "range": 7.5, "text": "치명타 48" },
+        { "cd": 2.2, "n": 3, "dmg": 56, "range": 8, "text": "3마리 · 치명타 56" }
+      ]
+    },
+    "claw": {
+      "family": "laser", "name": "발톱 할퀴기", "anim": "claw_slash",
+      "desc": "냥펀치에 발톱 자국 — 맞은 적이 한동안 따끔따끔해요",
+      "levels": [
+        { "dps": 5, "dur": 2, "reach": 0, "text": "2초 동안 초당 5" },
+        { "dps": 7, "dur": 2, "reach": 0, "text": "초당 7" },
+        { "dps": 9, "dur": 2, "reach": 0.3, "text": "초당 9 · 냥펀치가 더 멀리" },
+        { "dps": 12, "dur": 2.5, "reach": 0.3, "text": "초당 12 · 2.5초" },
+        { "dps": 15, "dur": 3, "reach": 0.6, "text": "초당 15 · 3초 · 더 멀리" }
+      ]
+    },
+    "wind_mouse": {
+      "family": "laser", "name": "태엽 쥐", "anim": "clockwork_mouse",
+      "desc": "태엽 쥐가 적에게 달려가 펑 터져요",
+      "levels": [
+        { "cd": 3.2, "n": 1, "dmg": 22, "r": 1.4, "speed": 5, "text": "3.2초마다 태엽 쥐 1마리" },
+        { "cd": 3.0, "n": 2, "dmg": 22, "r": 1.4, "speed": 5, "text": "2마리" },
+        { "cd": 2.8, "n": 2, "dmg": 28, "r": 1.6, "speed": 5.5, "text": "피해 28 · 범위 넓게" },
+        { "cd": 2.6, "n": 3, "dmg": 28, "r": 1.6, "speed": 5.5, "text": "3마리" },
+        { "cd": 2.4, "n": 3, "dmg": 36, "r": 1.9, "speed": 6, "text": "피해 36 · 범위 넓게" }
+      ]
+    }
+  }
+}

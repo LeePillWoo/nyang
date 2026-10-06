@@ -16,6 +16,7 @@ const OUT = new URL('./out/', import.meta.url);
 const fsPath = (u) => fileURLToPath(u);
 const readJson = (rel) => JSON.parse(fs.readFileSync(new URL(rel, import.meta.url), 'utf8'));
 const FIELD = readJson('../src/data/field.json');
+const WAVE_DATA = readJson('../src/data/waves.json');
 const { OBS: SAND_OBS, coast: sandCoast } = await import('../src/sandboard.ts');
 /** 개방 구역(field.json open) 안의 워프 — 잠긴 구역 밖 워프는 갈 수 없는 게 맞다 */
 const inOpen = (x, y) => {
@@ -72,6 +73,8 @@ async function open(where = 'dungeon', room = '', view = null, extra = '') {
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+/** 레벨 업 카드가 뜨면 저절로 첫 장을 고른다 (기술과 상관없는 던전 검사용) */
+const autoPick = (page) => page.evaluate(() => setInterval(() => __game.dungeon?.choose && __game.pick(0), 40));
 /** 마우스로 (x, y) 누르기 */
 const click2 = async (page, p) => {
   await page.mouse.move(p.x, p.y);
@@ -205,9 +208,15 @@ function motionCheck(tr, who, prefix = '') {
   const L = tr.filter((r) => r.who === who && r.state !== 'pop');
   let worst = 0;
   let at = '';
-  for (let i = 1; i < L.length; i++) {
-    const a = L[i - 1];
-    const b = L[i];
+  // 같은 종류가 여럿이면(웨이브) 몬스터마다 따로 잇는다 — uid
+  const pairs = [];
+  const prev = new Map();
+  for (const r of L) {
+    const k = r.uid ?? 0;
+    if (prev.has(k)) pairs.push([prev.get(k), r]);
+    prev.set(k, r);
+  }
+  for (const [a, b] of pairs) {
     // 몸 중심이 움직인 양에서 캐릭터 위치가 움직인 양을 뺀 것 = 그림이 혼자 튄 양
     const j = Math.abs((b.left + b.right - a.left - a.right) / 2 - (b.sx - a.sx));
     if (j > worst) {
@@ -634,8 +643,12 @@ try {
     await page.evaluate(() => localStorage.removeItem('nyang.bag.v1'));
     await page.reload({ waitUntil: 'load' });
     await page.waitForFunction(() => window.__sheets, { timeout: 60000 });
-    // 몬스터를 한 대에 쓰러지게 하고 고양이 앞으로 데려와 J 로 때린다
-    await page.evaluate(() => __game.dungeon.enemies.forEach((e) => (e.hp = 1)));
+    // 몬스터를 한 대에 쓰러지게 하고 고양이 앞으로 데려와 J 로 때린다 (웨이브는 건너뛰고, 레벨 업 카드는 저절로 고른다 — 기술은 [웨이브 · 기술] 에서)
+    await autoPick(page);
+    await page.evaluate(() => {
+      __game.skipWaves();
+      __game.dungeon.enemies.forEach((e) => (e.hp = 1));
+    });
     let lootShot = false;
     for (let i = 0; i < 60 && (await page.evaluate(() => __game.dungeon.phase)) === 'playing'; i++) {
       await page.evaluate(() => {
@@ -702,6 +715,7 @@ try {
     // 장비 공격력 +8 이 냥펀치에: 10 + 8 = 18
     await page.keyboard.press('KeyR');
     await sleep(300);
+    await autoPick(page);
     await page.evaluate(() => {
       const d = __game.dungeon;
       d.enemies = d.enemies.slice(0, 1);
@@ -798,6 +812,7 @@ try {
     await page.evaluate(() => localStorage.removeItem('nyang.monsters.v1'));
     await page.reload({ waitUntil: 'load' });
     await page.waitForFunction(() => window.__sheets, { timeout: 60000 });
+    await autoPick(page);
     await page.evaluate(() => {
       const d = __game.dungeon;
       const e = d.enemies.find((v) => v.kind === 'sword');
@@ -1022,6 +1037,118 @@ try {
     await page.close();
   }
 
+  // 3-8) 웨이브 · 기술 (실제 키·마우스·터치): 웨이브 1 = 방 몬스터 + 가장자리에서 더 → 쓰러뜨리면 생선뼈 → 레벨 업 카드 → 1 키로 고른다 →
+  //  다시 레벨 업 → 마우스로 두 번째 카드 → 기술 여럿을 켜고 싸워도 NaN 그리기·에러 없음 → 웨이브 2 · 마지막 웨이브 정예 → 휴대폰 카드 터치.
+  //  화면 dungeon-wave.png · dungeon-cards.png · dungeon-skills.png · dungeon-elite.png · dungeon-cards-phone.png
+  console.log('\n[웨이브 · 기술]');
+  {
+    const { page, errors } = await open('dungeon');
+    await page.evaluate(() => {
+      window.__badDraw = 0;
+      const T = CanvasRenderingContext2D.prototype.translate;
+      CanvasRenderingContext2D.prototype.translate = function (x, y) {
+        if (!Number.isFinite(x) || !Number.isFinite(y)) window.__badDraw++;
+        return T.call(this, x, y);
+      };
+      const D = CanvasRenderingContext2D.prototype.drawImage;
+      CanvasRenderingContext2D.prototype.drawImage = function (...a) {
+        if (a.slice(1).some((v) => typeof v === 'number' && !Number.isFinite(v))) window.__badDraw++;
+        return D.apply(this, a);
+      };
+    });
+    const w0 = await page.evaluate(() => ({ n: __game.dungeon.enemies.length, q: __game.dungeon.wave.queue.length, total: __game.dungeon.wave.total }));
+    check(w0.n + w0.q === WAVE_DATA.counts[0] && w0.total === WAVE_DATA.counts.length, `웨이브 1: 방 몬스터 ${w0.n} + 가장자리에서 ${w0.q} (웨이브 ${w0.total}개)`);
+    await page.evaluate(() => setInterval(() => (__game.dungeon.P.invT = 1), 50)); // 이 검사에선 안 다친다
+    const spawned = await page.waitForFunction((n) => __game.dungeon.enemies.length > n, { timeout: 6000 }, w0.n).then(() => true, () => false);
+    const far = await page.evaluate(() => {
+      const d = __game.dungeon;
+      return d.enemies.slice(3).every((e) => Math.hypot(e.x - d.P.x, e.z - d.P.z) > 3.5);
+    });
+    check(spawned && far, '가장자리에서 예고 뒤 몬스터가 더 나온다 (고양이 가까이는 아니다)');
+    await page.screenshot({ path: fsPath(new URL('dungeon-wave.png', OUT)) });
+    // 실제 냥펀치로 쓰러뜨려 생선뼈 → 레벨 업 카드
+    for (let i = 0; i < 40 && !(await page.evaluate(() => !!__game.dungeon.choose)); i++) {
+      await page.evaluate(() => {
+        const d = __game.dungeon;
+        const e = d.enemies.find((v) => v.state !== 'pop');
+        if (e) Object.assign(e, { hp: 1, x: d.P.x + d.P.faceX * 0.9, z: d.P.z + d.P.faceZ * 0.9 });
+      });
+      await page.keyboard.press('KeyJ');
+      await sleep(150);
+    }
+    const lv = await page.evaluate(() => ({ choose: __game.dungeon.choose?.length ?? 0, level: __game.dungeon.run.level }));
+    check(lv.choose === 3 && lv.level >= 2, `쓰러뜨리고 생선뼈를 먹으면 레벨 업 카드 3장 (Lv ${lv.level})`);
+    const frozen = await page.evaluate(async () => {
+      const d = __game.dungeon;
+      const e = d.enemies.find((v) => v.state !== 'pop');
+      const x = e?.x;
+      await new Promise((r) => setTimeout(r, 400));
+      return !e || e.x === x;
+    });
+    check(frozen, '카드를 고르는 동안은 멈춘다');
+    await sleep(200);
+    await page.screenshot({ path: fsPath(new URL('dungeon-cards.png', OUT)) });
+    const first = await page.evaluate(() => __game.dungeon.choose[0].id);
+    await page.keyboard.press('Digit1');
+    await sleep(150);
+    const got1 = await page.evaluate((id) => ({ open: !!__game.dungeon.choose, lv: __game.dungeon.run.skills[id] ?? 0 }), first);
+    check(!got1.open && got1.lv >= 1, `1 키로 첫 카드를 고른다 (${first})`);
+    // 다시 레벨 업 → 마우스로 두 번째 카드
+    await page.evaluate(() => (__game.dungeon.run.pending = 1));
+    await page.waitForFunction(() => __game.dungeon.choose, { timeout: 2000 });
+    const second = await page.evaluate(() => __game.dungeon.choose[1].id);
+    const pt = await page.evaluate(() => __game.cardPoint(1));
+    await click2(page, pt);
+    await sleep(150);
+    const got2 = await page.evaluate((id) => ({ open: !!__game.dungeon.choose, lv: __game.dungeon.run.skills[id] ?? 0 }), second);
+    check(!got2.open && got2.lv >= 1, `마우스로 두 번째 카드를 고른다 (${second})`);
+    // 기술 16가지를 다 켜고 4초 — 효과가 그려지고 에러·NaN 없음
+    await page.evaluate(() => {
+      for (const id of ['yarn_ball', 'spool', 'hairball', 'snare', 'catnip_cloud', 'zoom', 'tail_swirl', 'paw_combo', 'box_orbit', 'box_drop', 'loaf_shield', 'hiss', 'red_dot', 'pounce', 'claw', 'wind_mouse']) __game.learnSkill(id, 3);
+      setInterval(() => __game.dungeon.choose && __game.pick(0), 40);
+    });
+    await page.keyboard.down('Space');
+    await sleep(300);
+    await page.keyboard.up('Space');
+    await sleep(1800);
+    await page.screenshot({ path: fsPath(new URL('dungeon-skills.png', OUT)) });
+    await sleep(2000);
+    const fx = await page.evaluate(() => ({ ents: __game.dungeon.run.ents.length, fx: __game.dungeon.run.fx.length, skills: Object.keys(__game.dungeon.run.skills).length }));
+    check(fx.skills === 16 && fx.ents + fx.fx > 0, `기술 16가지 (날아가는 것 ${fx.ents} · 효과 ${fx.fx})`);
+    // 웨이브가 넘어간다 → 마지막 웨이브엔 정예
+    const w1 = await page.waitForFunction(() => __game.dungeon.wave.i >= 1, { timeout: 30000 }).then(() => true, () => false);
+    check(w1, '웨이브 1 을 깨면 웨이브 2');
+    await page.evaluate(() => {
+      const d = __game.dungeon;
+      d.enemies.forEach((e) => (e.hp = 1));
+      Object.assign(d.wave, { i: d.wave.total - 2, state: 'break', t: 99, queue: [], marks: [] });
+    });
+    const elite = await page.waitForFunction(() => __game.dungeon.enemies.some((e) => e.elite), { timeout: 20000 }).then(() => true, () => false);
+    check(elite, '마지막 웨이브엔 정예가 나온다');
+    await sleep(600);
+    await page.screenshot({ path: fsPath(new URL('dungeon-elite.png', OUT)) });
+    const bad = await page.evaluate(() => window.__badDraw);
+    check(bad === 0, `NaN 좌표로 그린 것 ${bad}번`);
+    check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
+    await page.close();
+  }
+  {
+    // 휴대폰 세로: 카드는 세로로 쌓이고, 손가락으로 누른다 (가로 휴대폰은 가로 카드를 줄여서)
+    const { page, errors } = await open('dungeon', '', { width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true }, '&touch');
+    await page.evaluate(() => (__game.dungeon.run.pending = 1));
+    await page.waitForFunction(() => __game.dungeon.choose, { timeout: 3000 });
+    await sleep(300);
+    await page.screenshot({ path: fsPath(new URL('dungeon-cards-phone.png', OUT)) });
+    const id = await page.evaluate(() => __game.dungeon.choose[2].id);
+    const pt = await page.evaluate(() => __game.cardPoint(2));
+    await page.touchscreen.tap(pt.x, pt.y);
+    await sleep(200);
+    const got = await page.evaluate((id) => ({ open: !!__game.dungeon.choose, lv: __game.dungeon.run.skills[id] ?? 0 }), id);
+    check(!got.open && got.lv >= 1, `휴대폰: 세 번째 카드를 눌러 고른다 (${id})`);
+    check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
+    await page.close();
+  }
+
   // 3-9) 샌드보드 미끄러짐 연속 촬영 (sandboard-drift.png): 오른쪽으로 눌러 미끄러지기 시작 → 놓기 → 왼쪽으로 홱.
   //  보드가 먼저 꺾이고(넘쳤다 돌아옴) 몸은 늦게 따라오고, 꼬리에서 모래가 튀는지 눈으로 본다. 컷이 바뀌어도 보드가 튀지 않는지(보드 중심 위치)도 잰다
   console.log('\n[샌드보드 미끄러짐]');
@@ -1110,6 +1237,7 @@ try {
     };
     // 실제 게임처럼 방을 비운 뒤(클리어) 걸어 나간다 — 클리어하면 못 움직이던 버그가 있었다
     await page.evaluate(() => {
+      __game.skipWaves();
       __game.dungeon.enemies = [];
     });
     await page.waitForFunction(() => __game.dungeon.phase === 'cleared', { timeout: 3000 });

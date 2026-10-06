@@ -13,7 +13,8 @@ const sheets = {} as never; // 로직만 본다 — 그리기는 안 한다
 const still = { mx: 0, my: 0, punch: false, dash: false };
 /** 장비 없는 맨몸 (기본 능력치 그대로 보려고) */
 const bare = (): Bag => ({ ...makeBag(), equip: {} });
-const fresh = (bag = bare()) => makeDungeon(sheets, 'alley', bag);
+// 기본 전투 체크는 웨이브·기술 없이 (classic) — 웨이브·기술은 skills.check.ts
+const fresh = (bag = bare()) => makeDungeon(sheets, 'alley', bag, { classic: true });
 
 /** seconds 동안 진행하며 나온 사건을 모은다. 첫 프레임에만 input 을 준다 */
 function run(d: Dungeon, input: typeof still, seconds: number) {

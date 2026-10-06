@@ -59,7 +59,24 @@ export type Enemy = {
   dispScale: number;
   /** 근접 쥐가 설 고양이 옆자리 (화면 오른쪽 1 / 왼쪽 -1, 0 = 아직 없음) */
   side: number;
+  /** 기술이 건 상태 (남은 초): 묶임(못 움직임) · 기절(아무것도 못 함) · 느림(slowK 배) · 따끔(초당 sting) */
+  rootT: number;
+  stunT: number;
+  slowT: number;
+  slowK: number;
+  stingT: number;
+  sting: number;
+  /** 빙글 상자에 다시 맞을 수 있을 때까지 · 계속 피해(구름·불꽃·점·따끔)를 모아 1 이 넘을 때마다 깎는다 · 숫자로 띄울 모은 피해와 그 시계 */
+  boxT: number;
+  dotAcc: number;
+  dotShow: number;
+  dotT: number;
+  /** 정예 (마지막 웨이브) — def 를 따로 들고 있다 (체력·피해·크기 배율) */
+  elite: boolean;
+  /** 몬스터마다 다른 번호 (검증 기록이 같은 종류 여럿을 가른다) */
+  uid: number;
 };
+let nextUid = 1;
 
 /** AI 가 바깥에 요청하는 것들 */
 export type World = {
@@ -88,17 +105,35 @@ export function makeEnemy(kind: Kind, sheet: Sheet, x: number, z: number): Enemy
     kz: 0,
     dispScale: 1,
     side: 0,
+    rootT: 0,
+    stunT: 0,
+    slowT: 0,
+    slowK: 1,
+    stingT: 0,
+    sting: 0,
+    boxT: 0,
+    dotAcc: 0,
+    dotShow: 0,
+    dotT: 0,
+    elite: false,
+    uid: nextUid++,
   };
 }
 
-export function damageEnemy(e: Enemy, dmg: number, fromX: number, fromZ: number) {
+/**
+ * 피해. push = 밀려나는 힘 (쓰러지면 조금 더 세게), stagger = 움찔(0.25초 경직)할지 — 계속 피해(구름·불꽃 등)는 움찔하지 않는다.
+ * 정예는 움찔하지 않고 덜 밀린다 (몰아치는 공격에 묶여 버리지 않게)
+ */
+export function damageEnemy(e: Enemy, dmg: number, fromX: number, fromZ: number, push = 4, stagger = true) {
   if (e.state === 'pop') return;
   e.hp -= dmg;
   const d = Math.hypot(e.x - fromX, e.z - fromZ) || 1;
-  const push = e.hp <= 0 ? 6 : 4;
-  e.kx = ((e.x - fromX) / d) * push;
-  e.kz = ((e.z - fromZ) / d) * push;
-  e.state = e.hp <= 0 ? 'pop' : 'hurt';
+  const p = e.hp <= 0 ? push * 1.5 : e.elite ? push * 0.35 : push;
+  e.kx = ((e.x - fromX) / d) * p;
+  e.kz = ((e.z - fromZ) / d) * p;
+  if (e.hp <= 0) e.state = 'pop';
+  else if (stagger && !e.elite) e.state = 'hurt';
+  else return;
   e.t = 0;
   e.anim = 0;
 }
@@ -119,6 +154,18 @@ export function updateEnemy(e: Enemy, dt: number, w: World) {
   }
 
   if (e.state === 'pop') return;
+  e.slowT = Math.max(0, e.slowT - dt);
+  e.rootT = Math.max(0, e.rootT - dt);
+  e.boxT = Math.max(0, e.boxT - dt);
+  // 기절: 아무것도 못 한다 (공격 예고도 끊긴다)
+  if (e.stunT > 0) {
+    e.stunT -= dt;
+    if (e.state === 'windup' || e.state === 'chase') {
+      e.state = 'idle';
+      e.t = 0;
+    }
+    return;
+  }
 
   const dx = w.px - e.x;
   const dz = w.pz - e.z;
@@ -167,7 +214,8 @@ export function updateEnemy(e: Enemy, dt: number, w: World) {
       // 원거리는 고양이 쪽으로 가되 너무 가까우면 물러난다.
       let tx = w.px;
       let tz = w.pz;
-      let v = e.def.speed;
+      // 묶이면 못 움직이고(때리는 건 된다), 느려지면 slowK 배
+      let v = e.rootT > 0 ? 0 : e.def.speed * (e.slowT > 0 ? e.slowK : 1);
       if (melee) {
         const slot = e.def.range * SLOT;
         const at = (side: number) => ({

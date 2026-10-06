@@ -257,9 +257,10 @@ export function drawSandboard(ctx: CanvasRenderingContext2D, cw: number, ch: num
     ctx.fillText(p.text, X(p.x, p.d) + 30 * q, y);
   }
   ctx.globalAlpha = 1;
-  // 속도선 (부스트 · 빠를 때) — 주행 폭 바깥, 원근을 따라 모인다
-  if (s.phase === 'play' && (s.boost > 0 || s.v > SAND.vMax + 0.5)) {
-    ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+  // 속도선 (가속 발판 · 카빙으로 빨라질 때 · 최고 속도 위) — 주행 폭 바깥, 원근을 따라 모인다. 빠를수록 진하게
+  const rush = Math.max(s.boost > 0 ? 1 : 0, s.carveT > 0 ? 0.8 : 0, Math.min(1, (s.v - SAND.vMax) / 3));
+  if (s.phase === 'play' && rush > 0.05) {
+    ctx.strokeStyle = `rgba(255,255,255,${0.2 + 0.45 * rush})`;
     ctx.lineWidth = 3 * k;
     for (let i = 0; i < 8; i++) {
       const x = (i < 4 ? -1 : 1) * (1.0 + (i % 4) * 0.06);
@@ -377,6 +378,9 @@ function drawCat(ctx: CanvasRenderingContext2D, art: SandArt, s: SandState, x: n
     ctx.globalAlpha = 0.85;
     ctx.translate(tx, ty);
     ctx.rotate(yaw);
+    // 카빙으로 빨라지는 동안엔 꼬리가 길게 늘어난다
+    const stretch = 1 + (s.carveT > 0 ? 0.7 : 0) + Math.max(0, (s.v - SAND.vMax) / 8);
+    ctx.scale(1, stretch);
     spr(ctx, art, 'sand_trail' + two((Math.floor(s.t * 8) % 6) + 1), 0, -6 * q, FX_K * k, 1, -1);
     ctx.restore();
     if (Math.abs(s.lean) > 0.08 || s.slip > 0.08) {

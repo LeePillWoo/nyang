@@ -1,0 +1,14 @@
+{
+  "_comment": "던전 웨이브. counts = 웨이브마다 몬스터 수, hp · damage = 웨이브마다 몬스터 체력·공격 배율 (갈수록 세다). 웨이브 1 은 방의 spawns 자리에 선 몬스터 + 모자란 만큼 가장자리에서. 몬스터 종류는 방 spawns 순서를 되풀이해 채운다(방마다 비율 그대로) — 원거리는 웨이브의 rangedMax 비율까지만. 마지막 웨이브엔 정예 1마리(방 근접 몬스터 중 체력이 가장 큰 종, elite 배율). 가장자리 칸에서 고양이와 minDist(m) 밖, spawnGap 초 간격으로 telegraph 초 예고 뒤 나온다. 한꺼번에 살아 있는 건 maxAlive 까지. 웨이브 사이 쉬는 시간 break, 시작 안내 intro.",
+  "counts": [8, 12, 16, 20],
+  "hp": [1, 1.3, 1.65, 2.0],
+  "damage": [1, 1, 1.05, 1.1],
+  "rangedMax": 0.25,
+  "spawnGap": 0.35,
+  "telegraph": 0.8,
+  "minDist": 4.5,
+  "maxAlive": 13,
+  "break": 2.4,
+  "intro": 1.6,
+  "elite": { "hp": 4, "damage": 1.25, "size": 1.35, "speed": 0.9, "bones": 12, "name": "정예" }
+}

@@ -15,7 +15,10 @@ export const SAND = {
    * steer = 보드가 다 꺾였을 때 가로 속도(가로 자리/초) · yawMax = 보드 최대 각도(라디안, 드리프트 컷의 32°와 같게)
    * yawW·yawZ = 누를 때 각도 스프링(고유 진동수·감쇠) · yawWOut·yawZOut = 뗄 때 (덜 출렁이게)
    * gripIn·gripOut = 가로 속도가 보드 방향을 따라가는 시간 상수 (뗄 때는 엣지를 세워 빨리 선다)
-   * dragSlip = 미끄러짐 1 일 때 감속(m/s²) · dragCarve = 보드를 다 꺾고 있을 때 감속 · carveAt = 이 미끄러짐을 넘으면 "촤악" (carve 사건)
+   * 속도: 드리프트 → 카빙. 미끄러지는 동안(slideAt 을 넘으면 "촤악" — slide 사건)은 dragSlip × 미끄러짐 만큼 감속한다.
+   *   엣지가 물려(미끄러짐 < gripAt, 기울기 > carveLean) 카빙이 시작되면, 미끄러지며 잃은 속도(촤악 때 속도 − 지금) × carveGain 을
+   *   carveTime 동안 붙인다 (carve 사건 — 최고 속도 위로 carveMax 까지). 카빙 없이 보드를 펴면 잃은 채로 끝.
+   *   잃은 만큼만 돌려주니 좌우로 흔들어도 끝없이 빨라지지 않는다 (최고 속도 위에선 4 m/s² 로 돌아온다)
    */
   steer: 2.5,
   yawMax: 0.56,
@@ -25,9 +28,13 @@ export const SAND = {
   yawZOut: 0.7,
   gripIn: 0.14,
   gripOut: 0.07,
-  dragSlip: 10,
-  dragCarve: 1.4,
-  carveAt: 0.35,
+  dragSlip: 30,
+  slideAt: 0.35,
+  gripAt: 0.2,
+  carveLean: 0.5,
+  carveGain: 1.8,
+  carveTime: 0.4,
+  carveMax: 5,
   edge: 0.92,
   /** 고양이 가로 반폭 · 앞뒤로 닿는 거리(m) */
   catR: 0.09,
@@ -109,7 +116,8 @@ export type SandEvent =
   | { type: 'bump' }
   | { type: 'boost' }
   | { type: 'pit' }
-  | { type: 'carve'; k: number }
+  | { type: 'slide'; k: number }
+  | { type: 'carve'; gain: number }
   | { type: 'crash'; kind: ObKind }
   | { type: 'block' }
   | { type: 'power'; kind: 'heart' | 'shield' | 'magnet' }
@@ -132,8 +140,11 @@ export type SandState = {
   lean: number;
   slip: number;
   steer: number;
-  /** "촤악" 을 다시 낼 수 있나 (미끄러짐이 가라앉아야 다시) */
-  carveReady: boolean;
+  /** 미끄러지는 중(촤악 뒤, 카빙 전) · 촤악 때 속도 · 카빙 가속이 남은 시간 · 그 가속(m/s²) */
+  sliding: boolean;
+  slideV: number;
+  carveT: number;
+  carveRate: number;
   flip: number;
   t: number;
   hearts: number;
@@ -160,7 +171,7 @@ const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v
 
 export function makeSandboard(rng: () => number = Math.random): SandState {
   const s: SandState = {
-    d: 0, x: 0, v: SAND.vMin, air: 0, airMax: 1, landT: 9, dizzy: 0, yaw: 0, yawV: 0, vx: 0, lean: 0, slip: 0, steer: 0, carveReady: true, flip: 1, t: 0,
+    d: 0, x: 0, v: SAND.vMin, air: 0, airMax: 1, landT: 9, dizzy: 0, yaw: 0, yawV: 0, vx: 0, lean: 0, slip: 0, steer: 0, sliding: false, slideV: 0, carveT: 0, carveRate: 0, flip: 1, t: 0,
     hearts: SAND.hearts, shield: 0, magnet: 0, boost: 0, phase: 'play', fell: false, coins: 0, crashes: 0, score: 0,
     obs: [], fx: [], pops: [], nextAt: 30, events: [], rng,
   };
@@ -300,16 +311,31 @@ export function updateSandboard(s: SandState, input: SandInput, dt: number) {
   s.steer = Math.abs(s.lean) > 0.12 ? Math.sign(s.lean) : 0;
   if (s.steer !== 0) s.flip = s.steer;
   if (s.air <= 0) {
-    s.v = Math.max(Math.min(s.v, SAND.vMin * 0.7), s.v - (SAND.dragSlip * s.slip + SAND.dragCarve * Math.min(1, Math.abs(s.lean))) * dt); // 깎기만 한다 (넘어진 뒤 느린 속도를 올리지 않게)
-    if (s.slip > SAND.carveAt && s.carveReady) {
-      s.carveReady = false;
+    // 드리프트: 미끄러지는 만큼 깎는다 (넘어진 뒤 느린 속도를 더 깎지는 않는다)
+    s.v -= Math.max(0, Math.min(s.v - SAND.vMin * 0.6, SAND.dragSlip * s.slip * dt));
+    if (s.slip > SAND.slideAt && !s.sliding) {
+      s.sliding = true;
+      s.slideV = s.v;
       // 꼬리 뒤 바깥쪽 바닥에 남긴다 (치즈 몸을 덮지 않게)
       const out = -Math.sign(s.yaw) || 1;
       fx(s, 'carve_spray', s.x + out * 0.07, s.d - 0.9, out);
-      s.events.push({ type: 'carve', k: s.slip });
+      s.events.push({ type: 'slide', k: s.slip });
+    }
+    // 카빙: 엣지가 물렸다 — 모아 둔 속도를 더 크게 돌려준다
+    if (s.sliding && s.slip < SAND.gripAt && Math.abs(s.lean) > SAND.carveLean) {
+      s.sliding = false;
+      const gain = Math.max(0, s.slideV - s.v) * SAND.carveGain;
+      s.carveRate = gain / SAND.carveTime;
+      s.carveT = SAND.carveTime;
+      s.events.push({ type: 'carve', gain });
     }
   }
-  if (s.slip < SAND.carveAt * 0.4) s.carveReady = true;
+  // 카빙 없이 보드를 폈으면 드리프트는 잃은 채로 끝
+  if (s.sliding && s.slip < SAND.slideAt * 0.4 && Math.abs(s.lean) < SAND.carveLean) s.sliding = false;
+  if (s.carveT > 0) {
+    s.carveT -= dt;
+    s.v = Math.min(top + SAND.carveMax, s.v + s.carveRate * dt);
+  }
   s.d += s.v * dt;
 
   for (const ob of s.obs) {
@@ -381,6 +407,8 @@ export function updateSandboard(s: SandState, input: SandInput, dt: number) {
         s.v = Math.max(SAND.vMin * 0.5, s.v * SAND.crash);
         s.dizzy = SAND.dizzy;
         s.vx = s.yaw = s.yawV = 0;
+        s.sliding = false;
+        s.carveT = 0;
         s.air = 0;
         s.crashes++;
         s.hearts--;

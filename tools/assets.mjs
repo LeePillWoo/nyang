@@ -200,6 +200,27 @@ if (sandSrc.every((f) => fs.existsSync(f)) && (all || !fs.existsSync(SAND_OUT) |
   console.log(`  샌드보드 좌표  src/data/sandboard-atlas.json (프레임 ${Object.keys(frames).length})`);
 }
 
+// 기술 이펙트 art/effects/skills_8x8/atlas.json → src/data/skill-fx.json (8×8 균등 격자, 칸 128px)
+//   sheets: 시트 id → 경로, anims: 동작 id → [시트, 행, fps, 반복 0/1, 바닥 0/1, 오른쪽 방향 0/1], beam: 레이저 빔 칸 안 이어 붙일 범위
+const SKILL_FX = path.join(ART, 'effects/skills_8x8/atlas.json');
+const SKILL_FX_OUT = path.join(ROOT, 'src/data/skill-fx.json');
+if (fs.existsSync(SKILL_FX) && (all || !fs.existsSync(SKILL_FX_OUT) || fs.statSync(SKILL_FX).mtimeMs > fs.statSync(SKILL_FX_OUT).mtimeMs)) {
+  const at = JSON.parse(fs.readFileSync(SKILL_FX, 'utf8').replace(/^﻿/, ''));
+  const sheets = {};
+  const anims = {};
+  let beam = null;
+  for (const sh of at.sheets) {
+    sheets[sh.id] = sh.file.replace(/\.png$/, '');
+    for (const a of sh.animations) {
+      anims[a.id] = [sh.id, a.row, a.fps, a.loop ? 1 : 0, a.floor ? 1 : 0, a.rightward ? 1 : 0];
+      if (a.beamTileRectWithinCell) beam = a.beamTileRectWithinCell;
+    }
+  }
+  const out = { cell: at.sheets[0].cellWidth, sheets, beam, anims };
+  fs.writeFileSync(SKILL_FX_OUT, JSON.stringify(out).replace(/\],"/g, '],\n"') + '\n');
+  console.log(`  기술 이펙트  src/data/skill-fx.json (동작 ${Object.keys(anims).length})`);
+}
+
 // 원본 PNG 는 art/ 에 둔다 — src/assets 는 git 에 올라가는 게임용(WebP)이라 원본이 들어오면 알려 준다 (지형 마스크는 예외)
 const stray = [];
 (function find(dir) {

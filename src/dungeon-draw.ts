@@ -1,4 +1,4 @@
-// 던전 그리기 — 방 배경, 몬스터·고양이·화살·이펙트, 데미지 숫자, 감정, HUD, 나가는 곳, 격자(G 키).
+// 던전 그리기 — 방 배경, 몬스터·고양이·화살·이펙트, 기술 효과(skills-draw.ts), 데미지 숫자, 감정, HUD(웨이브·경험치·기술), 레벨 업 카드, 나가는 곳, 격자(G 키).
 // 로직은 dungeon.ts. 여기는 상태를 읽어서 그리기만 한다 (표시용 배율 dispScale 만 갱신).
 import { image } from './assets.ts';
 import { drawCoin, drawIcon, RARE } from './bag-draw.ts';
@@ -11,6 +11,7 @@ import { drawEmote } from './emote.ts';
 import { drawFx, FX_SHEETS, type FxSheet } from './fx.ts';
 import { ROOMS, type Room } from './iso.ts';
 import { drawFrame, type Sheet } from './sheet.ts';
+import { drawSkillAir, drawSkillFloor, drawSkillIcons, drawWaveHud, drawXpBar, skillItems } from './skills-draw.ts';
 import { safe, ui } from './touch.ts';
 
 const COLS = 6;
@@ -65,6 +66,7 @@ export function drawDungeon(ctx: CanvasRenderingContext2D, cw: number, ch: numbe
   ctx.setTransform(scale, 0, 0, scale, ox + jx, oy + jy);
   ctx.drawImage(image(R.def.image).img, 0, 0, R.W, R.H);
   drawExits(ctx, d, v.t);
+  drawSkillFloor(ctx, d, v.t);
 
   // 공격 예고 데칼 — 색을 하나로 고정해 가독성 확보 (GDD 8장)
   for (const e of d.enemies) {
@@ -97,7 +99,7 @@ export function drawDungeon(ctx: CanvasRenderingContext2D, cw: number, ch: numbe
           blob(ctx, sx, sy, e.def.size * 0.24);
         }
         e.dispScale = ease(e.dispScale, e.sheet.rowScale[f.row] ?? 1);
-        v.trace?.(e.kind, e.sheet, f.row, f.col, sx, sy, e.def.size, e.flip, e.dispScale, { state: e.state, alpha: ctx.globalAlpha });
+        v.trace?.(e.kind, e.sheet, f.row, f.col, sx, sy, e.def.size, e.flip, e.dispScale, { state: e.state, alpha: ctx.globalAlpha, uid: e.uid });
         drawFrame(ctx, e.sheet, f.row, f.col, sx, sy, e.def.size, e.flip, e.dispScale);
         ctx.restore();
         if (!popping) enemyHpBar(ctx, e, sx, sy);
@@ -154,6 +156,7 @@ export function drawDungeon(ctx: CanvasRenderingContext2D, cw: number, ch: numbe
     });
   }
 
+  for (const s of skillItems(d, v.t)) items.push({ sy: s.sy, go: () => s.go(ctx) });
   items.sort((a, b) => a.sy - b.sy);
   for (const it of items) it.go();
 
@@ -172,6 +175,7 @@ export function drawDungeon(ctx: CanvasRenderingContext2D, cw: number, ch: numbe
     drawFx(ctx, FX_IMG, f, t.sx, t.sy - f.size * 0.3);
   }
 
+  drawSkillAir(ctx, d, v.t);
   drawPops(ctx, d);
   if (v.grid) drawGrid(ctx, R);
   drawHud(ctx, cw, ch, d, v);
@@ -184,12 +188,19 @@ function blob(ctx: CanvasRenderingContext2D, sx: number, sy: number, r: number) 
   ctx.fill();
 }
 
-/** 떠오르며 사라지는 데미지 숫자 */
+/** 떠오르며 사라지는 데미지 숫자 — 냥펀치 노랑 · 기술 연노랑(작게) · 치명타 주황(크게, !) · 계속 피해 연두(작게) · 맞은 고양이 분홍 */
+const POP_STYLE = {
+  punch: { px: 34, color: '#ffd84a' },
+  skill: { px: 26, color: '#fff2a8' },
+  crit: { px: 44, color: '#ff8a3d' },
+  dot: { px: 22, color: '#b8ef8a' },
+};
 function drawPops(ctx: CanvasRenderingContext2D, d: Dungeon) {
   ctx.textAlign = 'center';
   ctx.lineJoin = 'round';
-  ctx.font = 'bold 34px system-ui, sans-serif';
   for (const q of d.pops) {
+    const st = POP_STYLE[q.style ?? 'punch'];
+    ctx.font = `bold ${st.px}px system-ui, sans-serif`;
     const { sx, sy } = d.room.toScreen(q.x, q.z);
     const k = q.t / POP_LIFE;
     ctx.save();
@@ -200,21 +211,22 @@ function drawPops(ctx: CanvasRenderingContext2D, d: Dungeon) {
     ctx.scale(pop, pop);
     ctx.lineWidth = 6;
     ctx.strokeStyle = 'rgba(86,58,44,0.85)';
-    ctx.strokeText(q.text, 0, 0);
-    ctx.fillStyle = q.hurt ? '#ff9083' : '#ffd84a';
-    ctx.fillText(q.text, 0, 0);
+    const text = q.style === 'crit' ? q.text + '!' : q.text;
+    ctx.strokeText(text, 0, 0);
+    ctx.fillStyle = q.hurt ? '#ff9083' : st.color;
+    ctx.fillText(text, 0, 0);
     ctx.restore();
   }
   ctx.textAlign = 'left';
 }
 
 function enemyHpBar(ctx: CanvasRenderingContext2D, e: Enemy, sx: number, sy: number) {
-  if (e.hp >= e.def.hp) return;
-  const w = 62;
+  if (e.hp >= e.def.hp && !e.elite) return;
+  const w = e.elite ? 120 : 62;
   const y = sy - e.def.size * 0.92;
   ctx.fillStyle = 'rgba(60,40,30,0.35)';
   ctx.fillRect(sx - w / 2, y, w, 7);
-  ctx.fillStyle = '#e8705a';
+  ctx.fillStyle = e.elite ? '#f0a83a' : '#e8705a';
   ctx.fillRect(sx - w / 2, y, (w * Math.max(0, e.hp)) / e.def.hp, 7);
 }
 
@@ -235,7 +247,7 @@ function drawHud(ctx: CanvasRenderingContext2D, cw: number, ch: number, d: Dunge
 
   ctx.fillStyle = 'rgba(255,250,240,0.82)';
   ctx.beginPath();
-  ctx.roundRect(14, 14, 236, 78, 14);
+  ctx.roundRect(14, 14, 236, d.classic ? 78 : 100, 14);
   ctx.fill();
 
   ctx.fillStyle = '#e4d6c4';
@@ -259,9 +271,10 @@ function drawHud(ctx: CanvasRenderingContext2D, cw: number, ch: number, d: Dunge
     ctx.fillText('\u{1F43E}', 60 + i * 27, 78);
   }
   ctx.globalAlpha = 1;
+  if (!d.classic) drawXpBar(ctx, d);
 
   // 먹은 것 효과 (가방 버튼 밑): 아이콘 + 남은 초
-  let y = 146;
+  let y = d.classic ? 146 : 172;
   if (d.bag.buffs.length) {
     d.bag.buffs.forEach((f, i) => {
       const x = 14 + i * 50;
@@ -304,7 +317,8 @@ function drawHud(ctx: CanvasRenderingContext2D, cw: number, ch: number, d: Dunge
   ctx.font = '15px system-ui, sans-serif';
   ctx.fillStyle = '#4a3b33';
   ctx.fillText(`${fps.toFixed(0)} fps`, W - 84, 28);
-  ctx.fillText(`적 ${d.enemies.filter((e) => e.state !== 'pop').length}`, W - 84, 50);
+  if (d.classic) ctx.fillText(`적 ${d.enemies.filter((e) => e.state !== 'pop').length}`, W - 84, 50);
+  drawSkillIcons(ctx, d, W - 8, 40, v.t);
   // 방 이름 — 가운데, 좁은 화면(세로)에선 체력 판(14..250) 오른쪽으로 비킨다
   ctx.textAlign = 'center';
   ctx.font = 'bold 15px system-ui, sans-serif';
@@ -317,6 +331,7 @@ function drawHud(ctx: CanvasRenderingContext2D, cw: number, ch: number, d: Dunge
   ctx.fillStyle = '#5b4a3f';
   ctx.fillText(d.room.def.name, nx + nw / 2, 34);
   ctx.textAlign = 'left';
+  drawWaveHud(ctx, d, W, H, nx, nw);
 
   if (d.phase !== 'playing') {
     ctx.textAlign = 'center';
