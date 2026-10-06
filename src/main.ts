@@ -940,10 +940,10 @@ function sandEvent(e: SandEvent) {
       break;
   }
 }
-/** 포탈 워프 — 포탈 위에 내린다. 한 번 벗어났다 들어와야 빨려 들어간다 (그 자리에서 바로 던전으로 가지 않음) */
+/** 포탈 워프 — 포탈 바로 앞(돌아올 자리, 워프 밖)에 내린다. 한 걸음 들어가면 바로 빨려 들어간다 */
 const warpTo = (w: Warp) =>
   goTo(() => {
-    field = makeFieldState(w.at, terrainAt);
+    field = makeFieldState(w.back, terrainAt);
     look = null;
     quiet();
     say('surprise', 1.2);

@@ -310,9 +310,9 @@ try {
 
     await click(await page.evaluate(() => __game.portalScreen('pyramid')));
     const arrived = await page
-      .waitForFunction(([x, y]) => Math.hypot(__game.field.x - x, __game.field.y - y) < 4, { timeout: 4000 }, target.at)
+      .waitForFunction(([x, y]) => Math.hypot(__game.field.x - x, __game.field.y - y) < 4, { timeout: 4000 }, target.back)
       .then(() => true, () => false);
-    check(arrived, '큰 화면에서 피라미드 포탈을 누르면 고양이가 그 포탈로 워프');
+    check(arrived, '큰 화면에서 피라미드 포탈을 누르면 고양이가 그 포탈 앞(이정표 옆, 워프 밖)으로 워프');
     await sleep(1500);
     check((await page.evaluate(() => __game.scene)) === 'field', '워프한 자리에서 바로 던전으로 빨려 들어가지 않는다');
 
@@ -332,6 +332,15 @@ try {
 
     await page.keyboard.press('KeyM');
     check(!(await page.evaluate(() => __game.showMap)), 'M 키로 미니맵을 끈다');
+    // 워프해 내린 자리에서 포탈 쪽으로 한 걸음이면 들어간다 (나갔다 다시 들어올 필요 없음)
+    await click(await page.evaluate(() => __game.portalScreen('pyramid')));
+    await page.waitForFunction(([x, y]) => Math.hypot(__game.field.x - x, __game.field.y - y) < 4, { timeout: 4000 }, target.back).catch(() => {});
+    await sleep(300);
+    await page.keyboard.down('KeyW'); // 포탈 위까지 한 걸음 걷고 멈춰 선다 (포탈은 머물러야 들어간다)
+    await page.waitForFunction(([x, y]) => Math.hypot(__game.field.x - x, __game.field.y - y) < 5, { timeout: 3000 }, target.at).catch(() => {});
+    await page.keyboard.up('KeyW');
+    const walkedIn = await page.waitForFunction(() => __game.scene === 'maze', { timeout: 5000 }).then(() => true, () => false);
+    check(walkedIn, '워프한 자리에서 포탈로 걸어 들어가면 바로 들어간다');
     check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
     await page.screenshot({ path: fsPath(new URL('minimap.png', OUT)) });
     await page.close();

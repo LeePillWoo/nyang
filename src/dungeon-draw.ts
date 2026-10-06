@@ -351,8 +351,8 @@ function drawExits(ctx: CanvasRenderingContext2D, d: Dungeon, t: number) {
   if (!exits.length) return;
   const pulse = 0.5 + 0.5 * Math.sin(t * 3);
   const strong = d.phase === 'cleared';
-  let lx = 0;
-  let ly = Infinity;
+  // 붙어 있는 칸끼리 한 출구 — 출구마다 "밖으로" 하나 (출구가 둘인 방)
+  const groups: { x: number; y: number; n: number; tiles: [number, number][] }[] = [];
   for (const [tx, tz] of exits) {
     const { a, c } = tilePath(ctx, d.room, tx, tz);
     ctx.fillStyle = `rgba(255, 244, 170, ${(strong ? 0.3 : 0.12) + (strong ? 0.2 : 0.1) * pulse})`;
@@ -360,17 +360,23 @@ function drawExits(ctx: CanvasRenderingContext2D, d: Dungeon, t: number) {
     ctx.lineWidth = 2;
     ctx.strokeStyle = `rgba(255, 255, 255, ${0.3 + 0.35 * pulse})`;
     ctx.stroke();
-    lx += (a.sx + c.sx) / 2 / exits.length;
-    ly = Math.min(ly, a.sy);
+    let g = groups.find((g) => g.tiles.some(([x, z]) => Math.abs(x - tx) + Math.abs(z - tz) === 1));
+    if (!g) groups.push((g = { x: 0, y: Infinity, n: 0, tiles: [] }));
+    g.tiles.push([tx, tz]);
+    g.x += (a.sx + c.sx) / 2;
+    g.n++;
+    g.y = Math.min(g.y, a.sy);
   }
   ctx.font = 'bold 22px system-ui, sans-serif';
   ctx.textAlign = 'center';
   ctx.lineJoin = 'round';
   ctx.lineWidth = 5;
-  ctx.strokeStyle = 'rgba(86, 58, 44, 0.8)';
-  ctx.strokeText('밖으로', lx, ly - 8);
-  ctx.fillStyle = '#fff6d8';
-  ctx.fillText('밖으로', lx, ly - 8);
+  for (const g of groups) {
+    ctx.strokeStyle = 'rgba(86, 58, 44, 0.8)';
+    ctx.strokeText('밖으로', g.x / g.n, g.y - 8);
+    ctx.fillStyle = '#fff6d8';
+    ctx.fillText('밖으로', g.x / g.n, g.y - 8);
+  }
   ctx.textAlign = 'left';
 }
 

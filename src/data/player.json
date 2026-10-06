@@ -9,5 +9,5 @@
   "hitIframe": 0.8,
   "reviveIframe": 1.5,
   "dash": { "dist": 3, "time": 0.2, "cooldown": 0.5 },
-  "punch": { "damage": 10, "range": 1.7, "arcDeg": 126, "time": 0.28, "hitAt": 0.1, "moveSlow": 0.4 }
+  "punch": { "damage": 10, "range": 2.4, "arcDeg": 160, "time": 0.28, "hitAt": 0.1, "moveSlow": 0.4 }
 }
