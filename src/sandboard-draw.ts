@@ -62,6 +62,8 @@ const hash = (i: number) => {
   return v - Math.floor(v);
 };
 const DECOS = ['cactus_tall', 'cactus_cluster', 'flower_cactus', 'dry_shrub', 'palm_small', 'palm_large', 'rock_low', 'rock_stack', 'rock_arch', 'ruined_wall', 'pillar_short', 'pillar_cap', 'lantern_post', 'jars', 'bone_skeleton', 'arrow_sign'];
+/** 바닥에 깔리는 효과 — 치즈를 덮지 않게 먼저 그린다 */
+const GROUND_FX = new Set(['carve_spray', 'land_burst', 'jump_puff']);
 /** 바닥에 깔리는 것 — 고양이·장애물보다 먼저 */
 const FLAT = new Set(['sand_pit', 'sand_bump', 'jump_ramp', 'boost_pad']);
 
@@ -228,17 +230,17 @@ export function drawSandboard(ctx: CanvasRenderingContext2D, cw: number, ch: num
     });
   }
 
+  // 바닥 효과 (촤악 모래 · 착지 파동 · 점프 먼지) — 치즈·물건 밑에
+  const fxFrame = (f: SandState['fx'][number]) => f.id + two(Math.min(6, Math.floor((f.t / FX_TIME) * 6) + 1));
+  for (const f of s.fx) if (GROUND_FX.has(f.id) && seen(f.d)) spr(ctx, art, fxFrame(f), X(f.x, f.d), Y(f.d), FX_K * k * sc(f.d), f.flip ?? 1);
+
   // 치즈
   at(s.d, () => drawCat(ctx, art, s, X(s.x, s.d), y0, k, v.t, ppm));
   items.sort((a, b) => a.y - b.y);
   for (const it of items) it.draw();
 
-  // 짧은 효과 · 떠오르는 글자 ("촤악" 모래는 그 자리 바닥에 남아 뒤로 흘러간다)
-  for (const f of s.fx) {
-    if (!seen(f.d)) continue;
-    const big = f.id === 'carve_spray' ? 1.15 : 1;
-    spr(ctx, art, f.id + two(Math.min(6, Math.floor((f.t / FX_TIME) * 6) + 1)), X(f.x, f.d), Y(f.d), FX_K * k * sc(f.d) * big, f.flip ?? 1);
-  }
+  // 위에 뜨는 효과 (충돌 별 · 줍기 반짝임) · 떠오르는 글자
+  for (const f of s.fx) if (!GROUND_FX.has(f.id) && seen(f.d)) spr(ctx, art, fxFrame(f), X(f.x, f.d), Y(f.d), FX_K * k * sc(f.d), f.flip ?? 1);
   ctx.textAlign = 'center';
   ctx.lineJoin = 'round';
   for (const p of s.pops) {

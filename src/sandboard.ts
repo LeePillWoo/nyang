@@ -303,7 +303,9 @@ export function updateSandboard(s: SandState, input: SandInput, dt: number) {
     s.v = Math.max(Math.min(s.v, SAND.vMin * 0.7), s.v - (SAND.dragSlip * s.slip + SAND.dragCarve * Math.min(1, Math.abs(s.lean))) * dt); // 깎기만 한다 (넘어진 뒤 느린 속도를 올리지 않게)
     if (s.slip > SAND.carveAt && s.carveReady) {
       s.carveReady = false;
-      fx(s, 'carve_spray', s.x, s.d, -Math.sign(s.yaw) || 1);
+      // 꼬리 뒤 바깥쪽 바닥에 남긴다 (치즈 몸을 덮지 않게)
+      const out = -Math.sign(s.yaw) || 1;
+      fx(s, 'carve_spray', s.x + out * 0.07, s.d - 0.9, out);
       s.events.push({ type: 'carve', k: s.slip });
     }
   }
