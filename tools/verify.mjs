@@ -537,17 +537,21 @@ try {
   }
   {
     const { page, errors } = await open('dungeon', '', PHONE);
-    await tap(page, { x: 422, y: 60 }); // 터치 UI 켜기 (던전에선 냥펀치)
+    await autoPick(page); // 자동 냥펀치로 쓰러뜨리면 레벨 업 카드가 뜬다 — 이 검사는 조작만 본다
+    await tap(page, { x: 422, y: 60 }); // 터치 UI 켜기 (던전에서 화면 누르기는 아무것도 안 한다 — 냥펀치는 자동)
     await sleep(900);
     const c = await page.evaluate(() => __game.controls);
-    check(!!c.stick && c.buttons.some((b) => b.id === 'punch') && c.buttons.some((b) => b.id === 'dash'), '던전: 조이스틱 · 냥펀치 · 구르기 버튼');
+    check(!!c.stick && !c.buttons.some((b) => b.id === 'punch') && c.buttons.some((b) => b.id === 'dash'), '던전: 조이스틱 · 구르기 버튼 (냥펀치 버튼 없음 — 자동)');
     const x0 = await page.evaluate(() => __game.cat.x);
     const t = await hold(page, c.stick, { x: c.stick.x + c.stick.r * 0.9, y: c.stick.y }, 300);
-    // 조이스틱을 쥔 채 다른 손가락으로 냥펀치
-    const punch = c.buttons.find((b) => b.id === 'punch');
-    const punched = page.waitForFunction(() => __game.dungeon.P.punchT > 0, { polling: 'raf', timeout: 2000 }).then(() => true, () => false);
-    await tap(page, punch);
-    check(await punched, '조이스틱을 쥔 채 다른 손가락으로 냥펀치 (두 손가락)');
+    // 조이스틱으로 움직이는 동안 몬스터가 타격 범위에 들어오면 저절로 냥펀치
+    await page.evaluate(() => {
+      const d = __game.dungeon;
+      const e = d.enemies.find((v) => v.state !== 'pop');
+      if (e) Object.assign(e, { x: d.P.x + 1.2, z: d.P.z });
+    });
+    const punched = await page.waitForFunction(() => __game.dungeon.P.punchT > 0, { polling: 'raf', timeout: 2000 }).then(() => true, () => false);
+    check(punched, '움직이는 중 몬스터가 가까우면 저절로 냥펀치 (버튼 없이)');
     await page.screenshot({ path: fsPath(new URL('touch-dungeon.png', OUT)) });
     await sleep(400);
     const x1 = await page.evaluate(() => __game.cat.x);
@@ -643,7 +647,7 @@ try {
     await page.evaluate(() => localStorage.removeItem('nyang.bag.v1'));
     await page.reload({ waitUntil: 'load' });
     await page.waitForFunction(() => window.__sheets, { timeout: 60000 });
-    // 몬스터를 한 대에 쓰러지게 하고 고양이 앞으로 데려와 J 로 때린다 (웨이브는 건너뛰고, 레벨 업 카드는 저절로 고른다 — 기술은 [웨이브 · 기술] 에서)
+    // 몬스터를 한 대에 쓰러지게 하고 고양이 앞으로 데려오면 자동 냥펀치로 쓰러진다 (웨이브는 건너뛰고, 레벨 업 카드는 저절로 고른다 — 기술은 [웨이브 · 기술] 에서)
     await autoPick(page);
     await page.evaluate(() => {
       __game.skipWaves();
@@ -656,14 +660,13 @@ try {
         const e = d.enemies.find((v) => v.state !== 'pop');
         if (e) Object.assign(e, { x: d.P.x + d.P.faceX * 0.9, z: d.P.z + d.P.faceZ * 0.9 });
       });
-      await page.keyboard.press('KeyJ');
       await sleep(120);
       if (!lootShot && (await page.evaluate(() => __game.dungeon.loot.length > 1))) {
         lootShot = true;
         await page.screenshot({ path: fsPath(new URL('bag-drops.png', OUT)) });
       }
     }
-    check(lootShot, '실제 냥펀치로 쓰러뜨리면 냥코인·아이템이 떨어진다');
+    check(lootShot, '자동 냥펀치로 쓰러뜨리면 냥코인·아이템이 떨어진다');
     await sleep(1500);
     const cleared = await page.evaluate(() => ({ phase: __game.dungeon.phase, loot: __game.dungeon.loot.length, coins: __game.bag.coins }));
     check(cleared.phase === 'cleared' && cleared.loot === 0 && cleared.coins > 0, `방을 깨면 남은 게 날아와 가방에 (냥코인 ${cleared.coins})`);
@@ -721,7 +724,6 @@ try {
       d.enemies = d.enemies.slice(0, 1);
       Object.assign(d.enemies[0], { x: d.P.x + d.P.faceX * 0.9, z: d.P.z + d.P.faceZ * 0.9, hp: 99 });
     });
-    await page.keyboard.press('KeyJ');
     await sleep(250);
     const dmg = await page.evaluate(() => __game.dungeon.pops.map((q) => q.text));
     check(dmg.includes('18'), `장비 공격력이 냥펀치에 (피해 ${dmg.join(',')})`);
@@ -818,7 +820,6 @@ try {
       const e = d.enemies.find((v) => v.kind === 'sword');
       Object.assign(e, { hp: 1, x: d.P.x + d.P.faceX * 0.9, z: d.P.z + d.P.faceZ * 0.9 });
     });
-    await page.keyboard.press('KeyJ');
     await sleep(300);
     const mon = await page.evaluate(() => ({ n: __game.monsters.sword, saved: JSON.parse(localStorage.getItem('nyang.monsters.v1') ?? '{}').sword }));
     check(mon.n === 1 && mon.saved === 1, '쓰러뜨리면 몬스터 도감에 센다 (저장도)');
@@ -1066,14 +1067,13 @@ try {
     });
     check(spawned && far, '가장자리에서 예고 뒤 몬스터가 더 나온다 (고양이 가까이는 아니다)');
     await page.screenshot({ path: fsPath(new URL('dungeon-wave.png', OUT)) });
-    // 실제 냥펀치로 쓰러뜨려 생선뼈 → 레벨 업 카드
+    // 자동 냥펀치로 쓰러뜨려 생선뼈 → 레벨 업 카드
     for (let i = 0; i < 40 && !(await page.evaluate(() => !!__game.dungeon.choose)); i++) {
       await page.evaluate(() => {
         const d = __game.dungeon;
         const e = d.enemies.find((v) => v.state !== 'pop');
         if (e) Object.assign(e, { hp: 1, x: d.P.x + d.P.faceX * 0.9, z: d.P.z + d.P.faceZ * 0.9 });
       });
-      await page.keyboard.press('KeyJ');
       await sleep(150);
     }
     const lv = await page.evaluate(() => ({ choose: __game.dungeon.choose?.length ?? 0, level: __game.dungeon.run.level }));
@@ -1468,6 +1468,8 @@ process.exit(fails.length ? 1 : 0);
 /** who 가 when 상태에 들어가는 순간부터 16컷을 찍어 한 장짜리 격자로 저장한다 */
 async function burst(who, when, file) {
   const { page } = await open();
+  // 몬스터 공격 모션을 찍는다 — 자동 냥펀치는 맞은 몬스터를 움찔하게 해 공격 예고를 끊으니 끈다
+  await page.evaluate(() => (__game.dungeon.auto = false));
   await page.waitForFunction(
     (who, when) => {
       const r = [...window.__trace].reverse().find((x) => x.who === who);

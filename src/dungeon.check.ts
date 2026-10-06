@@ -14,7 +14,7 @@ const still = { mx: 0, my: 0, punch: false, dash: false };
 /** 장비 없는 맨몸 (기본 능력치 그대로 보려고) */
 const bare = (): Bag => ({ ...makeBag(), equip: {} });
 // 기본 전투 체크는 웨이브·기술 없이 (classic) — 웨이브·기술은 skills.check.ts
-const fresh = (bag = bare()) => makeDungeon(sheets, 'alley', bag, { classic: true });
+const fresh = (bag = bare()) => makeDungeon(sheets, 'alley', bag, { classic: true, auto: false });
 
 /** seconds 동안 진행하며 나온 사건을 모은다. 첫 프레임에만 input 을 준다 */
 function run(d: Dungeon, input: typeof still, seconds: number) {
@@ -175,6 +175,43 @@ function run(d: Dungeon, input: typeof still, seconds: number) {
   assert.equal(run(d, still, 0.016).out, 'exit');
   assert.equal(d.bag.coins, 7, '나갈 때 남은 냥코인도');
   assert.equal(d.bag.slots[0]?.id, 'equipment_13', '나갈 때 남은 장비도 빈 칸에');
+}
+
+// 자동 냥펀치: 타격 범위 안에 몬스터가 있으면 누르지 않아도 나간다. 범위 밖 · 없음 · 구르는 중 · 낮잠이면 안 나간다.
+// 물러나면서 때려도(움직이는 쪽과 반대) 맞는다. 구르기는 움직이는 쪽으로
+{
+  const auto = () => makeDungeon(sheets, 'alley', bare(), { classic: true });
+  const d = auto();
+  const rat = makeEnemy('fat', sheets, d.P.x + 1.5, d.P.z);
+  d.enemies = [rat];
+  run(d, still, 0.2);
+  assert.equal(rat.hp, rat.def.hp - PLAYER.punch.damage, '범위 안이면 저절로 냥펀치');
+  const far = auto();
+  const r2 = makeEnemy('fat', sheets, far.P.x + PLAYER.punch.range + 0.6, far.P.z);
+  r2.def = { ...r2.def, speed: 0, range: 0.1 }; // 다가오지 않게
+  far.enemies = [r2];
+  run(far, still, 0.5);
+  assert.ok(r2.hp === r2.def.hp && far.P.punchT <= 0, '범위 밖이면 안 때린다');
+  const none = auto();
+  none.enemies = [];
+  run(none, still, 0.5);
+  assert.equal(none.P.punchT <= 0 && none.pops.length, 0, '몬스터가 없으면 안 때린다');
+  const nap = auto();
+  const r3 = makeEnemy('fat', sheets, nap.P.x + 1.5, nap.P.z);
+  nap.enemies = [r3];
+  nap.phase = 'napped';
+  run(nap, still, 0.3);
+  assert.equal(r3.hp, r3.def.hp, '낮잠이면 안 때린다');
+  // 물러나며 때리기: 몬스터는 오른쪽(+x), 고양이는 왼쪽(−x)으로 걷는다 → 그래도 맞는다
+  const kite = auto();
+  const r4 = makeEnemy('fat', sheets, kite.P.x + 1.6, kite.P.z);
+  r4.def = { ...r4.def, speed: 0, range: 0.1 };
+  kite.enemies = [r4];
+  for (let i = 0; i < 10; i++) updateDungeon(kite, { ...still, mx: -1, my: -1 }, 0.016); // 화면 왼쪽 위 = 월드 −x (몬스터 반대쪽)
+  assert.equal(r4.hp, r4.def.hp - PLAYER.punch.damage, '물러나면서 때려도 맞는다');
+  // 구르기는 움직이는 쪽으로 (냥펀치가 몬스터 쪽을 겨눠도)
+  updateDungeon(kite, { ...still, mx: -1, my: -1, dash: true }, 0.016);
+  assert.ok(kite.P.dashX < -0.9, `움직이는 쪽으로 구른다 (${kite.P.dashX.toFixed(2)})`);
 }
 
 // 노란 매트를 밟으면 'exit'. 낮잠 중에는 안 나간다

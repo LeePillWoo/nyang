@@ -1,12 +1,13 @@
 // 던전 기술 그리기 — 기술 효과(art/effects/skills_8x8 — 128px 8×8 균등 격자, 동작 이름은 src/data/skill-fx.json),
-// 생선뼈·생선 비스킷, 몬스터 등장 예고, 정예 표시, 기술에 걸린 몬스터(묶임·기절), 레벨 업 카드, HUD(경험치·가진 기술·웨이브).
+// 생선뼈·생선 비스킷, 몬스터 등장 예고, 정예 표시, 기술에 걸린 몬스터(묶임·기절), 자동 냥펀치 범위·휘두름, 레벨 업 카드, HUD(경험치·가진 기술·웨이브).
+// 효과는 2배(물체·투사체·타격), 범위 효과는 실제 범위 그대로 + 진하게 + 테두리. 원거리는 잔상·그림자·떨어질 자리, 이어지는 공격은 실·조준선·레이저 빔으로.
 // 좌표는 던전 그림 px (dungeon-draw.ts 가 방 배경과 같은 변환을 걸어 둔 상태). 로직은 skills.ts · dungeon.ts.
 import { image } from './assets.ts';
 import { drawIcon } from './bag-draw.ts';
 import fxData from './data/skill-fx.json' with { type: 'json' };
-import { WAVES, type Dungeon } from './dungeon.ts';
+import { PLAYER, WAVES, type Dungeon } from './dungeon.ts';
 import type { Enemy } from './enemy.ts';
-import { FAMILIES, FX_ANIMS, fxLife, lv, MAX_LV, need, orbitBoxes, SKILLS, SNACK, type Card, type SkillFx, type SkillId } from './skills.ts';
+import { FAMILIES, FX_ANIMS, fxLife, LINK_LIFE, lv, MAX_LV, need, orbitBoxes, punchReach, SKILLS, SNACK, type Card, type SkillFx, type SkillId } from './skills.ts';
 import { fitText, wrapText } from './touch.ts';
 
 const CELL = fxData.cell;
@@ -24,6 +25,23 @@ const SIZE: Record<string, number> = {
   xp_fishbone: 0.62, fishbone_pickup: 1, level_up: 2.4,
 };
 const FILL = 0.78;
+/**
+ * 시안성 (2026-10-06 사용자 요청 — 2배): 물체·투사체·타격 효과는 BIG 배로 그린다.
+ * 범위 효과(AREA — 그림 크기가 곧 실제 피해 범위)는 키우면 범위를 속이게 되니 크기는 그대로 두고, 두 번 겹쳐 진하게 + 실제 범위에 계열 색 테두리.
+ */
+const BIG = 2;
+const AREA = new Set(['cloud_spawn', 'cloud_idle', 'hairball_burst', 'tail_swirl', 'shock_ring', 'hiss_wave', 'box_land', 'fall_shadow', 'mouse_burst', 'pounce_land', 'level_up', 'wind_fragments']);
+const big = (anim: string) => (AREA.has(anim) ? 1 : BIG);
+/** 한 번 터지는 범위 효과의 테두리 색 (계열 색) */
+const RING: Record<string, string> = {
+  hairball_burst: FAMILIES.yarn.color,
+  cloud_spawn: FAMILIES.catnip.color,
+  tail_swirl: FAMILIES.catnip.color,
+  shock_ring: FAMILIES.catnip.color,
+  hiss_wave: FAMILIES.box.color,
+  box_land: FAMILIES.box.color,
+  mouse_burst: FAMILIES.laser.color,
+};
 
 type ToScreen = (x: number, z: number) => { sx: number; sy: number };
 /** 그 자리에서 1m 가 화면 가로로 몇 px (아이소메트릭이라 화면 오른쪽 = 월드 (1, −1)/√2) */
@@ -38,6 +56,55 @@ const screenAngle = (to: ToScreen, x: number, z: number, dx: number, dz: number)
   const b = to(x + dx * 0.5, z + dz * 0.5);
   return Math.atan2(b.sy - a.sy, b.sx - a.sx);
 };
+
+/** 바닥의 원·부채꼴 (월드 반지름 r m, 각 a0..a1) — 원근에 맞춰 찌그러진다. center 면 가운데에서 시작하는 부채꼴 */
+function floorArc(ctx: CanvasRenderingContext2D, to: ToScreen, x: number, z: number, r: number, a0 = 0, a1 = Math.PI * 2, center = false) {
+  ctx.beginPath();
+  const n = Math.max(8, Math.round(((a1 - a0) / (Math.PI * 2)) * 44));
+  if (center) {
+    const c = to(x, z);
+    ctx.moveTo(c.sx, c.sy);
+  }
+  for (let i = 0; i <= n; i++) {
+    const a = a0 + ((a1 - a0) * i) / n;
+    const p = to(x + Math.cos(a) * r, z + Math.sin(a) * r);
+    if (i || center) ctx.lineTo(p.sx, p.sy);
+    else ctx.moveTo(p.sx, p.sy);
+  }
+  if (center || a1 - a0 >= Math.PI * 2 - 1e-6) ctx.closePath();
+}
+/** 바닥 범위 테두리: 어두운 바깥선 + 계열 색 (밝은 바닥에서도 보이게). fill = 안쪽을 옅게 칠할 비율 */
+function ring(ctx: CanvasRenderingContext2D, to: ToScreen, x: number, z: number, r: number, color: string, alpha: number, width: number, o: { dash?: number[]; offset?: number; fill?: number } = {}) {
+  if (alpha <= 0.01 || r <= 0) return;
+  ctx.save();
+  floorArc(ctx, to, x, z, r);
+  if (o.fill) {
+    ctx.globalAlpha = alpha * o.fill;
+    ctx.fillStyle = color;
+    ctx.fill();
+  }
+  ctx.globalAlpha = alpha;
+  if (o.dash) {
+    ctx.setLineDash(o.dash);
+    ctx.lineDashOffset = o.offset ?? 0;
+  }
+  ctx.strokeStyle = 'rgba(70, 45, 35, 0.5)';
+  ctx.lineWidth = width + 4;
+  ctx.stroke();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width;
+  ctx.stroke();
+  ctx.restore();
+}
+/** 공중에 뜬 것의 땅 그림자 */
+function shadow(ctx: CanvasRenderingContext2D, to: ToScreen, x: number, z: number, r: number) {
+  const p = to(x, z);
+  const m = pxPerM(to, x, z);
+  ctx.fillStyle = 'rgba(70, 45, 35, 0.22)';
+  ctx.beginPath();
+  ctx.ellipse(p.sx, p.sy, r * m, r * m * 0.42, 0, 0, Math.PI * 2);
+  ctx.fill();
+}
 
 /** 효과 한 칸: 가운데 (cx, cy), 지름 sizePx. rot 라디안 · flip 좌우 */
 function drawAnim(ctx: CanvasRenderingContext2D, anim: string, frame: number, cx: number, cy: number, sizePx: number, rot = 0, flip = 1, alpha = 1) {
@@ -62,37 +129,92 @@ const frameAt = (anim: string, t: number) => {
 const isFloor = (anim: string) => FX_ANIMS[anim]?.[4] === 1;
 const isRight = (anim: string) => FX_ANIMS[anim]?.[5] === 1;
 
-/** 한 번 재생 효과 하나 */
+/** 한 번 재생 효과 하나 (범위 효과는 두 번 겹쳐 진하게) */
 function drawOne(ctx: CanvasRenderingContext2D, to: ToScreen, f: SkillFx) {
   const p = to(f.x, f.z);
   const m = pxPerM(to, f.x, f.z);
-  const size = (f.size || SIZE[f.anim] || 1) * m;
+  const size = (f.size || SIZE[f.anim] || 1) * m * big(f.anim);
   const fade = Math.min(1, (fxLife(f.anim) - f.t) / 0.15);
-  drawAnim(ctx, f.anim, frameAt(f.anim, f.t), p.sx, p.sy - f.h * m * 1.4, size, isRight(f.anim) ? screenAngle(to, f.x, f.z, Math.cos(f.rot), Math.sin(f.rot)) : 0, f.flip, fade);
+  const rot = isRight(f.anim) ? screenAngle(to, f.x, f.z, Math.cos(f.rot), Math.sin(f.rot)) : 0;
+  const y = p.sy - f.h * m * 1.4;
+  drawAnim(ctx, f.anim, frameAt(f.anim, f.t), p.sx, y, size, rot, f.flip, fade);
+  if (AREA.has(f.anim)) drawAnim(ctx, f.anim, frameAt(f.anim, f.t), p.sx, y, size, rot, f.flip, fade * 0.6);
 }
 
-/** 바닥에 깔리는 것 (캐릭터보다 먼저): 캣닢 구름 · 불꽃 · 빨간 점 · 떨어질 상자 그림자 · 몬스터 등장 예고 · 정예 둘레 · 바닥 효과 */
+/**
+ * 자동 냥펀치: 고양이 둘레에 타격 범위(점선 — 몬스터가 이 안에 들어오면 저절로 때린다) · 맞히는 순간 그 부채꼴이 하얗게 번쩍.
+ * 바닥에 (캐릭터보다 먼저) 그린다
+ */
+export function drawPunchArea(ctx: CanvasRenderingContext2D, d: Dungeon, t: number) {
+  const to = d.room.toScreen;
+  const P = d.P;
+  const reach = PLAYER.punch.range + punchReach(d.run);
+  if (d.phase === 'playing' && d.enemies.some((e) => e.state !== 'pop'))
+    ring(ctx, to, P.x, P.z, reach, 'rgba(255, 250, 240, 0.9)', 0.32, 2.5, { dash: [10, 12], offset: -t * 20 });
+  const since = PLAYER.punch.time - P.punchT - PLAYER.punch.hitAt;
+  if (P.punchT > 0 && P.punchHit && since < 0.2) {
+    const k = since / 0.2;
+    const a = Math.atan2(P.aimZ, P.aimX);
+    const half = (PLAYER.punch.arcDeg * Math.PI) / 360;
+    ctx.save();
+    floorArc(ctx, to, P.x, P.z, reach, a - half, a + half, true);
+    ctx.globalAlpha = 0.4 * (1 - k);
+    ctx.fillStyle = '#ffe9a8';
+    ctx.fill();
+    floorArc(ctx, to, P.x, P.z, reach * (0.85 + 0.15 * k), a - half, a + half);
+    ctx.globalAlpha = 1 - k;
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = 'rgba(110, 70, 40, 0.6)';
+    ctx.lineWidth = 13 * (1 - k) + 4;
+    ctx.stroke();
+    ctx.strokeStyle = '#ffd25a';
+    ctx.lineWidth = 9 * (1 - k) + 2;
+    ctx.stroke();
+    ctx.strokeStyle = '#fffbe8';
+    ctx.lineWidth = 3 * (1 - k) + 1;
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+/** 바닥에 깔리는 것 (캐릭터보다 먼저): 캣닢 구름 · 빙글 상자 궤도 · 불꽃 · 빨간 점 · 떨어질 상자 · 헤어볼 떨어질 자리 · 몬스터 등장 예고 · 정예 둘레 · 범위 효과 테두리 · 바닥 효과 */
 export function drawSkillFloor(ctx: CanvasRenderingContext2D, d: Dungeon, t: number) {
   const to = d.room.toScreen;
   const P = d.P;
   const run = d.run;
   const cloud = lv(run, 'catnip_cloud');
   if (cloud) {
+    const r = cloud.r as number;
     const p = to(P.x, P.z);
-    drawAnim(ctx, 'cloud_idle', frameAt('cloud_idle', t), p.sx, p.sy, (cloud.r as number) * 2 * 1.08 * pxPerM(to, P.x, P.z), 0, 1, 0.85);
+    const size = r * 2 * 1.08 * pxPerM(to, P.x, P.z);
+    drawAnim(ctx, 'cloud_idle', frameAt('cloud_idle', t), p.sx, p.sy, size);
+    drawAnim(ctx, 'cloud_idle', frameAt('cloud_idle', t + 0.4), p.sx, p.sy, size, 0, 1, 0.55);
+    ring(ctx, to, P.x, P.z, r, FAMILIES.catnip.color, 0.7, 4, { dash: [18, 10], offset: -t * 30, fill: 0.14 });
   }
+  const orbit = lv(run, 'box_orbit');
+  if (orbit) ring(ctx, to, P.x, P.z, orbit.r as number, FAMILIES.box.color, 0.45, 3, { dash: [10, 12], offset: t * 40 });
   for (const en of run.ents) {
     if (en.k === 'flame') {
       const p = to(en.x, en.z);
       const m = pxPerM(to, en.x, en.z);
-      drawAnim(ctx, 'green_flame', frameAt('green_flame', t + en.x), p.sx, p.sy - 0.35 * m * 1.4, SIZE.green_flame * m, 0, 1, Math.min(1, en.life / 0.4));
+      drawAnim(ctx, 'green_flame', frameAt('green_flame', t + en.x), p.sx, p.sy - 0.5 * m * 1.4, SIZE.green_flame * m * BIG, 0, 1, Math.min(1, en.life / 0.4));
     } else if (en.k === 'dot') {
       const p = to(en.x, en.z);
-      drawAnim(ctx, 'red_dot', frameAt('red_dot', t), p.sx, p.sy, SIZE.red_dot * pxPerM(to, en.x, en.z));
+      const m = pxPerM(to, en.x, en.z);
+      ctx.fillStyle = 'rgba(255, 60, 90, 0.28)';
+      ctx.beginPath();
+      ctx.ellipse(p.sx, p.sy, 0.8 * m, 0.34 * m, 0, 0, Math.PI * 2);
+      ctx.fill();
+      drawAnim(ctx, 'red_dot', frameAt('red_dot', t), p.sx, p.sy, SIZE.red_dot * m * BIG);
     } else if (en.k === 'drop') {
       const p = to(en.x, en.z);
       const k = Math.min(1, en.t / en.T);
-      drawAnim(ctx, 'fall_shadow', Math.min(7, Math.floor(k * 8)), p.sx, p.sy, en.r * 2 * pxPerM(to, en.x, en.z), 0, 1, 0.85);
+      drawAnim(ctx, 'fall_shadow', Math.min(7, Math.floor(k * 8)), p.sx, p.sy, en.r * 2 * pxPerM(to, en.x, en.z), 0, 1, 0.9);
+      ring(ctx, to, en.x, en.z, en.r, FAMILIES.box.color, 0.35 + 0.6 * k, 5, { dash: [12, 8], offset: -t * 60 });
+    } else if (en.k === 'hair') {
+      // 헤어볼이 떨어질 자리 (원거리) — 날아가는 동안 점점 진하게
+      const k = Math.min(1, en.t / en.T);
+      ring(ctx, to, en.x1, en.z1, en.r, FAMILIES.yarn.color, 0.3 + 0.6 * k, 5, { dash: [12, 8], offset: -t * 60, fill: 0.08 + 0.12 * k });
     }
   }
   // 몬스터 등장 예고: 바닥에 소용돌이 원이 커진다
@@ -129,6 +251,13 @@ export function drawSkillFloor(ctx: CanvasRenderingContext2D, d: Dungeon, t: num
       ctx.stroke();
       ctx.restore();
     }
+  // 한 번 터지는 범위 효과: 실제 범위에 계열 색 테두리가 퍼졌다 사라진다
+  for (const f of run.fx) {
+    const c = RING[f.anim];
+    if (!c) continue;
+    const k = Math.min(1, f.t / fxLife(f.anim));
+    ring(ctx, to, f.x, f.z, ((f.size || SIZE[f.anim]) / 2) * (0.7 + 0.3 * Math.sqrt(k)), c, 1 - k, 6, { fill: 0.2 * (1 - k) });
+  }
   for (const f of run.fx) if (isFloor(f.anim)) drawOne(ctx, to, f);
 }
 
@@ -143,116 +272,221 @@ export function skillItems(d: Dungeon, t: number): { sy: number; go: (ctx: Canva
       go: (ctx) => {
         const m = pxPerM(to, b.x, b.z);
         const bob = b.h > 0 ? 0 : Math.sin(t * 4 + b.x * 3) * 0.06;
-        const y = p.sy - (b.h + 0.28 + bob) * m * 1.4;
+        const y = p.sy - (b.h + 0.32 + bob) * m * 1.4;
         ctx.fillStyle = 'rgba(120, 85, 55, 0.22)';
         ctx.beginPath();
-        ctx.ellipse(p.sx, p.sy, 0.22 * m, 0.08 * m, 0, 0, Math.PI * 2);
+        ctx.ellipse(p.sx, p.sy, 0.26 * m, 0.1 * m, 0, 0, Math.PI * 2);
         ctx.fill();
         if (b.snack) {
           ctx.fillStyle = 'rgba(255, 200, 120, 0.35)';
           ctx.beginPath();
-          ctx.arc(p.sx, y, 0.42 * m, 0, Math.PI * 2);
+          ctx.arc(p.sx, y, 0.5 * m, 0, Math.PI * 2);
           ctx.fill();
-          drawIcon(ctx, SNACK.item, p.sx, y, 0.7 * m);
-        } else drawAnim(ctx, 'xp_fishbone', frameAt('xp_fishbone', t + b.x), p.sx, y, SIZE.xp_fishbone * m * (b.v > 1 ? 1.45 : 1));
+          drawIcon(ctx, SNACK.item, p.sx, y, 0.85 * m);
+        } else drawAnim(ctx, 'xp_fishbone', frameAt('xp_fishbone', t + b.x), p.sx, y, SIZE.xp_fishbone * m * 1.3 * (b.v > 1 ? 1.45 : 1));
       },
     });
   }
   const P = d.P;
   for (const b of orbitBoxes(d.run, P)) {
     const p = to(b.x, b.z);
-    out.push({ sy: p.sy, go: (ctx) => drawAnim(ctx, 'box_spin', frameAt('box_spin', t * 1.5 + b.a), p.sx, p.sy - 0.55 * pxPerM(to, b.x, b.z) * 1.4, SIZE.box_spin * pxPerM(to, b.x, b.z)) });
+    out.push({ sy: p.sy, go: (ctx) => drawAnim(ctx, 'box_spin', frameAt('box_spin', t * 1.5 + b.a), p.sx, p.sy - 0.7 * pxPerM(to, b.x, b.z) * 1.4, SIZE.box_spin * pxPerM(to, b.x, b.z) * BIG) });
   }
   for (const en of d.run.ents) {
     if (en.k === 'mouse') {
       const p = to(en.x, en.z);
-      const flip = screenAngle(to, en.x, en.z, en.dx, en.dz);
-      out.push({ sy: p.sy, go: (ctx) => drawAnim(ctx, 'clockwork_mouse', frameAt('clockwork_mouse', en.t), p.sx, p.sy - 0.3 * pxPerM(to, en.x, en.z) * 1.4, SIZE.clockwork_mouse * pxPerM(to, en.x, en.z), 0, Math.cos(flip) >= 0 ? 1 : -1) });
+      const m = pxPerM(to, en.x, en.z);
+      const flip = Math.cos(screenAngle(to, en.x, en.z, en.dx, en.dz)) >= 0 ? 1 : -1;
+      out.push({
+        sy: p.sy,
+        go: (ctx) => {
+          // 달려온 자리에 먼지
+          for (let i = 3; i >= 1; i--) {
+            const g = to(en.x - en.dx * 0.35 * i, en.z - en.dz * 0.35 * i);
+            ctx.fillStyle = `rgba(150, 120, 100, ${0.3 - i * 0.07})`;
+            ctx.beginPath();
+            ctx.ellipse(g.sx, g.sy - 6, (0.32 - i * 0.05) * m, (0.18 - i * 0.03) * m, 0, 0, Math.PI * 2);
+            ctx.fill();
+          }
+          drawAnim(ctx, 'clockwork_mouse', frameAt('clockwork_mouse', en.t), p.sx, p.sy - 0.45 * m * 1.4, SIZE.clockwork_mouse * m * BIG, 0, flip);
+        },
+      });
     } else if (en.k === 'snare' && en.e.state !== 'pop') {
       const e = en.e;
       const p = to(e.x, e.z);
-      out.push({ sy: p.sy + 0.5, go: (ctx) => drawAnim(ctx, 'yarn_snare', frameAt('yarn_snare', t), p.sx, p.sy - e.def.size * 0.18, e.def.size * 0.62, 0, 1, 0.9) });
+      out.push({ sy: p.sy + 0.5, go: (ctx) => drawAnim(ctx, 'yarn_snare', frameAt('yarn_snare', t), p.sx, p.sy - e.def.size * 0.2, e.def.size * 0.95) });
     }
   }
   if (d.run.shield > 0) {
     const p = to(P.x, P.z);
-    out.push({ sy: p.sy + 0.5, go: (ctx) => drawAnim(ctx, 'loaf_shield', frameAt('loaf_shield', t), p.sx, p.sy - 0.75 * pxPerM(to, P.x, P.z) * 1.4, SIZE.loaf_shield * pxPerM(to, P.x, P.z), 0, 1, 0.5) });
+    out.push({ sy: p.sy + 0.5, go: (ctx) => drawAnim(ctx, 'loaf_shield', frameAt('loaf_shield', t), p.sx, p.sy - PLAYER.size * 0.42, PLAYER.size * 1.15, 0, 1, 0.55) });
   }
   return out;
 }
 
-/** 위에 뜨는 것 (캐릭터 뒤에): 털뭉치 · 실타래 · 헤어볼 · 떨어지는 상자 · 노림 표식 · 레이저 빔 · 기절 별 · 정예 이름 · 효과 */
+/** 위에 뜨는 것 (캐릭터 뒤에): 털뭉치 · 실타래 · 헤어볼 (잔상·그림자) · 떨어지는 상자 · 노림 표식과 조준선 · 레이저 빔 · 이어지는 실 · 기절 별 · 정예 이름 · 냥냥 펀치 콤보 · 효과 */
 export function drawSkillAir(ctx: CanvasRenderingContext2D, d: Dungeon, t: number) {
   const to = d.room.toScreen;
   const P = d.P;
-  for (const en of d.run.ents) {
+  const run = d.run;
+  const at = (x: number, z: number, h: number) => {
+    const p = to(x, z);
+    return { x: p.sx, y: p.sy - h * pxPerM(to, x, z) * 1.4, m: pxPerM(to, x, z) };
+  };
+  for (const en of run.ents) {
     switch (en.k) {
       case 'yarn': {
-        const p = to(en.x, en.z);
-        const m = pxPerM(to, en.x, en.z);
-        drawAnim(ctx, 'yarn_fly', frameAt('yarn_fly', en.t), p.sx, p.sy - 0.8 * m * 1.4, SIZE.yarn_fly * m, screenAngle(to, en.x, en.z, en.dx, en.dz));
+        // 원거리: 땅 그림자 + 지나온 자리 잔상 4개 + 털뭉치 (2배)
+        const ang = screenAngle(to, en.x, en.z, en.dx, en.dz);
+        shadow(ctx, to, en.x, en.z, 0.4);
+        for (let i = 4; i >= 1; i--) {
+          const g = at(en.x - en.dx * 0.34 * i, en.z - en.dz * 0.34 * i, 0.8);
+          drawAnim(ctx, 'yarn_fly', frameAt('yarn_fly', en.t), g.x, g.y, SIZE.yarn_fly * g.m * BIG * (1 - i * 0.12), ang, 1, 0.45 - i * 0.09);
+        }
+        const p = at(en.x, en.z, 0.8);
+        drawAnim(ctx, 'yarn_fly', frameAt('yarn_fly', en.t), p.x, p.y, SIZE.yarn_fly * p.m * BIG, ang);
         break;
       }
       case 'spool': {
-        const p = to(en.x, en.z);
-        const m = pxPerM(to, en.x, en.z);
-        drawAnim(ctx, 'spool_boomerang', frameAt('spool_boomerang', en.t * 1.6), p.sx, p.sy - 0.8 * m * 1.4, SIZE.spool_boomerang * m);
+        const dir = en.out ? { x: en.dx, z: en.dz } : (() => {
+          const l = Math.hypot(P.x - en.x, P.z - en.z) || 1;
+          return { x: (P.x - en.x) / l, z: (P.z - en.z) / l };
+        })();
+        shadow(ctx, to, en.x, en.z, 0.45);
+        for (let i = 3; i >= 1; i--) {
+          const g = at(en.x - dir.x * 0.38 * i, en.z - dir.z * 0.38 * i, 0.8);
+          drawAnim(ctx, 'spool_boomerang', frameAt('spool_boomerang', en.t * 1.6 - i * 0.05), g.x, g.y, SIZE.spool_boomerang * g.m * BIG * (1 - i * 0.12), 0, 1, 0.42 - i * 0.1);
+        }
+        const p = at(en.x, en.z, 0.8);
+        drawAnim(ctx, 'spool_boomerang', frameAt('spool_boomerang', en.t * 1.6), p.x, p.y, SIZE.spool_boomerang * p.m * BIG);
         break;
       }
       case 'hair': {
+        const pos = (k: number) => ({ x: en.x0 + (en.x1 - en.x0) * k, z: en.z0 + (en.z1 - en.z0) * k, h: 0.6 + 2.2 * Math.sin(Math.PI * k) });
         const k = Math.min(1, en.t / en.T);
-        const x = en.x0 + (en.x1 - en.x0) * k;
-        const z = en.z0 + (en.z1 - en.z0) * k;
-        const p = to(x, z);
-        const m = pxPerM(to, x, z);
-        const hgt = 0.6 + 2.2 * Math.sin(Math.PI * k);
-        drawAnim(ctx, 'hairball_spit', Math.min(7, Math.floor(k * 8)), p.sx, p.sy - hgt * m * 1.4, SIZE.hairball_spit * m, screenAngle(to, x, z, en.x1 - en.x0, en.z1 - en.z0));
+        const c = pos(k);
+        shadow(ctx, to, c.x, c.z, 0.4);
+        const ang = screenAngle(to, c.x, c.z, en.x1 - en.x0, en.z1 - en.z0);
+        for (let i = 3; i >= 1; i--) {
+          const g = pos(Math.max(0, k - i * 0.06));
+          const s = at(g.x, g.z, g.h);
+          drawAnim(ctx, 'hairball_spit', Math.min(7, Math.floor(k * 8)), s.x, s.y, SIZE.hairball_spit * s.m * BIG * (1 - i * 0.14), ang, 1, 0.4 - i * 0.1);
+        }
+        const p = at(c.x, c.z, c.h);
+        drawAnim(ctx, 'hairball_spit', Math.min(7, Math.floor(k * 8)), p.x, p.y, SIZE.hairball_spit * p.m * BIG, ang);
         break;
       }
       case 'drop': {
-        const p = to(en.x, en.z);
-        const m = pxPerM(to, en.x, en.z);
         const k = Math.min(1, en.t / en.T);
-        const hgt = 7 * (1 - k * k);
+        const p = at(en.x, en.z, 7 * (1 - k * k) + 0.5);
         ctx.save();
         ctx.globalAlpha = Math.min(1, k * 3);
-        drawAnim(ctx, 'box_spin', frameAt('box_spin', en.t * 2), p.sx, p.sy - (hgt + 0.4) * m * 1.4, SIZE.box_spin * m * 1.5);
+        drawAnim(ctx, 'box_spin', frameAt('box_spin', en.t * 2), p.x, p.y, SIZE.box_spin * p.m * BIG * 1.5);
         ctx.restore();
         break;
       }
       case 'mark': {
         if (en.e.state === 'pop') break;
-        const p = to(en.e.x, en.e.z);
-        drawAnim(ctx, 'target_spawn', Math.min(7, Math.floor((en.t / en.T) * 8)), p.sx, p.sy - en.e.def.size * 0.42, en.e.def.size * 0.7);
+        // 노림: 고양이에서 표적까지 레이저 조준선 + 표식 (점점 진하게, 끝나면 치명타)
+        const k = Math.min(1, en.t / en.T);
+        const e = en.e;
+        const a = to(P.x, P.z);
+        const b = to(e.x, e.z);
+        ctx.save();
+        ctx.globalAlpha = 0.35 + 0.6 * k;
+        ctx.setLineDash([16, 10]);
+        ctx.lineDashOffset = -t * 90;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(a.sx, a.sy - PLAYER.size * 0.45);
+        ctx.lineTo(b.sx, b.sy - e.def.size * 0.45);
+        ctx.strokeStyle = 'rgba(70, 30, 35, 0.55)';
+        ctx.lineWidth = 8;
+        ctx.stroke();
+        ctx.strokeStyle = FAMILIES.laser.color;
+        ctx.lineWidth = 4;
+        ctx.stroke();
+        ctx.restore();
+        drawAnim(ctx, 'target_spawn', Math.min(7, Math.floor(k * 8)), b.sx, b.sy - e.def.size * 0.45, e.def.size * 1.05);
         break;
       }
       case 'dot': {
-        // 레이저 빔: 고양이 앞발에서 점까지
-        const a = to(P.x, P.z);
-        const m = pxPerM(to, P.x, P.z);
-        const ax = a.sx;
-        const ay = a.sy - 0.9 * m * 1.4;
+        // 레이저 빔: 고양이 앞발에서 점까지 — 넓은 빛 + 진한 심 + 하얀 속
+        const a = at(P.x, P.z, 0.9);
         const b = to(en.x, en.z);
-        const len = Math.hypot(b.sx - ax, b.sy - ay);
-        const [bx, by, bw, bh] = fxData.beam;
-        const [sheet, row] = FX_ANIMS.laser_beam;
+        const flick = 0.8 + 0.2 * Math.sin(t * 40 + en.x * 7);
         ctx.save();
-        ctx.globalAlpha = 0.55;
-        ctx.translate(ax, ay);
-        ctx.rotate(Math.atan2(b.sy - ay, b.sx - ax));
-        ctx.drawImage(imgs[sheet], (frameAt('laser_beam', t) % 8) * CELL + bx, row * CELL + by, bw, bh, 0, -5, len, 10);
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.sx, b.sy);
+        ctx.globalAlpha = 0.32 * flick;
+        ctx.strokeStyle = '#ff4d6a';
+        ctx.lineWidth = 22;
+        ctx.stroke();
+        ctx.globalAlpha = 0.95;
+        ctx.strokeStyle = '#ff2f55';
+        ctx.lineWidth = 7;
+        ctx.stroke();
+        ctx.strokeStyle = '#fff0f3';
+        ctx.lineWidth = 2.5;
+        ctx.stroke();
         ctx.restore();
         break;
       }
     }
   }
+  // 이어지는 실 (튕긴 털뭉치 · 올가미): 위로 휘는 실이 잠깐 남는다
+  for (const l of run.links) {
+    const k = l.t / LINK_LIFE;
+    const a = at(l.x0, l.z0, 0.9);
+    const b = at(l.x1, l.z1, 0.9);
+    const mx = (a.x + b.x) / 2;
+    const my = Math.min(a.y, b.y) - 36;
+    ctx.save();
+    ctx.globalAlpha = 1 - k;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.quadraticCurveTo(mx, my, b.x, b.y);
+    ctx.strokeStyle = 'rgba(70, 45, 35, 0.55)';
+    ctx.lineWidth = 10;
+    ctx.stroke();
+    ctx.strokeStyle = l.kind === 'snare' ? '#e86f9a' : FAMILIES.yarn.color;
+    ctx.lineWidth = 6;
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.restore();
+  }
   for (const e of d.enemies) {
     if (e.state === 'pop') continue;
     const p = to(e.x, e.z);
-    if (e.stunT > 0) drawAnim(ctx, 'dizzy_stars', frameAt('dizzy_stars', t), p.sx, p.sy - e.def.size * 0.9, e.def.size * 0.42);
+    if (e.stunT > 0) drawAnim(ctx, 'dizzy_stars', frameAt('dizzy_stars', t), p.sx, p.sy - e.def.size * 0.92, e.def.size * 0.7);
     if (e.elite) eliteTag(ctx, e, p.sx, p.sy);
   }
-  for (const f of d.run.fx) if (!isFloor(f.anim)) drawOne(ctx, to, f);
+  // 냥냥 펀치 콤보: 고양이 머리 위 발바닥 칸 — 다 차면 충격파
+  const paw = lv(run, 'paw_combo');
+  if (paw) {
+    const every = paw.every as number;
+    const n = run.punches % every;
+    const p = to(P.x, P.z);
+    const y = p.sy - PLAYER.size * 1.02;
+    for (let i = 0; i < every; i++) {
+      const x = p.sx + (i - (every - 1) / 2) * 30;
+      const on = i < n;
+      ctx.beginPath();
+      ctx.arc(x, y, 11, 0, Math.PI * 2);
+      ctx.fillStyle = on ? FAMILIES.catnip.color : 'rgba(255, 250, 240, 0.55)';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(70, 45, 35, 0.75)';
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      if (on) drawAnim(ctx, 'paw_punch', 3, x, y, 20);
+    }
+  }
+  for (const f of run.fx) if (!isFloor(f.anim)) drawOne(ctx, to, f);
 }
 
 function eliteTag(ctx: CanvasRenderingContext2D, e: Enemy, sx: number, sy: number) {

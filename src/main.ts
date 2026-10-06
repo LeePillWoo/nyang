@@ -109,7 +109,6 @@ function traceDraw(who: string, sh: Sheet, row: number, col: number, sx: number,
   const b = sx + flip * (f.ox + f.sw) * k;
   trace.push({ t: performance.now(), who, row, col, clamped: col >= r.length, flip, sx, sy, left: Math.min(a, b), right: Math.max(a, b), ...extra });
 }
-let punchQueued = false;
 /** 레벨 업 카드에 마우스가 올라간 카드 */
 let cardHover = -1;
 /** 샌드보드 점프 (이번 프레임) */
@@ -140,7 +139,6 @@ addEventListener('keydown', (e) => {
   if (e.code === 'KeyG') debug = !debug;
   if (e.code === 'KeyT') showTerrain = !showTerrain;
   if (e.code === 'KeyM') showMap = !showMap;
-  if (e.code === 'KeyJ') punchQueued = true;
   if (e.code === 'KeyR' && scene === 'dungeon') {
     if (dungeon.phase === 'napped') backToField(); // GDD: 목숨을 다 쓰면 마을에서 깨어난다
     else {
@@ -345,8 +343,7 @@ canvas.addEventListener('pointerdown', (e) => {
   const b = buttonAt(c, p.x, p.y);
   if (b) {
     pressing.set(e.pointerId, b.id);
-    if (b.id === 'punch') punchQueued = true;
-    else if (b.id === 'dex' && dexAllowed()) openPanel('dex');
+    if (b.id === 'dex' && dexAllowed()) openPanel('dex');
     else if (b.id === 'bag' && bagAllowed()) openPanel('bag');
     return;
   }
@@ -355,10 +352,8 @@ canvas.addEventListener('pointerdown', (e) => {
     return;
   }
   if (scene === 'dungeon') {
-    // 낮잠: 손가락으로 누르면 집에서 깨어난다 (키보드는 R). 쓰러지자마자 연타에 넘어가지 않게 1초 뒤부터
-    if (dungeon.phase === 'napped') {
-      if (e.pointerType !== 'mouse' && performance.now() - mood.napAt > 1000) backToField();
-    } else punchQueued = true;
+    // 냥펀치는 자동이라 화면 누르기는 낮잠에서 깨기만: 손가락으로 누르면 집에서 깨어난다 (키보드는 R). 쓰러지자마자 연타에 넘어가지 않게 1초 뒤부터
+    if (dungeon.phase === 'napped' && e.pointerType !== 'mouse' && performance.now() - mood.napAt > 1000) backToField();
     return;
   }
   if (onMap(p)) {
@@ -1112,13 +1107,13 @@ function frame(now: number) {
       sand.events.forEach(sandEvent);
     } else {
       const dash = keys.has('Space') || [...pressing.values()].includes('dash');
-      const out = updateDungeon(dungeon, { ...input(), punch: punchQueued, dash }, dt);
+      const out = updateDungeon(dungeon, { ...input(), punch: false, dash }, dt); // 냥펀치는 자동
       dungeon.events.forEach(dungeonSound);
       if (dungeon.events.some((e) => e.type === 'loot')) saveBag();
       dungeonMood();
       if (out === 'exit') backToField();
     }
-    punchQueued = jumpQueued = false;
+    jumpQueued = false;
     tickEmote(dt);
     tickBuffs(bag, dt);
   }
@@ -1194,13 +1189,13 @@ function drawFade() {
 const help = document.getElementById('help')!;
 const HELP = {
   field: 'WASD 이동 · 숲은 도끼로, 물은 배로 · 이정표 앞 포탈에 잠시 서 있으면 던전 · 지도 끌기·미니맵으로 둘러보기, 포탈 클릭 = 워프 · 강아지마을은 고등어 상점 · I 가방 · B 도감 · M 미니맵 · T 지형 보기',
-  dungeon: 'WASD 이동 · 클릭/J 냥펀치 · Space 구르기 · 웨이브 4번을 버티면 클리어 · 생선뼈를 모으면 레벨 업 → 기술 카드 (1·2·3) · I 가방 · 빛나는 칸으로 나가기',
+  dungeon: 'WASD 이동 · 냥펀치는 저절로 (몬스터가 가까이 오면) · Space 구르기 · 웨이브 4번을 버티면 클리어 · 생선뼈를 모으면 레벨 업 → 기술 카드 (1·2·3) · I 가방 · 빛나는 칸으로 나가기',
   maze: 'WASD 이동 · 횃불이 닿는 길만 보여요 · 냥코인을 줍고 막다른 길 끝의 보물 상자를 찾아 출구로 · 빠를수록 탈출 보너스 · R 새 미로 · Esc 돌아가기',
   sandboard: 'A/D 좌우 · Space 점프 (높은 바위·선인장·기둥은 점프대로만) · 부딪히면 하트 -1 · 자석·방패·하트·가속 발판 · R 다시 · Esc 돌아가기',
 };
 const HELP_TOUCH = {
   field: '왼쪽 조이스틱으로 이동 · 숲은 도끼로, 물은 배로 · 포탈에 잠시 서 있으면 던전·낚시터 (강아지마을은 상점) · 화면을 끌어 둘러보고 포탈을 누르면 워프',
-  dungeon: '조이스틱 이동 · 냥펀치 · 구르기 · 생선뼈로 레벨 업 → 기술 카드를 눌러 골라요 · 빛나는 칸으로 나가기',
+  dungeon: '조이스틱 이동 · 냥펀치는 저절로 · 구르기 버튼 · 생선뼈로 레벨 업 → 기술 카드를 눌러 골라요 · 빛나는 칸으로 나가기',
   maze: '조이스틱으로 이동 · 횃불이 닿는 길만 보여요 · 냥코인과 보물 상자를 찾아 출구로',
   sandboard: '◀ ▶ 좌우 · 점프 버튼이나 화면 누르기 = 점프 · 높은 건 피하고 낮은 건 뛰어넘어요 · 하트 3개',
 };

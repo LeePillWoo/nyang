@@ -60,7 +60,7 @@ const run = (d: Dungeon, secs: number, input = still) => {
 
 /** 기술만 보는 무대: 장비 없이, 웨이브 없이, 몬스터는 (종류, 고양이 기준 x, z) 에 체력 999 */
 function arena(skills: Partial<Record<SkillId, number>>, mons: [string, number, number][]) {
-  const d = makeDungeon(sheets, 'alley', { ...makeBag(), equip: {} });
+  const d = makeDungeon(sheets, 'alley', { ...makeBag(), equip: {} }, { auto: false }); // 기술 피해만 재게 자동 냥펀치는 끈다
   d.wave = null;
   d.enemies = mons.map(([k, dx, dz]) => Object.assign(makeEnemy(k, sheets, d.P.x + dx, d.P.z + dz), { hp: 999 }));
   for (const [id, n] of Object.entries(skills) as [SkillId, number][]) for (let i = 0; i < n; i++) learn(d.run, id);

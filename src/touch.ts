@@ -1,7 +1,7 @@
 // 화면 크기 대응 · 터치 조작. 좌표는 전부 CSS px (캔버스 실제 픽셀이 아니라) — 포인터 좌표와 바로 맞댄다.
 //  - ui(): 화면이 작으면 HUD·버튼을 줄이고 크면 키우는 배율
 //  - safe(): 노치·홈 막대를 피할 여백 (CSS env(safe-area-inset-*))
-//  - 터치 조작: 왼쪽 아래 동그란 조이스틱(필드·던전), 던전 오른쪽 아래 냥펀치·구르기 버튼
+//  - 터치 조작: 왼쪽 아래 동그란 조이스틱(필드·던전), 던전 오른쪽 아래 구르기 버튼 (냥펀치는 자동)
 //  - 필드 도감 버튼은 터치가 아니어도 보인다 (마우스로도 누른다)
 
 /** HUD 배율 — 짧은 변이 560px 보다 좁은 화면(휴대폰)에서만 줄인다. 데스크톱·태블릿은 1 (예전 그대로) */
@@ -49,7 +49,7 @@ export function wrapText(ctx: CanvasRenderingContext2D, text: string, maxW: numb
   return lines;
 }
 
-export type ButtonId = 'punch' | 'dash' | 'dex' | 'bag' | 'jump' | 'left' | 'right';
+export type ButtonId = 'dash' | 'dex' | 'bag' | 'jump' | 'left' | 'right';
 export type Button = { id: ButtonId; x: number; y: number; r: number; label: string };
 /** k = HUD 배율 (그리기용) */
 export type Controls = { stick: { x: number; y: number; r: number } | null; buttons: Button[]; k: number };
@@ -80,10 +80,7 @@ export function controls(w: number, h: number, scene: Scene, touch: boolean): Co
   const pr = Math.round(48 * tk);
   const px = w - s.r - pad - pr;
   const py = h - s.b - pad - pr;
-  if (scene === 'dungeon') {
-    buttons.push({ id: 'punch', x: px, y: py, r: pr, label: '냥펀치' });
-    buttons.push({ id: 'dash', x: px - pr * 1.95, y: py + pr * 0.28, r: pr * 0.72, label: '구르기' });
-  }
+  if (scene === 'dungeon') buttons.push({ id: 'dash', x: px, y: py, r: pr, label: '구르기' }); // 냥펀치는 자동
   if (scene === 'sandboard') {
     // 샌드보드는 좌우만 — 조이스틱 대신 ← → 버튼 (누르고 있는 동안)
     const ar = Math.round(44 * tk);

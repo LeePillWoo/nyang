@@ -7,6 +7,7 @@
  * 장비 능력치(가방 bag.ts)가 공격·체력·방어·이동·행운에 더해진다. 쓰러진 몬스터는 냥코인·아이템과 생선뼈를 떨어뜨리고,
  * 고양이가 다가가면 빨려 온다 (냥코인·아이템은 가방에, 생선뼈는 경험치로). 웨이브를 깨면 생선뼈가, 방을 깨면 남은 게 전부 날아온다.
  * 레벨이 오르면 choose 에 카드가 뜨고 고를 때까지 멈춘다 (pick).
+ * 냥펀치는 자동 (auto) — 타격 범위 안에 몬스터가 있으면 저절로 나간다. 손으로 누르는 punch 입력은 체크용으로 남겨 둔다.
  */
 import { makeBag, obtain, rollDrops, stats, type Bag } from './bag.ts';
 import { CELL, resolveCircle } from './collide.ts';
@@ -118,6 +119,9 @@ function makePlayer() {
     dashCd: 0,
     punchT: 0,
     punchHit: false,
+    /** 이번 냥펀치를 겨눈 쪽 (움직이는 쪽과 따로 — 물러나면서 때려도 맞는다) */
+    aimX: 0,
+    aimZ: 1,
     invT: 0,
     hurtT: 0,
     kx: 0,
@@ -155,6 +159,8 @@ export type Dungeon = {
   classic: boolean;
   /** 레벨 업 카드 — 있는 동안 멈춘다 */
   choose: Card[] | null;
+  /** 자동 냥펀치 (끄면 punch 입력으로만 — 기본 전투 체크용) */
+  auto: boolean;
 };
 
 /** 장비·먹은 것까지 더한 최대 체력 */
@@ -170,8 +176,8 @@ const shakeBy = (d: Dungeon, v: number) => {
   d.shake = Math.max(d.shake, v);
 };
 
-/** sheets: 몬스터 종류별 스프라이트 시트 (몬스터가 들고 다닌다. node 체크에선 아무 값이나). classic = 웨이브·기술 없이 */
-export function makeDungeon(sheets: Record<Kind, Sheet>, roomId = 'alley', bag: Bag = makeBag(), opt: { classic?: boolean } = {}): Dungeon {
+/** sheets: 몬스터 종류별 스프라이트 시트 (몬스터가 들고 다닌다. node 체크에선 아무 값이나). classic = 웨이브·기술 없이, auto = 자동 냥펀치 (기본 켬) */
+export function makeDungeon(sheets: Record<Kind, Sheet>, roomId = 'alley', bag: Bag = makeBag(), opt: { classic?: boolean; auto?: boolean } = {}): Dungeon {
   const d = {
     P: makePlayer(),
     enemies: [],
@@ -189,6 +195,7 @@ export function makeDungeon(sheets: Record<Kind, Sheet>, roomId = 'alley', bag: 
     toasts: [],
     classic: !!opt.classic,
     choose: null,
+    auto: opt.auto ?? true,
   } as unknown as Dungeon;
   d.world = {
     px: 0,
@@ -571,24 +578,25 @@ export function updateDungeon(d: Dungeon, input: DungeonInput, dt: number): 'exi
     my /= len;
     P.faceX = (mx + my) * Math.SQRT1_2;
     P.faceZ = (my - mx) * Math.SQRT1_2;
-    if (mx !== 0) P.flip = Math.sign(mx);
+    if (mx !== 0 && P.punchT <= 0) P.flip = Math.sign(mx); // 때리는 동안은 맞는 쪽을 본다
   }
 
   const { dash, punch } = player;
   const reach = punch.range + punchReach(d.run);
-  if (alive && input.punch && P.punchT <= 0 && P.dashT <= 0) {
-    const aim = aimAt(d.enemies, P.x, P.z, reach);
-    if (aim) {
-      P.faceX = aim.x;
-      P.faceZ = aim.z;
-      P.flip = aim.x - aim.z >= 0 ? 1 : -1; // 아이소메트릭에선 x-z 가 화면 좌우
-    }
+  // 냥펀치: 자동 — 타격 범위(reach) 안에 몬스터가 있으면 저절로 (구르는 중·낮잠엔 안 함). punch 입력은 손으로 (체크용)
+  const ready = alive && P.punchT <= 0 && P.dashT <= 0;
+  const aim = ready ? aimAt(d.enemies, P.x, P.z, reach) : null;
+  if (ready && (input.punch || (d.auto && aim))) {
+    P.aimX = aim ? aim.x : P.faceX;
+    P.aimZ = aim ? aim.z : P.faceZ;
+    if (aim) P.flip = aim.x - aim.z >= 0 ? 1 : -1; // 아이소메트릭에선 x-z 가 화면 좌우
     P.punchT = punch.time;
     P.punchHit = false;
     P.animT = 0;
   }
 
   if (alive && input.dash && P.dashT <= 0 && P.dashCd <= 0) {
+    // 움직이는 쪽으로 구른다 (face 는 움직임만 바꾼다 — 자동 냥펀치가 몬스터 쪽을 겨눠도 피하는 쪽으로)
     P.dashX = P.faceX;
     P.dashZ = P.faceZ;
     P.dashT = dash.time;
@@ -601,13 +609,19 @@ export function updateDungeon(d: Dungeon, input: DungeonInput, dt: number): 'exi
     P.punchT -= dt;
     if (!P.punchHit && punch.time - P.punchT >= punch.hitAt) {
       P.punchHit = true;
-      const targets = punchTargets(d.enemies, P.x, P.z, P.faceX, P.faceZ, reach, PUNCH_ARC);
+      // 맞히는 순간 다시 겨눈다 (휘두르는 0.1초 사이에 몬스터도 고양이도 움직였다)
+      const re = aimAt(d.enemies, P.x, P.z, reach);
+      if (re) {
+        P.aimX = re.x;
+        P.aimZ = re.z;
+      }
+      const targets = punchTargets(d.enemies, P.x, P.z, P.aimX, P.aimZ, reach, PUNCH_ARC);
       const dmg = punch.damage + stats(d.bag).atk + punchBonus(d.run);
       let finish = false;
       for (const e of targets) if (strike(d, e, dmg, P.x, P.z, 'punch')) finish = true;
       if (targets.length) d.events.push({ type: 'hit', finish });
       if (finish) shakeBy(d, SHAKE_FINISH);
-      onPunch(d.run, d.host, targets, P.faceX, P.faceZ);
+      onPunch(d.run, d.host, targets, P.aimX, P.aimZ);
     }
   }
 
@@ -635,7 +649,10 @@ export function updateDungeon(d: Dungeon, input: DungeonInput, dt: number): 'exi
   const leave = d.phase !== 'napped' && onExit(d.room, P.x, P.z);
 
   if (alive && !d.classic) tickSkills(d.run, d.host, dt);
-  else for (const f of d.run.fx) f.t += dt;
+  else {
+    for (const f of d.run.fx) f.t += dt;
+    d.run.links = [];
+  }
   flushDots(d, dt);
 
   d.world.px = P.x;

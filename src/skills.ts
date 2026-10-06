@@ -28,6 +28,9 @@ export const need = (level: number) => XP.first + XP.grow * (level - 1);
 export type SkillSound = 'throw' | 'boom' | 'zap' | 'shield' | 'hiss' | 'thud' | 'snare' | 'swirl' | 'ring' | 'box';
 /** 카드: 기술 id 와 고르면 될 레벨 (heal = 다 배웠을 때 간식) */
 export type Card = { id: SkillId | 'heal'; lv: number };
+/** 이어지는 실 (튕긴 털뭉치 · 올가미) — 그리기용, LINK_LIFE 초 동안 남는다 */
+export type Link = { x0: number; z0: number; x1: number; z1: number; t: number; kind: 'yarn' | 'snare' };
+export const LINK_LIFE = 0.45;
 /** 한 번 재생하는 효과 — size 지름(m) · h 높이(m) · follow 면 그 몬스터를 따라간다 */
 export type SkillFx = { anim: string; x: number; z: number; t: number; rot: number; size: number; h: number; flip: number; follow?: Enemy };
 
@@ -51,6 +54,7 @@ export type Run = {
   cd: Partial<Record<SkillId, number>>;
   ents: Ent[];
   fx: SkillFx[];
+  links: Link[];
   /** 냥냥 펀치 — 맞힌 냥펀치 수 */
   punches: number;
   /** 식빵 보호막 — 남은 겹 · 다시 차오르는 시계 */
@@ -83,7 +87,7 @@ export type SkillHost = {
 };
 
 export function makeRun(): Run {
-  return { level: 1, xp: 0, skills: {}, cd: {}, ents: [], fx: [], punches: 0, shield: 0, shieldT: 0, hissCd: 0, boxA: 0, dashOn: false, zoomX: 0, zoomZ: 0, pending: 0 };
+  return { level: 1, xp: 0, skills: {}, cd: {}, ents: [], fx: [], links: [], punches: 0, shield: 0, shieldT: 0, hissCd: 0, boxA: 0, dashOn: false, zoomX: 0, zoomZ: 0, pending: 0 };
 }
 
 /** 그 기술의 지금 레벨 수치 (안 가졌으면 null) */
@@ -276,6 +280,7 @@ export function tickSkills(run: Run, h: SkillHost, dt: number) {
           e.rootT = num(p, 'dur');
           h.hit(e, num(p, 'dmg'), P.x, P.z, 0);
           run.ents.push({ k: 'snare', e, t: num(p, 'dur') });
+          run.links.push({ x0: P.x, z0: P.z, x1: e.x, z1: e.z, t: 0, kind: 'snare' });
         }
         h.sound('snare');
         rearm(id, p);
@@ -420,6 +425,8 @@ export function tickSkills(run: Run, h: SkillHost, dt: number) {
   for (const en of run.ents) if (step(run, h, en, dt, near, within)) out.push(en);
   run.ents = out;
 
+  for (const l of run.links) l.t += dt;
+  run.links = run.links.filter((l) => l.t < LINK_LIFE);
   for (const f of run.fx) {
     f.t += dt;
     if (f.follow) {
@@ -458,6 +465,7 @@ function step(run: Run, h: SkillHost, en: Ent, dt: number, near: Near, within: W
         if (en.bounce > 0) {
           const next = near(e.x, e.z, 4, new Set([e]))[0];
           if (next) {
+            run.links.push({ x0: e.x, z0: e.z, x1: next.x, z1: next.z, t: 0, kind: 'yarn' });
             en.bounce--;
             en.tgt = next;
             en.life = 1;
@@ -558,7 +566,7 @@ function step(run: Run, h: SkillHost, en: Ent, dt: number, near: Near, within: W
       en.z = p.z;
       if (within(en.x, en.z, 0.6).length || en.life <= 0) {
         for (const e of within(en.x, en.z, en.r)) h.hit(e, en.dmg, en.x, en.z, 6);
-        addFx(run, 'mouse_burst', en.x, en.z, { h: 0.4, size: en.r * 1.6 });
+        addFx(run, 'mouse_burst', en.x, en.z, { h: 0.2, size: en.r * 2 }); // 실제 폭발 범위 그대로
         h.sound('boom');
         return false;
       }

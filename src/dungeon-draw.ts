@@ -11,10 +11,12 @@ import { drawEmote } from './emote.ts';
 import { drawFx, FX_SHEETS, type FxSheet } from './fx.ts';
 import { ROOMS, type Room } from './iso.ts';
 import { drawFrame, type Sheet } from './sheet.ts';
-import { drawSkillAir, drawSkillFloor, drawSkillIcons, drawWaveHud, drawXpBar, skillItems } from './skills-draw.ts';
+import { drawPunchArea, drawSkillAir, drawSkillFloor, drawSkillIcons, drawWaveHud, drawXpBar, skillItems } from './skills-draw.ts';
 import { safe, ui } from './touch.ts';
 
 const COLS = 6;
+/** 몬스터가 쏜 것이 나는 높이 (방 그림 px) */
+const ARROW_H = 34;
 
 const FX_IMG = Object.fromEntries(Object.entries(FX_SHEETS).map(([k, p]) => [k, image(p).img])) as Record<FxSheet, HTMLImageElement>;
 /** 이펙트 시트 (방 배경은 들어갈 때 roomReady 로 따로 불러온다) */
@@ -67,6 +69,7 @@ export function drawDungeon(ctx: CanvasRenderingContext2D, cw: number, ch: numbe
   ctx.drawImage(image(R.def.image).img, 0, 0, R.W, R.H);
   drawExits(ctx, d, v.t);
   drawSkillFloor(ctx, d, v.t);
+  drawPunchArea(ctx, d, v.t);
 
   // 공격 예고 데칼 — 색을 하나로 고정해 가독성 확보 (GDD 8장)
   for (const e of d.enemies) {
@@ -78,6 +81,31 @@ export function drawDungeon(ctx: CanvasRenderingContext2D, cw: number, ch: numbe
     ctx.beginPath();
     ctx.ellipse(sx, sy, r * t, r * t * 0.4, 0, 0, Math.PI * 2);
     ctx.fill();
+    if (e.def.arrowSpeed > 0) {
+      // 원거리: 쏠 쪽으로 조준선 + 고양이 발밑 과녁 (예고가 끝나면 그쪽으로 쏜다)
+      const c = toScreen(P.x, P.z);
+      ctx.save();
+      ctx.globalAlpha = 0.3 + 0.6 * t;
+      ctx.lineCap = 'round';
+      ctx.setLineDash([16, 10]);
+      ctx.lineDashOffset = -v.t * 80;
+      ctx.beginPath();
+      ctx.moveTo(sx, sy - ARROW_H);
+      ctx.lineTo(c.sx, c.sy - ARROW_H);
+      ctx.strokeStyle = 'rgba(70, 30, 25, 0.6)';
+      ctx.lineWidth = 8;
+      ctx.stroke();
+      ctx.strokeStyle = '#ff5a4a';
+      ctx.lineWidth = 4;
+      ctx.stroke();
+      ctx.setLineDash([]);
+      const rr = 30 * (1.5 - 0.5 * t);
+      ctx.beginPath();
+      ctx.ellipse(c.sx, c.sy, rr, rr * 0.42, 0, 0, Math.PI * 2);
+      ctx.lineWidth = 4;
+      ctx.stroke();
+      ctx.restore();
+    }
   }
 
   // 화면 아래(앞)에 있는 것일수록 나중에 그린다
@@ -160,14 +188,51 @@ export function drawDungeon(ctx: CanvasRenderingContext2D, cw: number, ch: numbe
   items.sort((a, b) => a.sy - b.sy);
   for (const it of items) it.go();
 
+  // 몬스터가 쏜 것 (원거리): 땅 그림자 · 지나온 꼬리 · 빛나는 화살 — 작고 가늘면 날아오는 게 안 보인다
   for (const a of d.arrows) {
-    const { sx, sy } = toScreen(a.x, a.z);
-    ctx.strokeStyle = '#6b4a2f';
-    ctx.lineWidth = 3;
+    const p = toScreen(a.x, a.z);
+    const q = toScreen(a.x + a.dx * 0.5, a.z + a.dz * 0.5);
+    const ang = Math.atan2(q.sy - p.sy, q.sx - p.sx);
+    ctx.fillStyle = 'rgba(70, 40, 30, 0.28)';
     ctx.beginPath();
-    ctx.moveTo(sx - a.dx * 14, sy - 24 - a.dz * 7);
-    ctx.lineTo(sx + a.dx * 14, sy - 24 + a.dz * 7);
+    ctx.ellipse(p.sx, p.sy, 18, 7, 0, 0, Math.PI * 2);
+    ctx.fill();
+    for (let i = 4; i >= 1; i--) {
+      const b = toScreen(a.x - a.dx * 0.3 * i, a.z - a.dz * 0.3 * i);
+      ctx.fillStyle = `rgba(255, 120, 70, ${0.5 - i * 0.1})`;
+      ctx.beginPath();
+      ctx.arc(b.sx, b.sy - ARROW_H, 14 - i * 2.4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.save();
+    ctx.translate(p.sx, p.sy - ARROW_H);
+    ctx.rotate(ang);
+    ctx.scale(1.5, 1.5);
+    ctx.fillStyle = 'rgba(255, 100, 60, 0.45)';
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 32, 14, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(-24, 0);
+    ctx.lineTo(14, 0);
+    ctx.strokeStyle = '#4a2a20';
+    ctx.lineWidth = 9;
     ctx.stroke();
+    ctx.strokeStyle = '#ffb07a';
+    ctx.lineWidth = 4.5;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(28, 0);
+    ctx.lineTo(10, -10);
+    ctx.lineTo(10, 10);
+    ctx.closePath();
+    ctx.fillStyle = '#fff3d6';
+    ctx.fill();
+    ctx.strokeStyle = '#4a2a20';
+    ctx.lineWidth = 3;
+    ctx.stroke();
+    ctx.restore();
   }
 
   for (const f of d.fxs) {
