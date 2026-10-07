@@ -75,7 +75,7 @@ import { drawMinimap, fromMini, inMinimap, minimapPick, minimapRect, toMini } fr
 import { drawMaze, mazeView } from './maze-draw.ts';
 import { makeMaze, updateMaze, type MazeEvent, type MazeState } from './maze.ts';
 import { miniButtonAt, miniLayout, type MiniButton } from './mini-draw.ts';
-import { drawSandboard, SAND_IMAGES, sandView, type SandArt } from './sandboard-draw.ts';
+import { drawSandboard, SAND_IMAGES, sandPoint, type SandArt } from './sandboard-draw.ts';
 import { makeSandboard, updateSandboard, type SandEvent, type SandState } from './sandboard.ts';
 import { loadSheet, type Sheet } from './sheet.ts';
 import { buttonAt, controls, drawControls, followStick, onStick, safe, stickBase, stickVector, ui, type ButtonId } from './touch.ts';
@@ -662,11 +662,11 @@ if (trace)
         const d = Math.min(devicePixelRatio, 2);
         return { x: (mazeView.ox + (cx + 0.5) * mazeView.px) / d, y: (mazeView.oy + (cz + 0.5) * mazeView.px) / d };
       },
-      /** 샌드보드 가로 자리 x · 거리 dd 의 화면 위치 (CSS px, 원근 — sandboard-draw.ts 와 같은 식) */
+      /** 샌드보드 가로 자리 x · 거리 dd 의 화면 위치 (CSS px — sandboard-draw.ts 의 사다리꼴과 같은 식) */
       sandScreen: (x: number, dd: number) => {
         const d = Math.min(devicePixelRatio, 2);
-        const q = 1 / (1 + (dd - sand.d) / sandView.D);
-        return { x: (sandView.cx + x * sandView.half * q) / d, y: (sandView.y0 - sandView.ppm * sandView.D * Math.log(1 + (dd - sand.d) / sandView.D)) / d };
+        const p = sandPoint(x, dd - sand.d);
+        return { x: p.x / d, y: p.y / d };
       },
       /** 미니게임 버튼(돌아가기 · 다시 · 카드의 돌아가기) 가운데 (CSS px) */
       miniScreen: () => {

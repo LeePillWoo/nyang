@@ -217,16 +217,20 @@ const until = (s: SandState, f: () => boolean, input = still, max = 10) => {
   console.log(`    앞 속도    20 m/s → 드리프트로 ${low.v.toFixed(1)} (${low.t.toFixed(2)}초) → 카빙으로 ${high.v.toFixed(1)} (${high.t.toFixed(2)}초) · 0.3초 감속 ${lost.toFixed(1)}`);
   console.log(`    떼면       ${out.toFixed(2)} 더 미끄러지고 ${restT.toFixed(2)}초 만에 섬 (한 레인 = 0.4) · 미리 셈 ${pred.toFixed(2)} → 실제 ${r.x.toFixed(2)}`);
   console.log(`    톡 누르기  0.1초 → ${tap(0.1).toFixed(2)} · 0.15초 → ${tap(0.15).toFixed(2)} · 0.25초 → ${tap(0.25).toFixed(2)}`);
-  assert.ok(yaw90 >= 0.1 && yaw90 <= 0.2, `보드는 빨리 꺾인다 (${yaw90})`);
+  console.log(`    처음 저항  0.2초 뒤 옆으로 ${at(0.2).x.toFixed(3)} (저항 없을 땐 약 0.13)`);
+  assert.ok(yaw90 >= 0.15 && yaw90 <= 0.3, `보드는 조금 묵직하게, 그래도 빨리 꺾인다 (${yaw90})`);
   assert.ok(over > 0.04 && over < 0.2, `살짝 넘쳤다 돌아온다 (${over})`);
-  assert.ok(kick.yaw > SAND.yawMax * 0.6 && kick.x < 0.05, '처음엔 보드만 꺾이고 몸은 거의 그대로 (드리프트 시작)');
+  assert.ok(kick.yaw > SAND.yawMax * 0.35 && kick.x < 0.03, '처음엔 보드가 먼저 꺾이고 몸은 거의 그대로 (드리프트 시작)');
+  assert.ok(at(0.2).x < 0.1, `처음 저항: 누르자마자 휙 가지 않는다 (0.2초 뒤 ${at(0.2).x.toFixed(3)})`);
   assert.ok(vx90 > yaw90 + 0.1 && vx90 < 0.5, `몸은 늦게 따라온다 (${vx90})`);
   assert.ok(peakSlip > SAND.slideAt && 20 - low.v > 1.8 && 20 - low.v < 4 && low.t < 0.4, `드리프트: 미끄러지며 확 느려진다 (${low.v.toFixed(2)} @ ${low.t.toFixed(2)})`);
   assert.ok(high.v > 20 + 1 && high.t - low.t < 0.6, `카빙: 엣지가 물리면 처음보다 빨라진다 (${high.v.toFixed(2)} @ ${high.t.toFixed(2)})`);
   assert.ok(out > 0.2 && out < 0.4 && restT < 0.6, `떼면 한 레인 안에서 미끄러지다 선다 (${out}, ${restT})`);
   assert.ok(Math.abs(pred - r.x) < 0.01, '떼면 멈출 자리를 미리 셀 수 있다 (자동 조종이 쓴다)');
   const t1 = tap(0.15);
-  assert.ok(t1 > 0.25 && t1 < 0.45, `0.15초 톡 = 한 레인쯤 (${t1})`);
+  const t2 = tap(0.3);
+  assert.ok(t1 > 0.12 && t1 < 0.3, `0.15초 톡 = 반 레인쯤 (${t1.toFixed(2)})`);
+  assert.ok(t2 > 0.35 && t2 < 0.6, `0.3초 = 한 레인쯤 (${t2.toFixed(2)})`);
 
   // "촤악"(slide): 시작할 때 한 번, 엣지가 물려 카빙(carve)이 되기 전엔 다시 안 난다. 반대로 홱 틀면 또 난다 (가장자리에 안 닿게 왼쪽 끝에서 출발)
   const c = fresh();

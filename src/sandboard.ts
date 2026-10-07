@@ -23,11 +23,17 @@ export const SAND = {
   steer: 2.5,
   yawMax: 0.56,
   yawW: 15,
-  yawZ: 0.55,
+  yawZ: 0.45,
   yawWOut: 17,
   yawZOut: 0.7,
   gripIn: 0.14,
   gripOut: 0.07,
+  /**
+   * 처음 누를 때 저항 (2026-10-07 사용자 의견 — 누르자마자 휙휙 옆으로 갔다): 누르면 입력이 steerIn 초(시간 상수)에 걸쳐 차오른다 (떼면 바로 0).
+   * 보드가 조금 묵직하게 꺾이고 몸도 그만큼 늦게 흐른다 — 0.2초 뒤 옆으로 간 거리가 약 40% 줄고, 촤악 → 카빙 손맛은 그대로.
+   * (몸만 늦게 따라오게 하면 미끄러짐이 커져 감속이 너무 컸다)
+   */
+  steerIn: 0.07,
   dragSlip: 30,
   slideAt: 0.35,
   gripAt: 0.2,
@@ -145,6 +151,8 @@ export type SandState = {
   lean: number;
   slip: number;
   steer: number;
+  /** 차오르는 중인 좌우 입력 -1..1 (처음 저항) */
+  steerU: number;
   /** 미끄러지는 중(촤악 뒤, 카빙 전) · 촤악 때 속도 · 카빙 가속이 남은 시간 · 그 가속(m/s²) */
   sliding: boolean;
   slideV: number;
@@ -176,7 +184,7 @@ const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v
 
 export function makeSandboard(rng: () => number = Math.random): SandState {
   const s: SandState = {
-    d: 0, x: 0, v: SAND.vMin, air: 0, airMax: 1, landT: 9, dizzy: 0, yaw: 0, yawV: 0, vx: 0, lean: 0, slip: 0, steer: 0, sliding: false, slideV: 0, carveT: 0, carveRate: 0, flip: 1, t: 0,
+    d: 0, x: 0, v: SAND.vMin, air: 0, airMax: 1, landT: 9, dizzy: 0, yaw: 0, yawV: 0, vx: 0, lean: 0, slip: 0, steer: 0, steerU: 0, sliding: false, slideV: 0, carveT: 0, carveRate: 0, flip: 1, t: 0,
     hearts: SAND.hearts, shield: 0, magnet: 0, boost: 0, phase: 'play', fell: false, coins: 0, crashes: 0, score: 0,
     obs: [], fx: [], pops: [], nextAt: 30, events: [], rng,
   };
@@ -248,8 +256,9 @@ function lateral(l: Lateral, u: number, dt: number, move = 1) {
   const side = (x: number) => (x >= SAND.edge - 0.03 ? 1 : x <= -SAND.edge + 0.03 ? -1 : 0);
   const pinned = side(l.x) !== 0 && Math.sign(u) === side(l.x);
   const pressed = u !== 0;
-  const w = pressed ? SAND.yawW : SAND.yawWOut;
-  const z = pressed ? SAND.yawZ : SAND.yawZOut;
+  // 가장자리에 눌려 보드가 펴질 땐 뗄 때 스프링으로 (덜 출렁이게 — 넘쳐 반대로 꺾이면 가장자리에서 튕겨 나와 다시 촤악 했다)
+  const w = pressed && !pinned ? SAND.yawW : SAND.yawWOut;
+  const z = pressed && !pinned ? SAND.yawZ : SAND.yawZOut;
   l.yawV += (w * w * ((pinned ? 0 : u) * SAND.yawMax - l.yaw) - 2 * z * w * l.yawV) * dt;
   l.yaw += l.yawV * dt;
   const lean = l.yaw / SAND.yawMax;
@@ -315,7 +324,10 @@ export function updateSandboard(s: SandState, input: SandInput, dt: number) {
     s.events.push({ type: 'jump' });
   }
   // 좌우 = 드리프트: 보드가 먼저 꺾이고 몸이 늦게 따라온다. 그 차이(미끄러짐)만큼 모래를 튀기고 속도를 깎는다
-  s.slip = lateral(s, s.dizzy > 0 ? 0 : clamp(input.mx, -1, 1), dt, s.air > 0 ? SAND.airSteer : 1);
+  const want = s.dizzy > 0 ? 0 : clamp(input.mx, -1, 1);
+  // 처음 저항: 누르면 입력이 steerIn 초에 걸쳐 차오른다 (반대로 누르면 그쪽으로 넘어가며, 떼면 바로 0)
+  s.steerU = want === 0 ? 0 : s.steerU + (want - s.steerU) * (1 - Math.exp(-dt / SAND.steerIn));
+  s.slip = lateral(s, s.steerU, dt, s.air > 0 ? SAND.airSteer : 1);
   s.lean = s.yaw / SAND.yawMax;
   s.steer = Math.abs(s.lean) > 0.12 ? Math.sign(s.lean) : 0;
   if (s.steer !== 0) s.flip = s.steer;

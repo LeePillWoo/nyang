@@ -1,6 +1,8 @@
 // 샌드보드 그리기 — art/sandboarding 시트(배경 3장 · 장애물 · 장식 · 치즈 주행/동작 · 효과)로. 치즈는 화면 아래쪽에서 위(앞)를 보고 달리고,
-// 비탈은 원근으로 그린다: 앞(화면 위)으로 갈수록 좁아지는 사다리꼴 — 멀리 있는 건 작고, 가까운 건 크다.
-//   배율 sc(dd) = 1 / (1 + dd / D), 화면 y = y0 − ppm·D·ln(1 + dd / D)  (dd = 치즈보다 앞쪽 거리 m, D = 원근 거리 — 화면 맨 위가 FAR 배율이 되게 잡는다)
+// 비탈은 살짝 원근으로 그린다: 앞(화면 위)으로 갈수록 곧게 좁아지는 사다리꼴 — 멀리 있는 건 조금 작고, 가까운 건 크다.
+//   화면 y = y0 − ppm·dd (거리마다 같은 간격 — 바닥이 같은 빠르기로 흐른다), 배율 sc = 1 − G·dd (화면 맨 위가 FAR 배율이 되게 G 를 잡는다)
+//   (dd = 치즈보다 앞쪽 거리 m). 가장자리가 곧은 선이 된다 — 예전엔 y 를 로그로, 배율을 1/(1+dd/D) 로 잡아 가장자리가 휘어
+//   바닥이 원통처럼 말려 보였고 멀미가 난다는 의견이 있었다 (2026-10-07)
 //   배경은 세 장을 위에서 아래로 01→02→03 이어 붙인 띠를 화면 1px(기기 픽셀) 높이의 가로 조각으로 잘라 조각마다 그 거리의 배율로 그린다.
 //   앞으로 갈수록(화면 위로) 띠의 위쪽 줄을 읽는다 — 거꾸로 읽으면 그림이 위아래로 뒤집힌다(2026-10-06 에 그랬다). 띠는 아래로 흐른다.
 //   조각마다 가로 배율이 달라 화면 가장자리에선 조각 사이가 어긋난다 — 4px 조각이면 2~3px 씩 어긋나 톱니(모자이크)로 보였다. 1px 이면 보간에 묻힌다.
@@ -19,8 +21,10 @@ const BG = atlas.bg;
 export const SAND_IMAGES = [...new Set([...BG.tiles, ...Object.values(FR).map((f) => f[0])])];
 export type SandArt = Record<string, CanvasImageSource>;
 export type SandViewOpts = { t: number; touch: boolean; hover: MiniButton; best: number | null };
-/** 캔버스 픽셀 기준: 주행 폭 가운데 x · 치즈 자리의 반폭 · 치즈 y · 치즈 자리의 m 당 px · 원근 거리 D (검증 도구용 — 앞이 화면 위) */
-export const sandView = { cx: 0, half: 1, y0: 0, ppm: 1, D: 1 };
+/** 캔버스 픽셀 기준: 주행 폭 가운데 x · 치즈 자리의 반폭 · 치즈 y · m 당 px · 앞으로 1m 마다 줄어드는 배율 G (검증 도구용 — 앞이 화면 위) */
+export const sandView = { cx: 0, half: 1, y0: 0, ppm: 1, G: 0 };
+/** 가로 자리 x · 치즈보다 앞쪽 거리 dd(m) 의 화면 자리 (캔버스 px) */
+export const sandPoint = (x: number, dd: number) => ({ x: sandView.cx + x * sandView.half * (1 - sandView.G * dd), y: sandView.y0 - sandView.ppm * dd });
 
 /** 배경 px 로 1m · 그림 배율 (배경 px / 시트 px) */
 const M = 16;
@@ -29,8 +33,8 @@ const RIDE_K = 0.6;
 const ACT_K = 0.48;
 const DECO_K = 0.4;
 const FX_K = 0.55;
-/** 화면 맨 위(가장 먼 곳)의 배율 · 배경 조각 높이(화면 px) */
-const FAR = 0.66;
+/** 화면 맨 위(가장 먼 곳)의 배율 — 살짝만 좁아지게 · 배경 조각 높이(화면 px) */
+const FAR = 0.74;
 const STRIP_PX = 1;
 const PLAY_C = (BG.playX[0] + BG.playX[1]) / 2;
 const PLAY_HALF = (BG.playX[1] - BG.playX[0]) / 2;
@@ -91,15 +95,15 @@ export function drawSandboard(ctx: CanvasRenderingContext2D, cw: number, ch: num
   // 치즈 자리 — 가로 휴대폰(터치)은 아래 가운데에 점프 버튼이 있어 조금 위로
   const y0 = ch * (v.touch && cw > ch ? 0.64 : 0.78);
   const ppm = M * k;
-  const D = Math.min(160, Math.max(25, y0 / (ppm * Math.log(1 / FAR))));
-  Object.assign(sandView, { cx, half, y0, ppm, D });
-  const sc = (d: number) => 1 / (1 + (d - s.d) / D);
-  const Y = (d: number) => y0 - ppm * D * Math.log(1 + (d - s.d) / D);
+  // 앞으로 1m 마다 줄어드는 배율 — 화면 맨 위(y0 / ppm m 앞)에서 FAR
+  const G = ((1 - FAR) * ppm) / y0;
+  Object.assign(sandView, { cx, half, y0, ppm, G });
+  const sc = (d: number) => 1 - G * (d - s.d);
+  const Y = (d: number) => y0 - ppm * (d - s.d);
   const X = (x: number, d: number) => cx + x * half * sc(d);
-  const dAt = (y: number) => s.d + D * (Math.exp((y0 - y) / (ppm * D)) - 1);
-  // 보이는 거리: 화면 아래 끝 너머 6m(말뚝 키만큼) ~ 화면 위 끝 너머 2m. 이 밖은 그리지 않는다 —
-  // 원근 식은 치즈보다 D 이상 뒤에서 log(음수) = NaN 이 되고, 캔버스는 NaN 이동을 무시해 그림을 왼쪽 위(0,0)에 그린다
-  const dMin = Math.max(dAt(ch) - 6, s.d - D * 0.8);
+  const dAt = (y: number) => s.d + (y0 - y) / ppm;
+  // 보이는 거리: 화면 아래 끝 너머 6m(말뚝 키만큼) ~ 화면 위 끝 너머 2m. 이 밖은 그리지 않는다
+  const dMin = dAt(ch) - 6;
   const dMax = dAt(0) + 2;
   const seen = (d: number) => d >= dMin && d <= dMax;
 
