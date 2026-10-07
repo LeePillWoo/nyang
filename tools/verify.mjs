@@ -24,7 +24,7 @@ const { OBS: SAND_OBS, SAND: SAND_CFG, coast: sandCoast, center: sandCenter, wid
 const inOpen = (x, y) => {
   const c = Math.min(FIELD.grid[0] - 1, Math.floor((x * FIELD.grid[0]) / FIELD.size[0]));
   const r = Math.min(FIELD.grid[1] - 1, Math.floor((y * FIELD.grid[1]) / FIELD.size[1]));
-  return r >= FIELD.open.r[0] && r <= FIELD.open.r[1] && c >= FIELD.open.c[0] && c <= FIELD.open.c[1];
+  return FIELD.open[r]?.[c] === 'o';
 };
 const OPEN_WARPS = FIELD.warps.filter((w) => inOpen(w.at[0], w.at[1]));
 const ROOMS = readJson('../src/data/rooms.json');
@@ -68,7 +68,7 @@ async function open(where = 'dungeon', room = '', view = null, extra = '') {
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
   const q =
-    where === 'dungeon' ? '&dungeon' + (room ? '=' + room : '') : where === 'fishing' ? '&fishing' + (room ? '=' + room : '') : where === 'maze' || where === 'sandboard' ? '&' + where : '';
+    where === 'dungeon' ? '&dungeon' + (room ? '=' + room : '') : where === 'fishing' ? '&fishing' + (room ? '=' + room : '') : where === 'maze' || where === 'sandboard' || where === 'timber' ? '&' + where : '';
   await page.goto(base + '?trace' + q + extra, { waitUntil: 'load' });
   await page.waitForFunction(() => window.__sheets, { timeout: 60000 });
   return { page, errors };
@@ -1019,8 +1019,11 @@ try {
   console.log('\n[미개방 구역 · 미니게임]');
   {
     const { page, errors } = await open('field');
-    const x0 = Math.floor((FIELD.open.c[0] * FIELD.size[0]) / FIELD.grid[0]);
-    const y = FIELD.start[1];
+    // 열린 조각 왼쪽이 닫힌 줄 (지금은 r4 — 왼쪽 가을 지역)
+    const r = FIELD.open.findIndex((row) => [...row].some((ch, c) => ch === 'o' && c > 0 && row[c - 1] !== 'o'));
+    const c = [...FIELD.open[r]].findIndex((ch, c) => ch === 'o' && c > 0 && FIELD.open[r][c - 1] !== 'o');
+    const x0 = Math.floor((c * FIELD.size[0]) / FIELD.grid[0]);
+    const y = Math.floor(((r + 0.5) * FIELD.size[1]) / FIELD.grid[1]);
     // 가장자리 안쪽에서 걸을 수 있는 자리를 찾아 선다
     const sx = await page.evaluate(
       ([x0, y]) => {
@@ -1037,17 +1040,17 @@ try {
     const fx = await page.evaluate(() => __game.field.x);
     check(fx >= x0 - 1 && fx <= sx, `왼쪽(미개방)으로 1.5초 밀어도 가장자리에서 멈춘다 (x ${fx | 0}, 경계 ${x0})`);
     await page.screenshot({ path: fsPath(new URL('field-locked.png', OUT)) });
-    const locked = FIELD.warps.find((w) => w.id === 'tiger_rock');
-    check(locked.to && !inOpen(locked.at[0], locked.at[1]), '호랑이 바위(수정 동굴 던전)는 잠긴 구역');
+    const locked = FIELD.warps.find((w) => w.id === 'autumn_fishing_pond');
+    check(locked.to && !inOpen(locked.at[0], locked.at[1]), '가을 낚시 연못(가을 낚시터)은 잠긴 구역');
     const click = async (p) => {
       await page.mouse.move(p.x, p.y);
       await page.mouse.down();
       await page.mouse.up();
     };
-    await click(await page.evaluate(() => __game.minimapPoint('tiger_rock')));
+    await click(await page.evaluate(() => __game.minimapPoint('autumn_fishing_pond')));
     await sleep(1200);
     const before = await page.evaluate(() => [__game.field.x, __game.field.y]);
-    await click(await page.evaluate(() => __game.portalScreen('tiger_rock')));
+    await click(await page.evaluate(() => __game.portalScreen('autumn_fishing_pond')));
     await sleep(1500);
     const after = await page.evaluate(() => [__game.field.x, __game.field.y, __game.scene]);
     check(after[0] === before[0] && after[1] === before[1] && after[2] === 'field', '잠긴 포탈은 눌러도 워프하지 않는다');
@@ -1274,6 +1277,189 @@ try {
     const out = await page.waitForFunction(() => __game.scene === 'field', { timeout: 4000 }).then(() => true, () => false);
     const pos = await page.evaluate(() => [__game.field.x, __game.field.y]);
     check(out && Math.hypot(pos[0] - w.back[0], pos[1] - w.back[1]) < 5, 'Esc → 모래 미끄럼틀 포탈 앞');
+    check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
+    await page.close();
+  }
+
+  // 3-10) 숲 (실제 키·마우스·터치, 2026-10-07): 숲 지역(r2~3 × c0~1)이 열렸다.
+  //  벌목 쉼터 포탈 → 장작 패기: 가지가 없는 쪽 A/D 로 40토막 → 일부러 한쪽만 패다 가지에 콩 → 카드(냥코인 · 통나무 · 기록) → 다시 패기 → Esc → 포탈 앞.
+  //  곰의 꿀 쉼터 포탈 → 나무숲 던전. 숲에서 부스럭 수풀로 걸어 들어가면 도끼질에 열려 가방에 · 수풀에서 튀어나온 다람쥐를 키로 쫓아가 잡는다.
+  //  휴대폰: ◀ ▶ 버튼 · 화면 반쪽 누르기. 화면 timber-*.png · forest-*.png · touch-timber.png
+  console.log('\n[숲 · 장작 패기]');
+  {
+    const { page, errors } = await open('field');
+    await page.evaluate(() => __game.bag.slots.fill(null)); // 앞 검사가 가방을 채워 뒀을 수 있다
+    const w = FIELD.warps.find((v) => v.to === 'timber');
+    check(inOpen(w.at[0], w.at[1]), `${w.label} 포탈이 열린 구역에`);
+    await page.evaluate((at) => Object.assign(__game.field, { x: at[0], y: at[1], camX: at[0], camY: at[1], armed: true, mode: 'walk' }), w.at);
+    const inTimber = await page.waitForFunction(() => __game.scene === 'timber', { timeout: 6000 }).then(() => true, () => false);
+    check(inTimber, `${w.label} 포탈에 서 있으면 장작 패기`);
+    await sleep(700);
+    await page.screenshot({ path: fsPath(new URL('timber-ready.png', OUT)) });
+    const logsOf = () => page.evaluate(() => __game.bag.slots.reduce((t, v) => t + (v?.id === 'materials_01' ? v.n : 0), 0));
+    const coins0 = await page.evaluate(() => __game.bag.coins);
+    const logs0 = await logsOf();
+    // 가지가 없는 쪽(지금 토막 · 다음 토막)으로 키를 누른다
+    for (let i = 0; i < 40; i++) {
+      const side = await page.evaluate(() => {
+        const t = __game.timber;
+        const ok = (v) => t.segs[0] !== v && t.segs[1] !== v;
+        return ok(t.side) ? t.side : -t.side;
+      });
+      await page.keyboard.press(side < 0 ? 'KeyA' : 'KeyD');
+      await sleep(110);
+      if (i === 25) await page.screenshot({ path: fsPath(new URL('timber-play.png', OUT)) });
+    }
+    const mid = await page.evaluate(() => ({ score: __game.timber.score, phase: __game.timber.phase, time: __game.timber.time }));
+    check(mid.score === 40 && mid.phase === 'play', `가지를 피해 A/D 로 40토막 (${mid.score}토막 · 남은 시간 ${mid.time.toFixed(1)}초)`);
+    for (let i = 0; i < 80 && (await page.evaluate(() => __game.timber.phase)) !== 'done'; i++) {
+      await page.keyboard.press('KeyD');
+      await sleep(110);
+    }
+    const end = await page.evaluate(() => ({ phase: __game.timber.phase, why: __game.timber.why, score: __game.timber.score, coins: __game.timber.coins, logs: __game.timber.logs, bag: __game.bag.coins, best: __game.records.timber }));
+    check(end.phase === 'done' && end.why === 'hit', `한쪽만 패다 가지에 콩 (${end.score}토막)`);
+    await sleep(250);
+    await page.screenshot({ path: fsPath(new URL('timber-hit.png', OUT)) });
+    await page.waitForFunction(() => __game.timber.doneT > 1, { timeout: 4000 }).catch(() => {});
+    await page.screenshot({ path: fsPath(new URL('timber-done.png', OUT)) });
+    const logs1 = await logsOf();
+    check(end.bag === coins0 + end.coins && logs1 === logs0 + end.logs && end.logs === Math.min(6, Math.floor(end.score / 15)), `냥코인 ${end.coins} · 통나무 ${end.logs} 가 가방에`);
+    check(end.best !== null && end.best >= end.score, `최고 기록 저장 (${end.best}토막)`);
+    await click2(page, (await page.evaluate(() => __game.miniScreen())).again);
+    const again = await page.waitForFunction(() => __game.timber.phase === 'ready' && __game.timber.score === 0, { timeout: 4000 }).then(() => true, () => false);
+    check(again, '다시 패기');
+    await sleep(700);
+    await page.keyboard.press('Escape');
+    const out = await page.waitForFunction(() => __game.scene === 'field', { timeout: 4000 }).then(() => true, () => false);
+    const pos = await page.evaluate(() => [__game.field.x, __game.field.y]);
+    check(out && Math.hypot(pos[0] - w.back[0], pos[1] - w.back[1]) < 5, `Esc → ${w.label} 포탈 앞`);
+    // 나무숲 던전은 곰의 꿀 쉼터로 옮겼다
+    const bear = FIELD.warps.find((v) => v.id === 'bear_glade');
+    await sleep(500);
+    await page.evaluate((at) => Object.assign(__game.field, { x: at[0], y: at[1], camX: at[0], camY: at[1], armed: true, mode: 'walk' }), bear.at);
+    const inForest = await page.waitForFunction(() => __game.scene === 'dungeon' && __game.dungeon.room.id === 'forest', { timeout: 10000 }).then(() => true, () => false);
+    check(inForest, `${bear.label} 포탈 → 나무숲 던전`);
+    check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
+    await page.close();
+  }
+  {
+    const { page, errors } = await open('field');
+    await page.evaluate(() => __game.bag.slots.fill(null));
+    const C = FIELD.catBody;
+    // 숲 지역 한가운데의 숲 (둘레도 숲)
+    const spot = await page.evaluate(() => {
+      for (let y = 1560; y < 1720; y += 6)
+        for (let x = 860; x < 1360; x += 6)
+          if ([[0, 0], [40, 0], [-40, 0], [80, 0], [0, 25], [0, -25], [40, 25]].every(([dx, dy]) => __game.terrain(x + dx, y + dy) === 1)) return [x, y];
+      return null;
+    });
+    check(!!spot, `숲 지역에 숲이 있다 (${spot})`);
+    await page.waitForFunction(() => !!__game.sheets.acorn_squirrel, { timeout: 8000 }).catch(() => {});
+    // 1) 부스럭 수풀 — 고양이 오른쪽 2.5칸. 걸어 들어가면 도끼질에 열려 무언가 나와 가방에 (다람쥐는 쿨다운으로 막아 둔다)
+    const R = [spot[0] + C * 2.5, spot[1]];
+    await page.evaluate(([x, y, rx, ry]) => {
+      Object.assign(__game.field, { x, y, camX: x, camY: y, armed: true, mode: 'axe' });
+      __game.field.woods.cool = 99;
+      __game.rustle(rx, ry);
+    }, [...spot, ...R]);
+    await sleep(900);
+    await page.screenshot({ path: fsPath(new URL('forest-rustle.png', OUT)) });
+    const found0 = await page.evaluate(() => Object.values(__game.bag.found).reduce((a, b) => a + b, 0));
+    await page.keyboard.down('KeyD');
+    const opened = await page
+      .waitForFunction(([rx, ry]) => !__game.field.rustles.some((r) => Math.abs(r.x - rx) < 1 && Math.abs(r.y - ry) < 1), { timeout: 6000 }, R)
+      .then(() => true, () => false);
+    await page.keyboard.up('KeyD');
+    await sleep(250);
+    await page.screenshot({ path: fsPath(new URL('forest-find.png', OUT)) });
+    const found1 = await page.evaluate(() => Object.values(__game.bag.found).reduce((a, b) => a + b, 0));
+    check(opened && found1 > found0, `부스럭 수풀로 걸어 들어가면 도끼질에 열려 가방에 (얻은 수 ${found0} → ${found1})`);
+    // 2) 다람쥐 — 바로 앞 수풀에서 튀어나온다. 키(8방향)로 쫓아가 잡으면 도토리 · 냥코인 (놓치면 다시, 세 번까지)
+    const acornsOf = () => page.evaluate(() => __game.bag.slots.reduce((t, v) => t + (v?.id === 'materials_05' ? v.n : 0), 0));
+    let caught = false;
+    let tries = 0;
+    let land = true;
+    let ran = false;
+    for (; tries < 3 && !caught; tries++) {
+      const a0 = await acornsOf();
+      const c0 = await page.evaluate(() => __game.bag.coins);
+      await page.evaluate(([x, y]) => {
+        Object.assign(__game.field, { x, y, camX: x, camY: y, armed: true, mode: 'axe' });
+        __game.field.woods.cool = 0;
+        __game.field.squirrel.phase = 'none';
+        __game.squirrel(x + 17, y);
+      }, spot);
+      if (tries === 0) {
+        await sleep(200);
+        await page.screenshot({ path: fsPath(new URL('forest-squirrel.png', OUT)) });
+      }
+      let held = [];
+      const t0 = Date.now();
+      let shot = tries > 0;
+      while (Date.now() - t0 < 12000) {
+        const st = await page.evaluate(() => {
+          const f = __game.field;
+          const q = f.squirrel;
+          return { x: f.x, y: f.y, qx: q.x, qy: q.y, phase: q.phase, t: __game.terrain(q.x, q.y), mode: f.mode, moving: f.moving };
+        });
+        if (st.phase === 'caught' || st.phase === 'gone' || st.phase === 'none') {
+          caught = st.phase === 'caught';
+          break;
+        }
+        if (st.t === 2 || st.t === 3) land = false;
+        if (st.mode === 'axe' && st.moving && st.phase === 'run') ran = true;
+        const dx = st.qx - st.x;
+        const dy = (st.qy - st.y) / FIELD.vertical;
+        const want = [...(dx > 4 ? ['KeyD'] : dx < -4 ? ['KeyA'] : []), ...(dy > 4 ? ['KeyS'] : dy < -4 ? ['KeyW'] : [])];
+        for (const k of held) if (!want.includes(k)) await page.keyboard.up(k);
+        for (const k of want) if (!held.includes(k)) await page.keyboard.down(k);
+        held = want;
+        if (!shot && Date.now() - t0 > 1200) {
+          shot = true;
+          await page.screenshot({ path: fsPath(new URL('forest-chase.png', OUT)) });
+        }
+        await sleep(25);
+      }
+      for (const k of held) await page.keyboard.up(k);
+      if (caught) {
+        await sleep(400);
+        await page.screenshot({ path: fsPath(new URL('forest-caught.png', OUT)) });
+        const a1 = await acornsOf();
+        const c1 = await page.evaluate(() => __game.bag.coins);
+        check(a1 >= a0 + 3 && c1 >= c0 + 10, `잡으면 도토리 ${a1 - a0}개 · 냥코인 ${c1 - c0}`);
+      }
+      await sleep(800);
+    }
+    check(caught, `튀어나온 다람쥐를 키로 쫓아가 잡는다 (${tries}번째)`);
+    check(land, '다람쥐는 물 · 막힌 곳으로 안 간다');
+    check(ran, '쫓는 동안 숲에서도 도끼질로 멈추지 않고 달린다');
+    check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
+    await page.close();
+  }
+  {
+    // 휴대폰 가로: ◀ ▶ 버튼 (구석에서 안쪽) · 누르면 그쪽에서 팬다 · 화면 반쪽을 눌러도
+    const PH = { width: 844, height: 390, deviceScaleFactor: 2, isMobile: true, hasTouch: true, isLandscape: true };
+    const { page, errors } = await open('timber', '', PH, '&touch');
+    await sleep(600);
+    const b = Object.fromEntries((await page.evaluate(() => __game.controls)).buttons.map((v) => [v.id, v]));
+    check(b.left && b.right && b.left.x < PH.width / 2 && b.right.x > PH.width / 2 && b.left.x - b.left.r >= 40, `장작 패기 버튼 ◀ ▶ (${b.left?.x | 0} · ${b.right?.x | 0})`);
+    const side0 = await page.evaluate(() => __game.timber.segs.slice(0, 2));
+    // 가지가 없는 쪽 버튼을 누른다
+    const pick = side0.includes(1) ? b.left : b.right;
+    await page.touchscreen.tap(pick.x, pick.y);
+    await sleep(200);
+    const one = await page.evaluate(() => ({ score: __game.timber.score, side: __game.timber.side }));
+    check(one.score === 1 && one.side === (pick === b.left ? -1 : 1), `${pick === b.left ? '◀' : '▶'} 를 누르면 그쪽에서 팬다`);
+    const seg = await page.evaluate(() => __game.timber.segs.slice(0, 2));
+    const half = seg.includes(-1) ? [PH.width * 0.7, PH.height * 0.5, 1] : [PH.width * 0.3, PH.height * 0.5, -1];
+    await page.touchscreen.tap(half[0], half[1]);
+    await sleep(200);
+    const two = await page.evaluate(() => ({ score: __game.timber.score, side: __game.timber.side }));
+    check(two.score === 2 && two.side === half[2], '화면 반쪽을 눌러도 그쪽에서 팬다');
+    await page.screenshot({ path: fsPath(new URL('touch-timber.png', OUT)) });
+    await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+    await sleep(400);
+    await page.screenshot({ path: fsPath(new URL('screen-timber-portrait.png', OUT)) });
     check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
     await page.close();
   }

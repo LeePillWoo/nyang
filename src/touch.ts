@@ -60,7 +60,7 @@ export type Button = { id: ButtonId; x: number; y: number; r: number; label: str
 export type Stick = { x: number; y: number; r: number; zone: { x0: number; y0: number; x1: number; y1: number } };
 /** k = HUD 배율 (그리기용) */
 export type Controls = { stick: Stick | null; buttons: Button[]; k: number };
-export type Scene = 'field' | 'dungeon' | 'fishing' | 'maze' | 'sandboard';
+export type Scene = 'field' | 'dungeon' | 'fishing' | 'maze' | 'sandboard' | 'timber';
 
 /** 도감 버튼 (알약) 크기 — Button.r 은 폭의 절반 */
 const DEX = { w: 84, h: 36 };
@@ -94,6 +94,14 @@ export function controls(w: number, h: number, scene: Scene, touch: boolean): Co
     const y = h - s.b - ins.y - jr;
     buttons.push({ id: 'left', x: s.l + ins.x + ar, y, r: ar, label: '◀' });
     buttons.push({ id: 'jump', x: (s.l + w - s.r) / 2, y, r: jr, label: '점프' });
+    buttons.push({ id: 'right', x: w - s.r - ins.x - ar, y, r: ar, label: '▶' });
+    return { stick: null, buttons, k };
+  }
+  if (scene === 'timber') {
+    // 장작 패기는 ◀ · ▶ 두 개 (화면 왼쪽 · 오른쪽 절반을 눌러도 그쪽에서 팬다)
+    const ar = Math.round(52 * k);
+    const y = h - s.b - ins.y - ar;
+    buttons.push({ id: 'left', x: s.l + ins.x + ar, y, r: ar, label: '◀' });
     buttons.push({ id: 'right', x: w - s.r - ins.x - ar, y, r: ar, label: '▶' });
     return { stick: null, buttons, k };
   }

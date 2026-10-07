@@ -13,7 +13,7 @@
     "....dd"
   ],
   "start": [3122, 1613],
-  "open": { "r": [2, 5], "c": [2, 5] },
+  "open": ["......", "......", "oooooo", "oooooo", "..oooo", "..oooo"],
   "speed": 119,
   "vertical": 0.72,
   "catBody": 17,
@@ -35,6 +35,38 @@
       "offset": 1.17,
       "bow": 0.65,
       "bridge": 90
+    }
+  },
+  "forest": {
+    "_comment": "숲 (2026-10-07). 도끼질마다 find 확률로 무언가 나온다 (finds 비율). 나온 자리(cell×catBody 칸)는 rest 초 동안 쉰다 — 같은 자리를 오가기보다 새 숲을 헤치게. 부스럭 수풀: 뭍에 있으면 every 초마다 고양이에게서 near 배(catBody) 떨어진 숲 안쪽에 생겨 life 초 동안 부스럭거린다 (max 개까지, 멀어지면 사라짐). reach 배 안에서 도끼질하면 열린다 — squirrel 확률로 다람쥐가 튀어나오고, 아니면 finds 에서 하나. 다람쥐: 숲에서 도끼질하다 chance 확률로도 튀어나온다 (cooldown 초에 한 번). 튀어나와 hop 배 떨어진 곳으로 폴짝 뛰고 도토리를 던진 뒤 달아난다 — dash 배/초로 dashT 초 달리고 rest 초 쉬기를 되풀이 (쉴 때 throw 확률로 또 던진다, 고양이가 dodge 배 안으로 오면 옆으로 홱). catch 배 안으로 다가가면 잡혀서 숨겨 둔 것(stash: 도토리 · 냥코인 · bonus 확률로 귀한 것)을 내놓고, give 초가 지나거나 far 배 넘게 멀어지면 나무 구멍으로 숨는다. 쫓는 동안 고양이는 숲에서도 멈춰 도끼질하지 않고 걷기 속도의 chase 배로 달린다. size = 다람쥐 몸 높이 (catBody 배).",
+    "find": 0.07,
+    "rest": 90,
+    "cell": 4,
+    "finds": [["materials_01", 30], ["materials_04", 30], ["materials_05", 22], ["materials_06", 15], ["materials_28", 5], ["materials_15", 2]],
+    "rustle": {
+      "every": [6, 11],
+      "life": 30,
+      "near": [3, 8],
+      "max": 2,
+      "reach": 1.4,
+      "squirrel": 0.4,
+      "finds": [["materials_01", 16], ["materials_04", 16], ["materials_05", 16], ["materials_06", 16], ["materials_28", 10], ["materials_25", 6], ["materials_15", 8], ["curios_09", 6], ["curios_18", 4], ["curios_21", 2]]
+    },
+    "squirrel": {
+      "chance": 0.012,
+      "cooldown": 40,
+      "size": 1,
+      "hop": 4,
+      "dash": 8.3,
+      "dashT": [0.5, 0.82],
+      "rest": [0.22, 0.46],
+      "throw": 0.3,
+      "dodge": 2.4,
+      "catch": 1,
+      "give": 9,
+      "far": 14,
+      "chase": 0.8,
+      "stash": { "acorns": [3, 5], "coins": [10, 20], "bonus": [["materials_15", 0.15], ["curios_09", 0.1], ["equipment_03", 0.04]] }
     }
   },
   "whale": {
@@ -102,7 +134,7 @@
       "at": [727, 1676],
       "r": 18,
       "dwell": 0.8,
-      "to": "",
+      "to": "forest",
       "back": [727, 1706]
     },
     {
@@ -112,7 +144,7 @@
       "at": [1128, 1762],
       "r": 18,
       "dwell": 0.8,
-      "to": "forest",
+      "to": "timber",
       "back": [1128, 1792]
     },
     {

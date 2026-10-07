@@ -6,7 +6,7 @@ export const CAT_FPS = { idle: 8, run: 12, punch: 16, roll: 30, hurt: 10 };
 
 /** 도끼 시트 (1536×1024, 6×4): 대기 · 걷기 · 뛰기 · 휘두르기 */
 export const AXE_ROW = { idle: 0, walk: 1, run: 2, chop: 3 };
-export const AXE_FPS = { idle: 6, walk: 10 };
+export const AXE_FPS = { idle: 6, walk: 10, run: 14 };
 
 /** 배 시트 (1536×1024, 6×4): 가만히(흔들림) · 노 젓기 · 오르기 · 내리기 */
 export const BOAT_ROW = { idle: 0, row: 1, board: 2, unboard: 3 };

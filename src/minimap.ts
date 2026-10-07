@@ -3,7 +3,7 @@
 // 배경은 조각 36장을 1/8 로 줄인 한 장 (src/assets/world/minimap.webp, tools/assets.mjs 가 만든다).
 // 좌표는 CSS 픽셀 (캔버스 실제 픽셀이 아니라) — 마우스 좌표와 바로 맞댄다.
 import { image } from './assets.ts';
-import { FIELD, warpLocked, type FieldState, type Warp } from './field.ts';
+import { FIELD, openEdges, tileOpen, warpLocked, type FieldState, type Warp } from './field.ts';
 import { SPOTS } from './fishing.ts';
 import { safe, ui } from './touch.ts';
 
@@ -24,7 +24,7 @@ export function minimapRect(cssW: number, cssH: number): Rect {
 }
 
 /** 월드 좌표 → 미니맵 위 CSS 좌표 */
-export const toMini = (r: Rect, x: number, y: number) => [r.x + (x / W) * r.w, r.y + (y / H) * r.h];
+export const toMini = (r: Rect, x: number, y: number): [number, number] => [r.x + (x / W) * r.w, r.y + (y / H) * r.h];
 /** 미니맵 위 CSS 좌표 → 월드 좌표 */
 export const fromMini = (r: Rect, px: number, py: number) => [((px - r.x) / r.w) * W, ((py - r.y) / r.h) * H];
 
@@ -63,23 +63,25 @@ export function drawMinimap(ctx: CanvasRenderingContext2D, r: Rect, s: FieldStat
     ctx.fillStyle = '#9cc9dd';
     ctx.fillRect(r.x, r.y, r.w, r.h);
   }
-  // 미개방 구역은 어둡게, 개방 구역 테두리는 점선
+  // 미개방 조각은 어둡게, 열린 조각과 닫힌 조각 사이는 점선
   {
-    const o = FIELD.open;
     const [COLS, ROWS] = FIELD.grid;
-    const ox0 = r.x + (o.c[0] / COLS) * r.w;
-    const oy0 = r.y + (o.r[0] / ROWS) * r.h;
-    const ox1 = r.x + ((o.c[1] + 1) / COLS) * r.w;
-    const oy1 = r.y + ((o.r[1] + 1) / ROWS) * r.h;
     ctx.fillStyle = 'rgba(22, 28, 46, 0.62)';
-    ctx.fillRect(r.x, r.y, r.w, oy0 - r.y);
-    ctx.fillRect(r.x, oy1, r.w, r.y + r.h - oy1);
-    ctx.fillRect(r.x, oy0, ox0 - r.x, oy1 - oy0);
-    ctx.fillRect(ox1, oy0, r.x + r.w - ox1, oy1 - oy0);
+    for (let rr = 0; rr < ROWS; rr++)
+      for (let c = 0; c < COLS; c++) {
+        if (tileOpen(rr, c)) continue;
+        const [x0, y0] = [r.x + (c / COLS) * r.w, r.y + (rr / ROWS) * r.h];
+        ctx.fillRect(x0, y0, r.w / COLS, r.h / ROWS);
+      }
     ctx.setLineDash([3, 3]);
     ctx.lineWidth = 1;
     ctx.strokeStyle = 'rgba(255,255,255,0.75)';
-    ctx.strokeRect(ox0, oy0, ox1 - ox0, oy1 - oy0);
+    ctx.beginPath();
+    for (const [x0, y0, x1, y1] of openEdges()) {
+      ctx.moveTo(...toMini(r, x0, y0));
+      ctx.lineTo(...toMini(r, x1, y1));
+    }
+    ctx.stroke();
     ctx.setLineDash([]);
   }
 

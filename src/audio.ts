@@ -272,3 +272,20 @@ export function sfxSpit() {
   burst('bandpass', 900, 0.8, 0.25, 0.35, 2600);
   tone('triangle', 260, 700, 0.1, 0.25);
 }
+
+// ── 숲 ──
+/** 부스럭 — 수풀이 흔들리기 시작할 때 (작게 두 번) */
+export function sfxRustle() {
+  burst('bandpass', 2600, 0.9, 0.05, 0.12, 1500);
+  setTimeout(() => burst('bandpass', 2300, 0.9, 0.04, 0.1, 1400), 140);
+}
+/** 찍찍 — 다람쥐가 튀어나올 때 */
+export function sfxChirp() {
+  tone('triangle', 1700, 2500, 0.07, 0.07);
+  tone('triangle', 1900, 2800, 0.07, 0.07, 0.1);
+}
+/** 콩 — 도토리에 맞았을 때 */
+export function sfxBonk() {
+  tone('sine', 820, 420, 0.16, 0.1);
+  burst('bandpass', 1500, 2, 0.08, 0.05);
+}

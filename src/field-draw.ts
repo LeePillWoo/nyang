@@ -1,11 +1,38 @@
 import { image } from './assets.ts';
+import { drawCoin, drawIcon } from './bag-draw.ts';
+import { ITEMS } from './bag.ts';
 import { AXE_FPS, AXE_ROW, BOAT_FPS, BOAT_ROW, CAT_FPS, CAT_ROW, SNOW_FPS, SNOW_ROW } from './cat.ts';
 import fishAtlas from './data/fishing-atlas.json' with { type: 'json' };
 import { drawEmote } from './emote.ts';
-import { BLOCK, BRIDGE, FIELD, FOREST, isOpen, RISE, SPIT, WALK, warpLocked, WATER, WHALE, type FieldEvent, type FieldState, type Terrain, type Warp, type Whale } from './field.ts';
+import { MON_ROW } from './enemy.ts';
+import {
+  BLOCK,
+  BRIDGE,
+  chasing,
+  FIELD,
+  FOREST,
+  FOREST_DATA,
+  isOpen,
+  openEdges,
+  RISE,
+  SPIT,
+  SQ_T,
+  WALK,
+  warpLocked,
+  WATER,
+  WHALE,
+  type FieldEvent,
+  type FieldState,
+  type Rustle,
+  type Squirrel,
+  type Terrain,
+  type Warp,
+  type Whale,
+} from './field.ts';
 import { drawFrame, type Sheet } from './sheet.ts';
 
-export type FieldSheets = { cat: Sheet; axe: Sheet; boat: Sheet; snow: Sheet };
+/** squirrel = 숲 다람쥐 (던전 몬스터 시트 — 처음엔 안 불러와져 있을 수 있다) */
+export type FieldSheets = { cat: Sheet; axe: Sheet; boat: Sheet; snow: Sheet; squirrel?: Sheet };
 
 // ── 필드 조각 (src/assets/world/tiles/tile_rR_cC.webp · world/masks/mask_rR_cC.png, 원본 art/world/tiles/ → node tools/assets.mjs) ──
 // 필드는 grid 칸으로 자른 조각을 바둑판처럼 이어 붙인 한 장이다. 좌표는 이어 붙인 전체 그림의 픽셀.
@@ -206,24 +233,57 @@ const U = FIELD.catBody / 34;
 const ring = (x: number, y: number, size: number, life = 0.9) =>
   parts.push({ kind: 'ring', x, y, vx: 0, vy: 0, t: 0, life, size, rot: 0, vr: 0, color: '' });
 
-/** updateField 가 남긴 사건으로 파티클을 만든다 */
+/** 나뭇잎 n 장 (flip 쪽으로 튄다, 0 이면 사방으로) */
+function leaves(x: number, y: number, n: number, flip: number, up = 1) {
+  for (let i = 0; i < n; i++)
+    parts.push({
+      kind: 'leaf',
+      x: x + rand(-3, 3) * U,
+      y: y + rand(-4, 2) * U,
+      vx: (flip ? flip * rand(8, 42) + rand(-12, 12) : rand(-40, 40)) * U,
+      vy: rand(-58, -22) * U * up,
+      t: 0,
+      life: rand(0.55, 0.85),
+      size: rand(1.5, 2.7) * U,
+      rot: rand(0, Math.PI),
+      vr: rand(-9, 9),
+      color: LEAVES[(Math.random() * LEAVES.length) | 0],
+    });
+}
+
+// ── 숲에서 나온 것: 아이콘이 튀어 올라 고양이에게 날아오고(가방이 가득이면 떨어진다), 그 자리에 이름이 떠오른다 ──
+type Pop = { id: string; x: number; y: number; t: number; full: boolean; delay: number };
+let pops: Pop[] = [];
+type Label = { text: string; x: number; y: number; t: number; color: string };
+let labels: Label[] = [];
+const floatText = (text: string, x: number, y: number, color = '#ffffff') => labels.push({ text, x, y, t: 0, color });
+/** 귀한 것 (노란 글자) */
+const rare = (id: string) => (ITEMS[id]?.price ?? 0) >= 30;
+
+/** updateField 가 남긴 사건으로 파티클을 만든다 (forage · 잡힌 다람쥐는 main 이 full 을 적은 뒤에) */
 export function fieldFx(events: FieldEvent[]) {
+  const C = FIELD.catBody;
   for (const e of events) {
-    if (e.type === 'chop') {
-      for (let i = 0; i < 8; i++)
-        parts.push({
-          kind: 'leaf',
-          x: e.x + rand(-3, 3) * U,
-          y: e.y + rand(-4, 2) * U,
-          vx: (e.flip * rand(8, 42) + rand(-12, 12)) * U,
-          vy: rand(-58, -22) * U,
-          t: 0,
-          life: rand(0.55, 0.85),
-          size: rand(1.5, 2.7) * U,
-          rot: rand(0, Math.PI),
-          vr: rand(-9, 9),
-          color: LEAVES[(Math.random() * LEAVES.length) | 0],
-        });
+    if (e.type === 'chop') leaves(e.x, e.y, 8, e.flip);
+    else if (e.type === 'brush') leaves(e.x, e.y, 4, e.flip, 0.7);
+    else if (e.type === 'rustle' && e.what === 'open') leaves(e.x, e.y - C * 0.8, 14, 0, 1.3);
+    else if (e.type === 'forage') {
+      pops.push({ id: e.id, x: e.x, y: e.y, t: 0, full: !!e.full, delay: 0 });
+      floatText(e.full ? '가방이 가득 찼어요' : `${ITEMS[e.id]?.name ?? e.id} +1`, e.x, e.y - C * 1.2, e.full ? '#ffc9b8' : rare(e.id) ? '#ffe27a' : '#ffffff');
+    } else if (e.type === 'squirrel') {
+      if (e.what === 'appear') leaves(e.x, e.y - C * 0.6, 12, 0, 1.2);
+      else if (e.what === 'bonk') {
+        floatText('콩!', e.x, e.y - C * 1.9, '#ffe27a');
+        for (let i = 0; i < 6; i++) parts.push({ kind: 'drop', x: e.x, y: e.y - C * 1.3, vx: rand(-40, 40) * U, vy: rand(-60, -20) * U, t: 0, life: 0.4, size: 1.2 * U, rot: 0, vr: 0, color: '#ffe27a' });
+      } else if (e.what === 'escape') floatText('쏙! 놓쳤다', e.x, e.y - C * 1.2, '#d8e6f0');
+      else if (e.what === 'caught' && e.stash) {
+        const n = e.stash.items.filter((id) => id === 'materials_05').length;
+        const extra = e.stash.items.filter((id) => id !== 'materials_05');
+        e.stash.items.forEach((id, i) => pops.push({ id, x: e.x, y: e.y, t: 0, full: !!e.full, delay: i * 0.07 }));
+        for (let i = 0; i < 3; i++) pops.push({ id: 'coin', x: e.x, y: e.y, t: 0, full: false, delay: 0.1 + i * 0.09 });
+        const what = [`도토리 ×${n}`, ...extra.map((id) => ITEMS[id]?.name ?? id), `냥코인 ${e.stash.coins}`].join(' · ');
+        floatText(e.full ? `${what} (가방 가득)` : what, e.x, e.y - C * 1.3, extra.length ? '#ffe27a' : '#ffffff');
+      }
     } else if (e.type === 'splash') {
       ring(e.x, e.y, 14 * U, 0.7);
       for (let i = 0; i < 9; i++)
@@ -452,6 +512,152 @@ function drawFoliage(ctx: CanvasRenderingContext2D, x: number, y: number, body: 
   ctx.drawImage(bush, sx, sy);
 }
 
+// ── 부스럭 수풀: 그 자리 배경(나무)을 떼어 좌우로 떨고, 부스럭거리는 박자마다 나뭇잎이 튀고 옆에 떨림 표시 ──
+const shake = document.createElement('canvas');
+const shg = shake.getContext('2d')!;
+let rustleLeafT = 0;
+function drawRustles(ctx: CanvasRenderingContext2D, rs: Rustle[], t: number, dt: number) {
+  const C = FIELD.catBody;
+  rustleLeafT += dt;
+  const burst = rustleLeafT > 0.4;
+  if (burst) rustleLeafT = 0;
+  for (const r of rs) {
+    const fade = Math.max(0, Math.min(1, r.t / 0.4, (FOREST_DATA.rustle.life - r.t) / 1.5)); // 생길 땐 커지고 끝에 잦아든다
+    const beat = Math.max(0, Math.sin(t * 4.6 + r.x)) ** 2; // 부스럭 — 부스럭 (1.4초에 한 번)
+    const w = Math.ceil(C * 2.4);
+    const h = Math.ceil(C * 2.2);
+    const sx = Math.round(r.x - w / 2);
+    const sy = Math.round(r.y - h * 0.8);
+    shake.width = w;
+    shake.height = h;
+    shg.drawImage(view, sx - viewX, sy - viewY, w, h, 0, 0, w, h);
+    shg.globalCompositeOperation = 'destination-in'; // 가장자리를 둥글게 녹인다
+    const g = shg.createRadialGradient(w / 2, h * 0.6, 0, w / 2, h * 0.6, w / 2);
+    g.addColorStop(0, '#000');
+    g.addColorStop(0.6, '#000');
+    g.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    shg.fillStyle = g;
+    shg.fillRect(0, 0, w, h);
+    shg.globalCompositeOperation = 'source-over';
+    ctx.drawImage(shake, sx + Math.sin(t * 42 + r.y) * C * 0.2 * fade * (0.15 + beat), sy - beat * fade * C * 0.06);
+    if (beat * fade > 0.2) {
+      // 떨림 표시 (( )) — 진한 테두리 위에 흰 선 (풀숲 위에서도 보이게)
+      ctx.lineCap = 'round';
+      for (const [w, color] of [
+        [C * 0.16, `rgba(60, 45, 30, ${0.45 * beat * fade})`],
+        [C * 0.08, `rgba(255, 255, 255, ${0.95 * beat * fade})`],
+      ] as [number, string][]) {
+        ctx.lineWidth = w;
+        ctx.strokeStyle = color;
+        for (const side of [-1, 1])
+          for (const k of [0, 1]) {
+            const R = C * (0.26 + k * 0.2);
+            const cx = r.x + side * C * 0.85;
+            const cy = r.y - C * 1.25;
+            ctx.beginPath();
+            if (side > 0) ctx.arc(cx, cy, R, -0.75, 0.75);
+            else ctx.arc(cx, cy, R, Math.PI - 0.75, Math.PI + 0.75);
+            ctx.stroke();
+          }
+      }
+    }
+    if (burst && beat * fade > 0.25) leaves(r.x + rand(-0.5, 0.5) * C, r.y - C * 1.1, 4, 0, 1);
+  }
+}
+
+/** 다람쥐 (던전 몬스터 시트: 대기 · 이동 · 예고 · 던지기 · 움찔/어질/펑) — 폴짝 뛸 땐 포물선, 달릴 땐 통통 */
+function drawSquirrel(ctx: CanvasRenderingContext2D, q: Squirrel, sheet: Sheet | undefined, t: number) {
+  if (q.phase === 'none' || !sheet) return;
+  const C = FIELD.catBody;
+  const body = FOREST_DATA.squirrel.size * C;
+  const size = (body * sheet.base) / sheet.bodyH;
+  const span = (row: number, from: number, n: number, k: number): [number, number] => [row, from + Math.min(n - 1, Math.max(0, Math.floor(k * n)))];
+  let rc: [number, number];
+  let z = 0;
+  if (q.phase === 'hop') {
+    // 뛰어오르다 돌아서서 던진다
+    rc = q.t < SQ_T.turn ? [MON_ROW.move, Math.floor(t * 16) % 6] : span(MON_ROW.attack, 0, 6, (q.t - SQ_T.turn) / (SQ_T.hop - SQ_T.turn));
+    z = Math.sin(Math.PI * Math.min(1, q.t / SQ_T.hop)) * C * 1.1;
+  } else if (q.phase === 'throw') rc = q.t < SQ_T.aim ? span(MON_ROW.telegraph, 0, 6, q.t / SQ_T.aim) : span(MON_ROW.attack, 0, 6, (q.t - SQ_T.aim) / (SQ_T.throw - SQ_T.aim));
+  else if (q.phase === 'run') {
+    rc = [MON_ROW.move, Math.floor(t * 16) % 6];
+    z = Math.abs(Math.sin(t * 14)) * C * 0.15;
+  } else if (q.phase === 'rest') rc = [MON_ROW.idle, Math.floor(t * 8) % 6];
+  else if (q.phase === 'caught') rc = q.t < 0.5 ? [MON_ROW.retreat, 2] : span(MON_ROW.retreat, 4, 2, (q.t - 0.5) / 0.5);
+  else rc = span(MON_ROW.retreat, 4, 2, q.t / SQ_T.gone);
+  ctx.fillStyle = 'rgba(70, 60, 40, 0.25)';
+  ctx.beginPath();
+  ctx.ellipse(q.x, q.y, body * 0.42 * (1 - z / (C * 3)), body * 0.15, 0, 0, Math.PI * 2);
+  ctx.fill();
+  drawFrame(ctx, sheet, rc[0], rc[1], q.x, q.y - z, size, q.flip);
+}
+
+/** 날아가는 도토리 — 다람쥐 손에서 고양이 머리 쪽으로 포물선, 빙글빙글 */
+function drawAcorn(ctx: CanvasRenderingContext2D, q: Squirrel) {
+  const a = q.acorn;
+  if (!a) return;
+  const C = FIELD.catBody;
+  const k = Math.min(1, a.t / SQ_T.fly);
+  const x = a.x0 + (a.x1 - a.x0) * k;
+  const y = a.y0 + (a.y1 - C * 0.8 - a.y0) * k - Math.sin(Math.PI * k) * C * 1.1;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(a.t * 14);
+  drawIcon(ctx, 'materials_05', 0, 0, C * 0.55);
+  ctx.restore();
+}
+
+/** 숲에서 나온 것: 튀어 올랐다가 고양이에게 빨려 든다 (가방 가득이면 떨어져 사라진다) · 떠오르는 이름 */
+function drawLoot(ctx: CanvasRenderingContext2D, s: FieldState, dt: number) {
+  const C = FIELD.catBody;
+  for (const p of pops) p.t += dt;
+  pops = pops.filter((p) => p.t - p.delay < (p.full ? 1 : 0.75));
+  for (const p of pops) {
+    const k = p.t - p.delay;
+    if (k < 0) continue;
+    const side = p.x >= s.x ? 1 : -1;
+    const up = Math.min(1, k / 0.3);
+    const hx = p.x + side * up * C * 0.5;
+    const hy = p.y - Math.sin((up * Math.PI) / 2) * C * 1.1;
+    let x = hx;
+    let y = hy;
+    let sz = 1;
+    let alpha = 1;
+    if (k > 0.3 && p.full) {
+      const f = Math.min(1, (k - 0.3) / 0.6);
+      y = hy + f * f * C * 1.3;
+      alpha = 1 - f;
+    } else if (k > 0.3) {
+      const f = Math.min(1, (k - 0.3) / 0.45) ** 2;
+      x = hx + (s.x - hx) * f;
+      y = hy + (s.y - C * 0.7 - hy) * f;
+      sz = 1 - 0.45 * f;
+    }
+    ctx.globalAlpha = alpha;
+    if (p.id === 'coin') drawCoin(ctx, x, y, C * 0.22 * sz);
+    else drawIcon(ctx, p.id, x, y, C * 0.8 * sz);
+    ctx.globalAlpha = 1;
+  }
+  for (const l of labels) l.t += dt;
+  labels = labels.filter((l) => l.t < 1.6);
+  ctx.font = `bold ${Math.round(C * 0.62)}px system-ui, sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = Math.max(2, C * 0.18);
+  for (const l of labels) {
+    const y = l.y - Math.min(1, l.t / 1.2) * C;
+    ctx.globalAlpha = Math.min(1, (1.6 - l.t) / 0.4);
+    ctx.strokeStyle = 'rgba(50, 38, 28, 0.85)';
+    ctx.strokeText(l.text, l.x, y);
+    ctx.fillStyle = l.color;
+    ctx.fillText(l.text, l.x, y);
+  }
+  ctx.globalAlpha = 1;
+}
+
+/** 개방 구역 테두리 (열린 조각과 닫힌 조각 사이) */
+const OPEN_EDGES = openEdges();
+
 /** 캔버스 픽셀 기준 필드 변환. 검증 도구가 고양이 화면 위치를 찾을 때 쓴다 */
 export const fieldView = { sc: 1, ox: 0, oy: 0 };
 let wakeT = 0;
@@ -506,21 +712,22 @@ export function drawField(
       const tc = tint(tl);
       if (tc) ctx.drawImage(tc, tl.x, tl.y);
     }
-  // 미개방 구역은 어둡게 덮고, 개방 구역 가장자리에 흐르는 점선
+  drawRustles(ctx, s.rustles, t, dt); // 배경 바로 위 (그 자리 나무를 흔든다)
+  // 미개방 구역은 어둡게 덮고, 열린 조각과 닫힌 조각 사이에 흐르는 점선
   ctx.fillStyle = 'rgba(22, 28, 46, 0.62)';
   for (const tl of seen) if (!isOpen(tl.x + 1, tl.y + 1)) ctx.fillRect(tl.x, tl.y, tl.w, tl.h);
-  {
-    const o = FIELD.open;
-    const x0 = tileX(o.c[0]);
-    const y0 = tileY(o.r[0]);
-    ctx.save();
-    ctx.setLineDash([10, 8]);
-    ctx.lineDashOffset = -t * 24;
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
-    ctx.strokeRect(x0, y0, tileX(o.c[1] + 1) - x0, tileY(o.r[1] + 1) - y0);
-    ctx.restore();
+  ctx.save();
+  ctx.setLineDash([10, 8]);
+  ctx.lineDashOffset = -t * 24;
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
+  ctx.beginPath();
+  for (const [x0, y0, x1, y1] of OPEN_EDGES) {
+    ctx.moveTo(x0, y0);
+    ctx.lineTo(x1, y1);
   }
+  ctx.stroke();
+  ctx.restore();
 
   for (const w of FIELD.warps) drawWarp(ctx, w, t, w === s.warp && s.armed ? s.dwell / w.dwell : 0);
 
@@ -575,6 +782,9 @@ export function drawField(
       if (s.chopping > 0) {
         row = AXE_ROW.chop;
         col = once(1 - s.chopping / M.axe.chopTime);
+      } else if (s.moving && chasing(s)) {
+        row = AXE_ROW.run; // 다람쥐를 쫓을 땐 도끼를 든 채 달린다
+        col = loop(AXE_FPS.run);
       } else {
         row = s.moving ? AXE_ROW.walk : AXE_ROW.idle;
         col = loop(s.moving ? AXE_FPS.walk : AXE_FPS.idle);
@@ -590,6 +800,9 @@ export function drawField(
       else [row, col] = s.moving ? [BOAT_ROW.row, loop(BOAT_FPS.row)] : [BOAT_ROW.idle, loop(BOAT_FPS.idle)];
   }
 
+  // 다람쥐는 고양이보다 위(먼 쪽)에 있으면 먼저 그린다
+  const behind = s.squirrel.y <= s.y;
+  if (behind) drawSquirrel(ctx, s.squirrel, sheets.squirrel, t);
   if (!afloat) {
     const r = body * 0.36;
     ctx.fillStyle = 'rgba(70, 60, 40, 0.28)';
@@ -612,7 +825,10 @@ export function drawField(
     ctx.restore();
   }
   if (s.mode === 'axe') drawFoliage(ctx, s.x, s.y, body);
+  if (!behind) drawSquirrel(ctx, s.squirrel, sheets.squirrel, t);
+  drawAcorn(ctx, s.squirrel);
   drawBits(ctx);
+  drawLoot(ctx, s, dt);
   if (ride === null) drawEmote(ctx, s.x, s.y - body * (afloat ? 1.5 : 1.2), body * 0.8);
 }
 

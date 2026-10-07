@@ -13,7 +13,9 @@
 //     다리로 끊긴 강은 다리 너머 물과 한 덩어리로 센다 (다리 사이 강 토막이 작은 물로 지워지지 않게).
 //   - 작은 숲 조각(600칸 미만 — 야자수 몇 그루·소나무 두어 그루)은 숲이 아니다 → 걷기 (잠깐 스치며 도끼를 꺼내지 않게).
 //   - 시작점·워프·돌아올 자리 둘레(원본 30px)는 무조건 걷기.
-// 마스크가 이미 칠해져 있으면 덮어쓰지 않고 멈춘다 (--force). --preview 는 지금 마스크로 미리보기만 (마스크는 그대로).
+// 열린 조각 중 빈 마스크(검정 — 새로 연 조각)만 만든다. 이미 칠해진 마스크는 그대로 둔다 (손으로 고친 게 사라지지 않게) — --force 면 열린 조각 전부.
+// 판정은 열린 조각들을 감싼 사각형의 조각을 다 이어 붙여서 한다 (닫힌 조각도 둘레 맥락으로 — 경계 가까이의 숲·물이 잘리지 않게).
+// --preview 는 지금 마스크로 미리보기만 (마스크는 그대로).
 // 미리보기: tools/out/terrain-preview.png (그림 위에 숲 분홍 · 물 하늘색 · 막힘 빨강 · 다리 노랑)
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -29,9 +31,12 @@ const [FW, FH] = field.size;
 const tileW = (c) => (c === COLS - 1 ? FW - Math.floor((FW * c) / COLS) : Math.floor((FW * (c + 1)) / COLS) - Math.floor((FW * c) / COLS));
 const tileY = (r) => Math.floor((FH * r) / ROWS);
 const tileH = (r) => (r === ROWS - 1 ? FH - tileY(r) : tileY(r + 1) - tileY(r));
-const open = field.open;
-const rr = [open.r[0], open.r[1]];
-const cc = [open.c[0], open.c[1]];
+// field.json open: 조각마다 한 글자 ('o' 열림 · '.' 닫힘, 행 r · 열 c)
+const isOpen = (r, c) => field.open[r]?.[c] === 'o';
+const opened = [];
+for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) if (isOpen(r, c)) opened.push([r, c]);
+const rr = [Math.min(...opened.map(([r]) => r)), Math.max(...opened.map(([r]) => r))];
+const cc = [Math.min(...opened.map(([, c]) => c)), Math.max(...opened.map(([, c]) => c))];
 const X0 = Math.floor((FW * cc[0]) / COLS);
 const Y0 = tileY(rr[0]);
 const W = Math.floor((FW * (cc[1] + 1)) / COLS) - X0;
@@ -51,6 +56,7 @@ for (let r = rr[0]; r <= rr[1]; r++)
     const mask = new URL(`mask_${name}.png`, MASKS);
     tiles.push({
       name,
+      open: isOpen(r, c),
       x: Math.floor((FW * c) / COLS) - X0,
       y: tileY(r) - Y0,
       w: tileW(c),
@@ -67,7 +73,7 @@ const page = await browser.newPage();
 page.on('console', (m) => console.log('   ', m.text()));
 
 const result = await page.evaluate(
-  async (tiles, keep, W, H, preview) => {
+  async (tiles, keep, W, H, preview, force) => {
     const load = async (src) => {
       const im = new Image();
       im.src = src;
@@ -271,22 +277,37 @@ const result = await page.evaluate(
     const pg = pv.getContext('2d');
     pg.drawImage(full, 0, 0);
     pg.drawImage(tint, 0, 0);
-    // 조각마다 잘라 PNG 로
+    // 열린 조각마다 잘라 PNG 로 — 칠해진 마스크(검정·불투명이 아닌 픽셀이 있다)는 --force 일 때만
+    const painted = (t) => {
+      for (let y = t.y; y < t.y + t.h; y++)
+        for (let x = t.x; x < t.x + t.w; x++) {
+          const o = (y * W + x) * 4;
+          if (oldPx[o + 3] < 128 || oldPx[o] >= 128 || oldPx[o + 1] >= 128 || oldPx[o + 2] >= 128) return true;
+        }
+      return false;
+    };
     const masks = {};
+    const kept = [];
     if (!preview)
       for (const t of tiles) {
+        if (!t.open) continue;
+        if (t.mask && !force && painted(t)) {
+          kept.push(t.name);
+          continue;
+        }
         const c = cv(t.w, t.h);
         c.getContext('2d').drawImage(out, t.x, t.y, t.w, t.h, 0, 0, t.w, t.h);
         masks[t.name] = c.toDataURL('image/png').split(',')[1];
       }
     const pct = (n) => ((100 * n) / (W * H)).toFixed(1) + '%';
-    return { masks, preview: pv.toDataURL('image/png').split(',')[1], stats: `물 ${pct(count[2])} · 숲 ${pct(count[1])} · 막힘 ${pct(count[3])} · 다리 ${pct(count[4])}` };
+    return { masks, kept, preview: pv.toDataURL('image/png').split(',')[1], stats: `물 ${pct(count[2])} · 숲 ${pct(count[1])} · 막힘 ${pct(count[3])} · 다리 ${pct(count[4])}` };
   },
   tiles,
   keep,
   W,
   H,
   preview,
+  force,
 );
 await browser.close();
 fs.mkdirSync(new URL('tools/out/', ROOT), { recursive: true });
@@ -295,11 +316,6 @@ if (preview) {
   console.log(`preview ${fileURLToPath(PREVIEW)}  (${result.stats}) — 마스크는 그대로`);
   process.exit(0);
 }
-// 직접 다듬은 마스크를 실수로 덮어쓰지 않게 — 칠해진 마스크가 있으면 --force 없이는 멈춘다 (빈 마스크는 괜찮다)
-const painted = tiles.filter((t) => t.mask && Buffer.from(t.mask, 'base64').length > 2000).map((t) => t.name);
-if (painted.length && !force) {
-  console.error(`칠해진 마스크가 있다 (${painted.join(', ')}). 덮어쓰면 직접 고친 내용(다리 빼고)이 사라진다 — 정말이면 --force`);
-  process.exit(1);
-}
 for (const [name, b64] of Object.entries(result.masks)) fs.writeFileSync(new URL(`mask_${name}.png`, MASKS), Buffer.from(b64, 'base64'));
-console.log(`마스크 ${Object.keys(result.masks).length}장 (${result.stats})  미리보기 ${fileURLToPath(PREVIEW)}`);
+console.log(`마스크 ${Object.keys(result.masks).length}장 ${Object.keys(result.masks).join(', ')} (${result.stats})  미리보기 ${fileURLToPath(PREVIEW)}`);
+if (result.kept.length) console.log(`칠해진 마스크 ${result.kept.length}장은 그대로 — 덮어쓰려면 --force (직접 고친 내용은 다리 빼고 사라진다)`);

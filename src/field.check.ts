@@ -5,11 +5,16 @@ import {
   BLOCK,
   bridging,
   BRIDGE,
+  chasing,
   FIELD,
   FOREST,
   inWarp,
   isOpen,
   makeFieldState,
+  openEdges,
+  spawnSquirrel,
+  SQ_T,
+  tileOpen,
   RISE,
   SPIT,
   updateField,
@@ -79,13 +84,15 @@ const standOnWarp = () => {
   assert.ok(!inWarp(warp, warp.back[0], warp.back[1]));
 }
 
-// 미개방 구역 (field.json open): 가장자리 밖으로는 걸어서도 배로도 못 가고 'locked' 사건, 그쪽 포탈은 연결돼 있어도 잠겨 있다
+// 미개방 구역 (field.json open — 조각마다 'o' 열림): 가장자리 밖으로는 걸어서도 배로도 못 가고 'locked' 사건, 그쪽 포탈은 연결돼 있어도 잠겨 있다
 {
-  const o = FIELD.open;
   const [W, H] = FIELD.size;
   const [COLS, ROWS] = FIELD.grid;
-  const x0 = Math.floor((o.c[0] * W) / COLS); // 개방 구역 왼쪽 가장자리
-  const y = Math.floor(((o.r[0] + 0.5) * H) / ROWS);
+  // 열린 조각 왼쪽이 닫힌 곳 (지금은 r4 — 왼쪽 가을 지역)
+  const r = FIELD.open.findIndex((row) => [...row].some((ch, c) => ch === 'o' && c > 0 && row[c - 1] !== 'o'));
+  const c = [...FIELD.open[r]].findIndex((ch, c) => ch === 'o' && c > 0 && FIELD.open[r][c - 1] !== 'o');
+  const x0 = Math.floor((c * W) / COLS); // 개방 구역 왼쪽 가장자리
+  const y = Math.floor(((r + 0.5) * H) / ROWS);
   assert.ok(isOpen(x0 + 5, y) && !isOpen(x0 - 5, y) && isOpen(FIELD.start[0], FIELD.start[1]), '시작점은 개방 구역 안');
   const s = makeFieldState([x0 + 30, y]);
   assert.equal(run(s, -1, 0, 1), null);
@@ -106,10 +113,28 @@ const standOnWarp = () => {
   [p.x, p.y] = lockedWarp.at;
   assert.equal(run(p, 0, 0, lockedWarp.dwell * 2), null, `${lockedWarp.id} 는 잠겨서 안 간다`);
   assert.ok(FIELD.warps.some((w) => w.to && !warpLocked(w)), '열린 포탈도 있다');
+  // 숲 지역(r2~3 × c0~1)을 열었다 (2026-10-07): 벌목 쉼터 = 장작 패기, 나무숲 던전은 곰의 꿀 쉼터로. 가을 · 눈 지역은 아직 잠김
+  assert.ok(tileOpen(2, 0) && tileOpen(3, 1) && !tileOpen(4, 0) && !tileOpen(1, 1), '숲 지역만 더 열렸다');
+  const to = (id: string) => FIELD.warps.find((w) => w.id === id)!;
+  assert.ok(to('woodcutter_hollow').to === 'timber' && !warpLocked(to('woodcutter_hollow')), '벌목 쉼터 → 장작 패기');
+  assert.ok(to('bear_glade').to === 'forest' && !warpLocked(to('bear_glade')) && backFrom('forest')[0] === to('bear_glade').back[0], '나무숲 던전은 곰의 꿀 쉼터로');
+  // 테두리는 열린 조각과 닫힌 조각 사이에만 (지도 가장자리 빼고)
+  const edges = openEdges();
+  assert.ok(edges.length > 0);
+  for (const [x0, y0, x1, y1] of edges) {
+    const [mx, my] = [(x0 + x1) / 2, (y0 + y1) / 2];
+    const [dx, dy] = x0 === x1 ? [4, 0] : [0, 4];
+    assert.ok(mx > 0 && my > 0 && mx < W && my < H && isOpen(mx - dx, my - dy) !== isOpen(mx + dx, my + dy), `테두리 (${x0}, ${y0})~(${x1}, ${y1})`);
+  }
 }
 
 // 여기부터는 가짜 지도로 움직임만 본다 — 개방 구역을 지도 전체로 넓혀 둔다 (아래 좌표들은 지도 왼쪽 위에 있다)
-Object.assign(FIELD.open, { r: [0, FIELD.grid[1] - 1], c: [0, FIELD.grid[0] - 1] });
+FIELD.open.fill('o'.repeat(FIELD.grid[0]));
+// 숲에서 나오는 것 · 부스럭 수풀 · 다람쥐는 맨 아래 숲 체크에서 따로 본다 (무작위로 끼어들면 움직임 체크가 흔들린다)
+const FOREST0 = structuredClone(FIELD.forest);
+FIELD.forest.find = 0;
+FIELD.forest.rustle.max = 0;
+FIELD.forest.squirrel.chance = 0;
 
 // 걷기: 가로는 설정 속도, 세로는 비스듬한 시점만큼 느리다. 그림 밖으로는 못 나간다
 {
@@ -448,3 +473,205 @@ console.log('bridge.check: ok');
   assert.equal(tight.whale.phase, 'none', '물가 바로 옆엔 안 나온다');
 }
 console.log('whale.check: ok');
+
+// ── 숲 ── 도끼질에 가끔 나오는 것 · 부스럭 수풀 · 다람쥐 (field.json forest)
+Object.assign(FIELD.forest, { find: FOREST0.find });
+Object.assign(FIELD.forest.rustle, FOREST0.rustle);
+Object.assign(FIELD.forest.squirrel, FOREST0.squirrel);
+{
+  const F = FIELD.forest;
+  const C = FIELD.catBody;
+  const V = FIELD.vertical;
+  const DT = 1 / 60;
+  const seeded = (seed: number) => {
+    let v = seed >>> 0;
+    return () => {
+      v = (v * 1664525 + 1013904223) >>> 0;
+      return v / 2 ** 32;
+    };
+  };
+  // 넓은 숲 (가운데) + 둘레는 걷기, 오른쪽 아래에 호수
+  const woods: TerrainAt = (x, y) => (x > 2600 && y > 1500 ? WATER : x > 200 && x < 2400 && y > 200 && y < 1400 ? FOREST : WALK);
+  const finds = new Set(F.finds.map(([id]) => id as string));
+  const step = (s: FieldState, mx: number, my: number, rng: () => number, at = woods) => {
+    updateField(s, mx, my, DT, at, rng);
+    return s.events;
+  };
+
+  // 1) 숲을 곧게 헤치면 가끔 무언가 나온다 (finds 표에서) — 다람쥐 · 수풀은 빼고 본다
+  {
+    F.rustle.max = 0;
+    F.squirrel.chance = 0;
+    let got = 0;
+    for (let seed = 1; seed <= 20; seed++) {
+      const rng = seeded(seed);
+      const s = makeFieldState([300, 800], woods);
+      for (let i = 0; i < 60 / DT; i++)
+        for (const e of step(s, 1, 0, rng))
+          if (e.type === 'forage') {
+            assert.ok(finds.has(e.id), `숲에서 나온 것은 finds 표에서 (${e.id})`);
+            got++;
+          }
+    }
+    const perMin = got / 20;
+    assert.ok(perMin > 2 && perMin < 15, `숲을 1분 헤치면 ${perMin.toFixed(1)}개`);
+    // 같은 자리를 오가면 한 번 나온 칸은 rest 초 동안 쉰다 (나올 확률을 1 로 두고)
+    F.find = 1;
+    const s = makeFieldState([1000, 800], woods);
+    const rng = seeded(3);
+    let wiggle = 0;
+    for (let i = 0; i < 40 / DT; i++) for (const e of step(s, Math.floor(i / 20) % 2 ? -1 : 1, 0, rng)) if (e.type === 'forage') wiggle++;
+    assert.ok(wiggle >= 1 && wiggle <= 3, `같은 자리를 40초 오가면 ${wiggle}번만 (칸마다 한 번)`);
+    s.woods.t += F.rest;
+    let again = 0;
+    for (let i = 0; i < 3 / DT; i++) for (const e of step(s, Math.floor(i / 20) % 2 ? -1 : 1, 0, rng)) if (e.type === 'forage') again++;
+    assert.ok(again >= 1, 'rest 초가 지나면 다시 나온다');
+    const kept = makeFieldState([500, 500], woods, s);
+    assert.equal(kept.woods, s.woods, '필드를 새로 만들어도(던전에서 나와도) 숲 기억은 이어 간다');
+    F.find = FOREST0.find;
+    F.rustle.max = FOREST0.rustle.max;
+    F.squirrel.chance = FOREST0.squirrel.chance;
+  }
+
+  // 2) 부스럭 수풀: 숲 가까이 있으면 생기고 (숲 안쪽에만 · near 거리 · max 개까지), 오래되면 사라진다. 다가가 도끼질하면 열린다
+  {
+    F.squirrel.chance = 0;
+    const rng = seeded(7);
+    const s = makeFieldState([150, 800], woods); // 숲 왼쪽 길가
+    let most = 0;
+    let started = 0;
+    for (let i = 0; i < 70 / DT; i++) {
+      for (const e of step(s, 0, 0, rng))
+        if (e.type === 'rustle' && e.what === 'start') {
+          started++;
+          const d = Math.hypot(e.x - s.x, (e.y - s.y) / V) / C;
+          assert.ok(woods(e.x, e.y) === FOREST && d >= F.rustle.near[0] - 0.01 && d <= F.rustle.near[1] + 0.01, `수풀은 숲 안 near 거리에 (${d.toFixed(1)})`);
+        }
+      most = Math.max(most, s.rustles.length);
+    }
+    assert.ok(started >= 3 && most === F.rustle.max, `70초에 수풀 ${started}번 · 한꺼번에 ${most}개까지`);
+    assert.ok(s.rustles.every((r) => r.t < F.rustle.life), '오래된 수풀은 사라진다');
+    // 다가가 도끼질 → 열림 → 수풀 표에서 하나 (다람쥐 확률 0) / 다람쥐 확률 1 이면 다람쥐
+    const rfinds = new Set(F.rustle.finds.map(([id]) => id as string));
+    for (const sq of [0, 1]) {
+      F.rustle.squirrel = sq;
+      const a = makeFieldState([700, 800], woods);
+      a.mode = 'axe';
+      a.rustles = [{ x: 760, y: 800, t: 0 }];
+      a.rustleT = 99;
+      const got: string[] = [];
+      for (let i = 0; i < 4 / DT && a.rustles.length; i++)
+        for (const e of step(a, 1, 0, seeded(11)))
+          got.push(e.type === 'forage' ? 'forage:' + e.id : e.type === 'squirrel' ? 'squirrel:' + e.what : e.type === 'rustle' ? 'rustle:' + e.what : '');
+      assert.ok(got.includes('rustle:open'), '다가가 도끼질하면 수풀이 열린다');
+      if (sq) assert.ok(got.includes('squirrel:appear') && chasing(a), '수풀에서 다람쥐가 튀어나온다');
+      else assert.ok(got.some((g) => g.startsWith('forage:') && rfinds.has(g.slice(7))), `수풀에서 무언가 나온다 (${got.filter(Boolean).join(' ')})`);
+    }
+    F.rustle.squirrel = FOREST0.rustle.squirrel;
+    F.squirrel.chance = FOREST0.squirrel.chance;
+  }
+
+  // 3) 다람쥐: 폴짝(못 잡음) → 던지기(가만히 있으면 콩) → 달리기 ⇄ 쉬기. 뭍에만 서고(호수 · 닫힌 곳 안 감), 쫓으면 잡히고 안 쫓으면 숨는다.
+  //    쫓는 동안 고양이는 숲에서도 멈춰 도끼질하지 않고 걷기의 chase 배로 달린다. 잡으면 숨겨 둔 것, 끝나면 cooldown 초 동안 안 나온다
+  {
+    const run1 = (seed: number, mode: 'chase' | 'late' | 'still', at = woods, from = [1300, 900]) => {
+      const rng = seeded(seed);
+      const s = makeFieldState(from, at);
+      s.mode = 'axe';
+      spawnSquirrel(s, from[0] + C, from[1], at, rng);
+      const trail: number[][] = [];
+      const seen: string[] = [];
+      let out: { what: string; t: number; stash?: { items: string[]; coins: number } } | null = null;
+      for (let i = 0; i < 20 / DT && !out; i++) {
+        const q = s.squirrel;
+        trail.push([q.x, q.y]);
+        // late = 사람처럼: 0.35초 뒤에야 알아채고, 0.3초 늦게 본 자리를 키보드 8방향으로 쫓는다
+        const late = mode === 'late';
+        const [tx, ty] = late ? trail[Math.max(0, trail.length - 18)] : [q.x, q.y];
+        const dx = tx - s.x;
+        const dy = (ty - s.y) / V;
+        const d = Math.hypot(dx, dy) || 1;
+        const a8 = Math.round(Math.atan2(dy, dx) / (Math.PI / 4)) * (Math.PI / 4);
+        const [mx, my] = mode === 'still' || (late && i < 0.35 / DT) ? [0, 0] : late ? [Math.round(Math.cos(a8)), Math.round(Math.sin(a8))] : [dx / d, dy / d];
+        const ev = step(s, mx, my, rng, at);
+        if (q.phase !== 'none' && q.phase !== 'caught' && q.phase !== 'gone') {
+          const t = at(q.x, q.y);
+          assert.ok(t !== WATER && t !== BLOCK, `seed ${seed}: 다람쥐는 뭍에만 (${q.x.toFixed(0)}, ${q.y.toFixed(0)})`);
+        }
+        for (const e of ev) {
+          if (e.type === 'squirrel') seen.push(e.what);
+          if (e.type === 'chop') assert.fail(`seed ${seed}: 쫓는 동안은 도끼질하지 않는다`);
+          if (e.type === 'squirrel' && (e.what === 'caught' || e.what === 'escape')) out = { what: e.what, t: i * DT, stash: e.stash };
+        }
+      }
+      return { out, seen, s };
+    };
+    // 폴짝 뛰는 동안은 바로 옆이어도 못 잡는다
+    {
+      const s = makeFieldState([1300, 900], woods);
+      spawnSquirrel(s, 1300 + C * 0.5, 900, woods, seeded(1));
+      updateField(s, 0, 0, DT, woods, seeded(1));
+      assert.equal(s.squirrel.phase, 'hop', '폴짝 뛰는 동안은 못 잡는다');
+      const h = Math.hypot(s.squirrel.tx - s.squirrel.fx, (s.squirrel.ty - s.squirrel.fy) / V) / C;
+      assert.ok(Math.abs(h - F.squirrel.hop) < 0.01, `hop 배 떨어진 곳으로 폴짝 (${h.toFixed(2)})`);
+    }
+    // 가만히 있으면: 던진 도토리에 콩 · 결국 숨는다 (give 초 안에)
+    let still = 0;
+    for (let seed = 1; seed <= 20; seed++) {
+      const r = run1(seed, 'still');
+      assert.ok(r.seen.includes('throw') && r.seen.includes('bonk'), `seed ${seed}: 가만히 있으면 도토리에 콩 (${r.seen.join(' ')})`);
+      if (r.out?.what === 'escape' && r.out.t <= F.squirrel.give + 0.1) still++;
+    }
+    assert.equal(still, 20, '안 쫓으면 숨는다');
+    // 쫓으면 잡는다 — 바로 쫓으면 거의 다, 0.3초 늦게 봐도 대부분. 잡으면 숨겨 둔 것 (도토리 · 냥코인 · 가끔 귀한 것)
+    const rate = (mode: 'chase' | 'late') => {
+      let caught = 0;
+      let t = 0;
+      for (let seed = 1; seed <= 40; seed++) {
+        const r = run1(seed, mode);
+        if (r.out?.what !== 'caught') continue;
+        caught++;
+        t += r.out.t;
+        const st = r.out.stash!;
+        const acorns = st.items.filter((id) => id === 'materials_05').length;
+        assert.ok(acorns >= F.squirrel.stash.acorns[0] && acorns <= F.squirrel.stash.acorns[1], `도토리 ${acorns}개`);
+        assert.ok(st.coins >= F.squirrel.stash.coins[0] && st.coins <= F.squirrel.stash.coins[1], `냥코인 ${st.coins}`);
+      }
+      return { k: caught / 40, t: t / Math.max(1, caught) };
+    };
+    const fast = rate('chase');
+    const late = rate('late');
+    assert.ok(fast.k >= 0.85, `바로 쫓으면 ${(fast.k * 100).toFixed(0)}% 잡는다`);
+    assert.ok(late.k >= 0.55 && late.k <= 0.92, `사람처럼(0.35초 뒤 알아채고 0.3초 늦게 · 키보드 8방향) 쫓으면 ${(late.k * 100).toFixed(0)}% 잡는다`);
+    assert.ok(fast.t > 0.6 && late.t > fast.t, `잡는 데 걸린 시간 ${fast.t.toFixed(1)}초 · 늦게 보면 ${late.t.toFixed(1)}초`);
+    console.log(`  다람쥐 40마리: 바로 쫓으면 ${(fast.k * 100).toFixed(0)}% (평균 ${fast.t.toFixed(1)}초) · 사람처럼 쫓으면 ${(late.k * 100).toFixed(0)}% (${late.t.toFixed(1)}초) · 가만히 있으면 0%`);
+    // 호숫가에서 쫓아도 다람쥐는 물로 안 들어간다 (run1 이 프레임마다 본다)
+    for (let seed = 1; seed <= 10; seed++) run1(seed, 'late', woods, [2560, 1460]);
+    // 쫓는 동안 숲에서 걷기의 chase 배로 달린다
+    {
+      const s = makeFieldState([1300, 900], woods);
+      s.mode = 'axe';
+      spawnSquirrel(s, 1300 + C * 4, 900, woods, seeded(5));
+      Object.assign(s.squirrel, { phase: 'rest', t: 0, dur: 99, x: 1300 + 10 * C, y: 900 });
+      const x0 = s.x;
+      for (let i = 0; i < 30; i++) updateField(s, 1, 0, DT, woods, seeded(5));
+      const v = (s.x - x0) / (30 * DT);
+      assert.ok(Math.abs(v - FIELD.speed * F.squirrel.chase) < 2, `쫓을 땐 숲에서도 ${v.toFixed(0)}px/초`);
+    }
+    // 끝나면 cooldown 초 동안은 안 나온다 (나올 확률 1 로 두고 도끼질해도)
+    {
+      const r = run1(2, 'still');
+      const s = r.s;
+      for (let i = 0; i < SQ_T.gone / DT + 2; i++) updateField(s, 0, 0, DT, woods, seeded(2));
+      assert.equal(s.squirrel.phase, 'none');
+      F.squirrel.chance = 1;
+      let appear = 0;
+      for (let i = 0; i < (F.squirrel.cooldown - 2) / DT; i++) for (const e of step(s, i % 120 < 60 ? 1 : -1, 0, seeded(i))) if (e.type === 'squirrel' && e.what === 'appear') appear++;
+      assert.equal(appear, 0, `${F.squirrel.cooldown}초 동안은 다시 안 나온다`);
+      for (let i = 0; i < 4 / DT; i++) for (const e of step(s, i % 120 < 60 ? 1 : -1, 0, seeded(i))) if (e.type === 'squirrel' && e.what === 'appear') appear++;
+      assert.ok(appear >= 1, '쿨다운이 지나면 다시 나온다');
+      F.squirrel.chance = FOREST0.squirrel.chance;
+    }
+  }
+}
+console.log('forest.check: ok');

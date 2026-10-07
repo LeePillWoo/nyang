@@ -2,7 +2,7 @@
 // 필드는 field.ts(로직) / field-draw.ts(그리기), 던전은 dungeon.ts / dungeon-draw.ts, 낚시는 fishing.ts / fishing-draw.ts.
 import { assetUrl, image } from './assets.ts';
 import { bagLayout, bagTap, coinReady, drawBag, drawShop, itemIconsReady, resetBagView, resetShopView, shopLayout, shopTap, shopView } from './bag-draw.ts';
-import { count, fromSave, obtain, stats, tickBuffs, type Bag } from './bag.ts';
+import { count, fromSave, ITEMS, obtain, stats, tickBuffs, type Bag } from './bag.ts';
 import { bookLayout, bookTap, bookView, drawBook, groupOf, openBook, ungrouped, type BookData } from './book-draw.ts';
 import shopData from './data/shop.json' with { type: 'json' };
 import {
@@ -46,6 +46,9 @@ import {
   sfxBreach,
   sfxGulp,
   sfxSpit,
+  sfxRustle,
+  sfxChirp,
+  sfxBonk,
   unlockAudio,
 } from './audio.ts';
 import { cardAt, cardRects, drawCards, drawResult, resultButtonAt, resultPoint, skillFxReady, type ResultButton } from './skills-draw.ts';
@@ -56,7 +59,7 @@ import { makeDungeon, maxHp, pick, resetDungeon, skipWaves, updateDungeon, type 
 import { emotesReady, quiet, say, saying, tickEmote, type EmoteId } from './emote.ts';
 import { ENEMY_DEFS, type Kind } from './enemy.ts';
 import { biomeAt, drawField, fieldFx, fieldReady, fieldView, terrainAt, terrainReady } from './field-draw.ts';
-import { backFrom, FIELD, inWarp, makeFieldState, updateField, warpLocked, whaleSpit, type FieldEvent, type FieldState, type Warp } from './field.ts';
+import { backFrom, FIELD, inWarp, makeFieldState, spawnSquirrel, updateField, warpLocked, whaleSpit, type FieldEvent, type FieldState, type Warp } from './field.ts';
 import {
   dexReady,
   drawFishing,
@@ -78,6 +81,8 @@ import { miniButtonAt, miniLayout, type MiniButton } from './mini-draw.ts';
 import { drawSandboard, SAND_IMAGES, sandPoint, warmSandboard, type SandArt } from './sandboard-draw.ts';
 import { makeSandboard, SAND, updateSandboard, type SandEvent, type SandState } from './sandboard.ts';
 import { loadSheet, type Sheet } from './sheet.ts';
+import { drawTimber, timberFx } from './timber-draw.ts';
+import { makeTimber, TIMBER, updateTimber, type Side, type TimberEvent, type TimberState } from './timber.ts';
 import { buttonAt, controls, drawControls, followStick, onStick, safe, stickBase, stickVector, ui, type ButtonId } from './touch.ts';
 
 const canvas = document.createElement('canvas');
@@ -119,6 +124,8 @@ let cardHover = -1;
 let resultHover: ResultButton | null = null;
 /** 샌드보드 점프 (이번 프레임) */
 let jumpQueued = false;
+/** 장작 패기 — 이번 프레임에 누른 쪽들 (차례대로) */
+const chops: Side[] = [];
 addEventListener('keydown', (e) => {
   unlockAudio();
   if (e.code === 'Space') e.preventDefault();
@@ -160,6 +167,12 @@ addEventListener('keydown', (e) => {
       fishIn.pressed = true;
     }
   }
+  if (scene === 'timber') {
+    if (e.code === 'Escape') backToField();
+    else if (e.code === 'KeyR' && !e.repeat) restartMini();
+    else if (!e.repeat && (e.code === 'KeyA' || e.code === 'ArrowLeft')) chops.push(-1);
+    else if (!e.repeat && (e.code === 'KeyD' || e.code === 'ArrowRight')) chops.push(1);
+  }
   if (scene === 'maze' || scene === 'sandboard') {
     if (e.code === 'Escape') backToField();
     else if (e.code === 'KeyR' && !e.repeat && !inWhale()) restartMini(); // 고래 배 속은 다시 들어갈 수 없다
@@ -189,7 +202,12 @@ let fishKey = false;
 let fishHover: FishingButton = null;
 /** 미니게임(미로 · 샌드보드) 버튼 위에 마우스 */
 let miniHover: MiniButton = null;
-const miniDone = () => (scene === 'maze' ? maze.phase === 'done' : sand.phase === 'done' && sand.doneT >= SAND.cardDelay); // 샌드보드는 결승 뒤 미끄러지다 카드가 뜬 뒤부터
+const miniDone = () =>
+  scene === 'maze'
+    ? maze.phase === 'done'
+    : scene === 'timber'
+      ? timber.phase === 'done' && timber.doneT >= TIMBER.cardDelay // 장작 패기는 맞는 모습을 보여 준 뒤
+      : sand.phase === 'done' && sand.doneT >= SAND.cardDelay; // 샌드보드는 결승 뒤 미끄러지다 카드가 뜬 뒤부터
 /** 고래 배 속 미로 — 결과 카드에 다시 버튼이 없다 */
 const inWhale = () => scene === 'maze' && maze.theme === 'whale';
 const toFishing = (p: { x: number; y: number }) => ({
@@ -341,6 +359,17 @@ canvas.addEventListener('pointerdown', (e) => {
     }
     return;
   }
+  if (scene === 'timber') {
+    const btn = miniButtonAt(innerWidth, innerHeight, p.x, p.y, miniDone());
+    if (btn === 'leave') return backToField();
+    if (btn === 'again') return restartMini();
+    const b = buttonAt(ctl(), p.x, p.y);
+    if (b) pressing.set(e.pointerId, b.id);
+    // ◀ ▶ 버튼, 아니면 누른 쪽 절반
+    if (b?.id === 'left' || b?.id === 'right') chops.push(b.id === 'left' ? -1 : 1);
+    else if (!b) chops.push(p.x < innerWidth / 2 ? -1 : 1);
+    return;
+  }
   if (scene === 'maze' || scene === 'sandboard') {
     const btn = miniButtonAt(innerWidth, innerHeight, p.x, p.y, miniDone(), inWhale());
     if (btn === 'leave') return backToField();
@@ -404,7 +433,7 @@ canvas.addEventListener('pointermove', (e) => {
     canvas.style.cursor = fishHover ? 'pointer' : '';
     return;
   }
-  if (scene === 'maze' || scene === 'sandboard') {
+  if (scene === 'maze' || scene === 'sandboard' || scene === 'timber') {
     miniHover = miniButtonAt(innerWidth, innerHeight, p.x, p.y, miniDone(), inWhale());
     if (e.pointerType === 'mouse') canvas.style.cursor = miniHover ? 'pointer' : '';
     return;
@@ -503,7 +532,7 @@ let dungeon: Dungeon;
 // ?maze · ?sandboard 면 그 미니게임에서 바로 시작한다 (검증용)
 const startRoom = query.get('dungeon') || 'alley';
 const startSpot = query.get('fishing') || 'lake_island_fishing';
-let scene: 'field' | 'dungeon' | 'fishing' | 'maze' | 'sandboard' = query.has('dungeon')
+let scene: 'field' | 'dungeon' | 'fishing' | 'maze' | 'sandboard' | 'timber' = query.has('dungeon')
   ? 'dungeon'
   : query.has('fishing')
     ? 'fishing'
@@ -511,12 +540,15 @@ let scene: 'field' | 'dungeon' | 'fishing' | 'maze' | 'sandboard' = query.has('d
       ? 'maze'
       : query.has('sandboard')
         ? 'sandboard'
-        : 'field';
+        : query.has('timber')
+          ? 'timber'
+          : 'field';
 let field: FieldState = makeFieldState(FIELD.start);
 // 지금 들어가 있는 던전·낚시터·미니게임 (나오면 그 포탈 앞으로)
-let roomId = scene === 'fishing' ? startSpot : scene === 'maze' || scene === 'sandboard' ? scene : startRoom;
+let roomId = scene === 'fishing' ? startSpot : scene === 'maze' || scene === 'sandboard' || scene === 'timber' ? scene : startRoom;
 let maze: MazeState = makeMaze();
 let sand: SandState = makeSandboard();
+let timber: TimberState = makeTimber();
 
 // 낚시 도감 — ponytail: 브라우저 localStorage. 저장(IndexedDB, M2)을 붙이면 세이브의 fishDex 로 옮긴다 (GDD 10장)
 const DEX_KEY = 'nyang.fishDex.v1';
@@ -580,15 +612,15 @@ const bookData = (): BookData => ({
   sheet: (k) => sheets[k] ?? (enemySheet(k), null),
 });
 
-// 미니게임 기록 — 미로 최단 시간(초) · 고래 배 속 최단 시간(초) · 샌드보드 최고 점수
+// 미니게임 기록 — 미로 최단 시간(초) · 고래 배 속 최단 시간(초) · 샌드보드 최고 점수 · 장작 패기 최고 토막
 const REC_KEY = 'nyang.minigames.v1';
-const records: { maze: number | null; whale: number | null; sandboard: number | null } = (() => {
+const records: { maze: number | null; whale: number | null; sandboard: number | null; timber: number | null } = (() => {
   const num = (x: unknown) => (typeof x === 'number' && Number.isFinite(x) && x >= 0 ? x : null);
   try {
-    const v = JSON.parse(localStorage.getItem(REC_KEY) ?? '{}') as Partial<Record<'maze' | 'whale' | 'sandboard', unknown>>;
-    return { maze: num(v.maze), whale: num(v.whale), sandboard: num(v.sandboard) };
+    const v = JSON.parse(localStorage.getItem(REC_KEY) ?? '{}') as Partial<Record<'maze' | 'whale' | 'sandboard' | 'timber', unknown>>;
+    return { maze: num(v.maze), whale: num(v.whale), sandboard: num(v.sandboard), timber: num(v.timber) };
   } catch {
-    return { maze: null, whale: null, sandboard: null };
+    return { maze: null, whale: null, sandboard: null, timber: null };
   }
 })();
 function saveRecords() {
@@ -656,6 +688,12 @@ if (trace)
       monsters: monDex,
       get maze() { return maze; },
       get sandboard() { return sand; },
+      get timber() { return timber; },
+      /** 장작 패기 한 번 (검증용 — 키 대신) */
+      chop: (side: Side) => chops.push(side),
+      /** (x, y) 수풀에서 다람쥐가 튀어나온다 · 부스럭 수풀을 하나 둔다 (검증용) */
+      squirrel: (x: number, y: number) => spawnSquirrel(field, x, y, terrainAt, Math.random),
+      rustle: (x: number, y: number) => field.rustles.push({ x, y, t: 0 }),
       records,
       /** 미로 칸 (cx, cz) 가운데의 화면 위치 (CSS px) */
       mazeScreen: (cx: number, cz: number) => {
@@ -736,9 +774,27 @@ if (trace)
       ),
   });
 
+/** 숲에서 나온 것 → 가방 (못 넣으면 full — 그리기가 보고 떨어뜨린다) · 잡힌 다람쥐가 내놓은 냥코인 */
+function fieldLoot(e: FieldEvent) {
+  if (e.type === 'forage') e.full = obtain(bag, e.id) > 0;
+  else if (e.type === 'squirrel' && e.what === 'caught' && e.stash) {
+    bag.coins += e.stash.coins;
+    e.full = e.stash.items.map((id) => obtain(bag, id)).some((left) => left > 0);
+  } else return;
+  saveBag();
+}
 /** 필드 연출 사건 → 소리 */
 function fieldSound(e: FieldEvent) {
   if (e.type === 'chop') sfxChop();
+  else if (e.type === 'forage') (e.full ? sfxFull : sfxPickup)();
+  else if (e.type === 'rustle' && e.what === 'start') sfxRustle();
+  else if (e.type === 'squirrel') {
+    if (e.what === 'appear') sfxChirp();
+    else if (e.what === 'throw') sfxThrow();
+    else if (e.what === 'bonk') sfxBonk();
+    else if (e.what === 'caught') sfxCatch();
+    else if (e.what === 'escape') sfxPop();
+  }
   else if (e.type === 'splash') sfxSplash();
   else if (e.type === 'stroke') sfxRow();
   else if (e.type === 'whale') {
@@ -867,6 +923,8 @@ const mood = {
   phase: '' as string,
   /** 미개방 구역에 부딪혀 갸웃한 때 (초) */
   lockT: -9,
+  /** 부스럭 소리에 귀 쫑긋한 때 (초) */
+  rustleT: -9,
 };
 function fieldMood(dt: number, now: number) {
   const b = field.mode === 'walk' || field.mode === 'axe' ? biomeAt(field.x, field.y) : '';
@@ -886,10 +944,23 @@ function fieldMood(dt: number, now: number) {
     mood.seasick = false;
   }
   for (const e of field.events) if (e.type === 'chop' && ++mood.chops % 5 === 0) say('exertion', 1.2);
+  // 숲: 부스럭 소리엔 귀 쫑긋(가끔) · 나오면 반가움(귀한 건 반짝) · 다람쥐엔 깜짝 · 콩 맞으면 버럭 · 잡으면 뿌듯 · 놓치면 분함
+  for (const e of field.events) {
+    if (e.type === 'rustle' && e.what === 'start' && now - mood.rustleT > 8) {
+      say('listening', 1.4);
+      mood.rustleT = now;
+    } else if (e.type === 'forage') say(e.full ? 'frustration' : (ITEMS[e.id]?.price ?? 0) >= 30 ? 'treasure_temptation' : 'delight', 1.4);
+    else if (e.type === 'squirrel') {
+      if (e.what === 'appear') say('surprise', 1);
+      else if (e.what === 'bonk') say('anger', 1.2);
+      else if (e.what === 'caught') say('pride', 2);
+      else if (e.what === 'escape') say('frustration', 1.6);
+    }
+  }
   // 포탈 위: 낚시터면 군침, 던전이면 의욕, 아직 연결 전이면 갸웃
   const w = FIELD.warps.find((v) => inWarp(v, field.x, field.y));
   if (w && w.id !== mood.portal)
-    say(SPOTS[w.to] ? 'hunger' : w.to === 'shop' ? 'delight' : w.to === 'maze' ? 'idea' : w.to === 'sandboard' ? 'rhythm' : w.to ? 'determination' : 'question', 1.6);
+    say(SPOTS[w.to] ? 'hunger' : w.to === 'shop' ? 'delight' : w.to === 'maze' ? 'idea' : w.to === 'sandboard' ? 'rhythm' : w.to === 'timber' ? 'exertion' : w.to ? 'determination' : 'question', 1.6);
   mood.portal = w?.id ?? '';
   // 미개방 구역으로 밀면 갸웃 (2.5초에 한 번)
   if (field.events.some((e) => e.type === 'locked') && now - mood.lockT > 2.5) {
@@ -1026,11 +1097,27 @@ const enterSandboard = () =>
     say('rhythm', 1.6);
     sayHelp();
   });
+/** 벌목 쉼터 장작 패기 — 매번 새 나무 */
+const enterTimber = () =>
+  goTo(() => {
+    scene = 'timber';
+    roomId = 'timber';
+    canvas.style.cursor = '';
+    timber = makeTimber();
+    chops.length = 0;
+    miniHover = null;
+    quiet();
+    say('exertion', 1.6);
+    sayHelp();
+  });
 /** 미니게임 다시 (R · 결과 카드의 다시) */
 const restartMini = () =>
   goTo(() => {
     if (scene === 'maze') maze = makeMaze();
-    else sand = makeSandboard();
+    else if (scene === 'timber') {
+      timber = makeTimber();
+      chops.length = 0;
+    } else sand = makeSandboard();
     miniHover = null;
     quiet();
     sayHelp();
@@ -1039,6 +1126,7 @@ const restartMini = () =>
 const enterPortal = (to: string) => {
   if (to === 'maze') return enterMaze();
   if (to === 'sandboard') return enterSandboard();
+  if (to === 'timber') return enterTimber();
   if (to !== 'shop') return SPOTS[to] ? enterFishing(to) : enterDungeon(to);
   field.armed = false;
   field.dwell = 0;
@@ -1060,6 +1148,27 @@ function mazeEvent(e: MazeEvent) {
     say('delight', 3);
     const key = maze.theme === 'whale' ? 'whale' : 'maze';
     if (records[key] === null || e.secs < records[key]) records[key] = Math.round(e.secs * 10) / 10;
+    saveRecords();
+    saveBag();
+  }
+}
+/** 장작 패기 사건 → 소리 · 감정 · 보상 · 기록 */
+function timberEvent(e: TimberEvent) {
+  if (e.type === 'chop') sfxChop();
+  else if (e.type === 'hit') {
+    sfxBonk();
+    sfxHurt();
+    say('dizzy', 2.4);
+  } else if (e.type === 'timeout') {
+    sfxFull();
+    say('fatigue', 2.4);
+  } else if (e.type === 'level') {
+    sfxLevel();
+    say('determination', 1);
+  } else if (e.type === 'done') {
+    bag.coins += e.coins;
+    if (e.logs) obtain(bag, 'materials_01', e.logs);
+    if (records.timber === null || e.score > records.timber) records.timber = e.score;
     saveRecords();
     saveBag();
   }
@@ -1119,7 +1228,7 @@ function sandEvent(e: SandEvent) {
 /** 포탈 워프 — 포탈 바로 앞(돌아올 자리, 워프 밖)에 내린다. 한 걸음 들어가면 바로 빨려 들어간다 */
 const warpTo = (w: Warp) =>
   goTo(() => {
-    field = makeFieldState(w.back, terrainAt);
+    field = makeFieldState(w.back, terrainAt, field);
     look = null;
     quiet();
     say('surprise', 1.2);
@@ -1138,7 +1247,7 @@ const backToField = () =>
   goTo(() => {
     scene = 'field';
     if (roomId === 'whale') whaleSpit(field);
-    else field = makeFieldState(backFrom(roomId), terrainAt);
+    else field = makeFieldState(backFrom(roomId), terrainAt, field);
     look = null;
     fishKey = false;
     fishPtr = null;
@@ -1176,6 +1285,7 @@ function frame(now: number) {
       const { mx, my } = input();
       stepLook(dt, mx !== 0 || my !== 0);
       const w = updateField(field, mx, my, dt, terrainAt);
+      field.events.forEach(fieldLoot);
       field.events.forEach(fieldSound);
       fieldFx(field.events);
       fieldMood(dt, now / 1000);
@@ -1201,6 +1311,10 @@ function frame(now: number) {
     } else if (scene === 'sandboard') {
       updateSandboard(sand, { mx: input().mx, jump: jumpQueued }, dt);
       sand.events.forEach(sandEvent);
+    } else if (scene === 'timber') {
+      updateTimber(timber, chops.splice(0), dt);
+      timber.events.forEach(timberEvent);
+      timberFx(timber, timber.events, innerWidth, innerHeight);
     } else {
       const dash = keys.has('Space') || [...pressing.values()].includes('dash');
       const out = updateDungeon(dungeon, { ...input(), punch: false, dash }, dt); // 냥펀치는 자동
@@ -1216,6 +1330,7 @@ function frame(now: number) {
   if (scene === 'field') drawFieldScene();
   else if (scene === 'fishing') drawFishing(ctx, canvas.width, canvas.height, fishing, { t: last / 1000, dt: lastDt, hover: fishHover, touch: touchOn });
   else if (scene === 'maze') drawMaze(ctx, canvas.width, canvas.height, maze, catSheet, { t: last / 1000, dt: lastDt, touch: touchOn, hover: miniHover, best: records[maze.theme === 'whale' ? 'whale' : 'maze'] });
+  else if (scene === 'timber') drawTimber(ctx, canvas.width, canvas.height, timber, { axe: axeSheet, cat: catSheet }, { t: last / 1000, dt: lastDt, touch: touchOn, hover: miniHover, best: records.timber });
   else if (scene === 'sandboard')
     drawSandboard(
       ctx,
@@ -1236,7 +1351,7 @@ function frame(now: number) {
 function drawFieldScene() {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  drawField(ctx, canvas.width, canvas.height, field, { cat: catSheet, axe: axeSheet, boat: boatSheet, snow: snowSheet }, last / 1000, lastDt, showTerrain, look);
+  drawField(ctx, canvas.width, canvas.height, field, { cat: catSheet, axe: axeSheet, boat: boatSheet, snow: snowSheet, squirrel: sheets.acorn_squirrel }, last / 1000, lastDt, showTerrain, look);
   const s = pxRatio();
   const k = ui(innerWidth, innerHeight);
   const sf = safe();
@@ -1285,11 +1400,12 @@ function drawFade() {
 
 const help = document.getElementById('help')!;
 const HELP = {
-  field: 'WASD 이동 · 숲은 도끼로, 물은 배로 · 이정표 앞 포탈에 잠시 서 있으면 던전 · 바다에서 배를 멈추고 있으면… 고래? · 지도 끌기·미니맵으로 둘러보기, 포탈 클릭 = 워프 · 강아지마을은 고등어 상점 · I 가방 · B 도감 · M 미니맵 · T 지형 보기',
+  field: 'WASD 이동 · 숲은 도끼로 (부스럭거리는 수풀엔 무언가 · 다람쥐는 쫓아가 잡기), 물은 배로 · 이정표 앞 포탈에 잠시 서 있으면 던전 · 바다에서 배를 멈추고 있으면… 고래? · 지도 끌기·미니맵으로 둘러보기, 포탈 클릭 = 워프 · 강아지마을은 고등어 상점 · I 가방 · B 도감 · M 미니맵 · T 지형 보기',
   dungeon: 'WASD 이동 · 냥펀치는 저절로 (몬스터가 가까이 오면) · Space 구르기 · 웨이브 8번을 버티면 클리어 · 생선뼈를 모으면 레벨 업 → 기술 카드 (1·2·3) · I 가방 · 빛나는 칸에 3초 서 있으면 나가기',
   maze: 'WASD 이동 · 횃불이 닿는 길만 보여요 · 냥코인을 줍고 막다른 길 끝의 보물 상자를 찾아 출구로 · 빠를수록 탈출 보너스 · R 새 미로 · Esc 돌아가기',
   whale: '고래에게 삼켜졌다! WASD 이동 · 플랑크톤 빛이 닿는 길만 보여요 · 냥코인과 진주 조개를 찾아 숨구멍으로 · 빠를수록 보너스 · Esc 포기 (그래도 뱉어 줘요)',
   sandboard: 'A/D 좌우 · Space 점프 (높은 바위·선인장·기둥은 점프대로만) · 부딪히면 하트 -1 · 자석·방패·하트·가속 발판 · R 다시 · Esc 돌아가기',
+  timber: 'A · ← 왼쪽에서, D · → 오른쪽에서 패요 · 가지가 내 쪽으로 내려오면 콩! · 팰수록 시간이 늘지만 점점 빨리 줄어요 · R 다시 · Esc 돌아가기',
 };
 const HELP_TOUCH = {
   field: '왼쪽 조이스틱으로 이동 · 숲은 도끼로, 물은 배로 · 포탈에 잠시 서 있으면 던전·낚시터 (강아지마을은 상점) · 화면을 끌어 둘러보고 포탈을 누르면 워프',
@@ -1297,6 +1413,7 @@ const HELP_TOUCH = {
   maze: '조이스틱으로 이동 · 횃불이 닿는 길만 보여요 · 냥코인과 보물 상자를 찾아 출구로',
   whale: '고래에게 삼켜졌다! 조이스틱으로 이동 · 냥코인과 진주 조개를 찾아 숨구멍으로',
   sandboard: '◀ ▶ 좌우 · 점프 버튼이나 화면 누르기 = 점프 · 높은 건 피하고 낮은 건 뛰어넘어요 · 하트 3개',
+  timber: '◀ ▶ 버튼이나 화면 왼쪽·오른쪽을 눌러 그쪽에서 패요 · 가지가 내 쪽으로 내려오면 콩!',
 };
 function sayHelp() {
   const t = scene === 'fishing' ? fishingHelp(fishing, touchOn) : (touchOn ? HELP_TOUCH : HELP)[inWhale() ? 'whale' : scene];
@@ -1332,4 +1449,5 @@ const step = (t: string) => {
   unlockAudio();
   sayHelp();
   requestAnimationFrame(frame);
+  void enemySheet('acorn_squirrel'); // 숲 다람쥐 (400KB) — 첫 화면이 뜬 뒤 천천히
 })();
