@@ -662,7 +662,7 @@ if (trace)
         const d = Math.min(devicePixelRatio, 2);
         return { x: (mazeView.ox + (cx + 0.5) * mazeView.px) / d, y: (mazeView.oy + (cz + 0.5) * mazeView.px) / d };
       },
-      /** 샌드보드 가로 자리 x · 거리 dd 의 화면 위치 (CSS px — sandboard-draw.ts 의 사다리꼴과 같은 식) */
+      /** 샌드보드 가로 자리 x · 거리 dd 의 화면 위치 (CSS px — sandboard-draw.ts 와 같은 식, 카메라 포함) */
       sandScreen: (x: number, dd: number) => {
         const d = Math.min(devicePixelRatio, 2);
         const p = sandPoint(x, dd - sand.d);
@@ -1078,6 +1078,9 @@ function sandEvent(e: SandEvent) {
       break;
     case 'slide':
       sfxSlide(e.k);
+      break;
+    case 'scrape':
+      sfxSlide(0.2);
       break;
     case 'carve':
       if (e.gain > 0.5) sfxRush(e.gain);

@@ -1,7 +1,8 @@
 /**
  * 모래 미끄럼틀 샌드보드 — 비탈을 저절로 미끄러져 올라간다(화면 위쪽이 앞). 좌우로 피하고 점프로 뛰어넘고 냥코인을 줍는다.
  * 하트 3개: 부딪힐 때마다 하나씩 잃고(방패가 있으면 막음) 다 잃으면 넘어져 끝. 끝까지 가면 완주 — 한 번도 안 부딪혔으면 보너스.
- * 물건은 art/sandboarding 시트의 id 그대로 (OBS). 좌표: d = 내려온 거리(m), x = 주행 폭 가로 자리(-1..1).
+ * 물건은 art/sandboarding 시트의 id 그대로 (OBS). 좌표: d = 내려온 거리(m), x = 가로 자리 (길 반폭 = 1).
+ * 길은 지그재그로 휜다 — 거리 d 의 길 가운데가 center(d), 달릴 수 있는 곳은 그 ±edge. 물건 · 레인은 그 거리의 가운데 기준으로 깐다.
  * 그림을 불러오지 않는 순수 로직이라 node 에서 체크된다 (그리기는 sandboard-draw.ts).
  */
 export const SAND = {
@@ -42,6 +43,18 @@ export const SAND = {
   carveTime: 0.4,
   carveMax: 5,
   edge: 0.92,
+  /**
+   * 코스 (2026-10-07 사용자 의견 — 길이 일자라 재미없다): 길 가운데가 지그재그로 크게 휜다. 처음 start m 는 곧게, 그 뒤로 굽이가
+   * 왼쪽 · 오른쪽 번갈아 — 굽이마다 가운데가 shift(길 반폭 단위)만큼 옆으로, 코사인으로 부드럽게. 굽이 사이엔 가끔 곧은 길(straight m).
+   * 가장 급한 곳의 기울기(가운데가 1m 마다 옆으로 가는 양)는 처음 slope[0] → 결승 slope[1] — 굽이 길이는 여기서 나온다.
+   * 최고 속도에서 가장 급한 곳을 따라가려면 보드를 다 꺾었을 때 가로 속도(steer)의 절반쯤 — 넉넉히 따라간다
+   */
+  course: { start: 45, shift: [1.3, 2.4], slope: [0.03, 0.05], straight: [8, 30] },
+  /**
+   * 울타리: 넘지 못한다. 굽이 바깥 울타리에 밀려 가면 쓸리며 느려진다 (울타리가 옆으로 미는 빠르기 × fenceDrag m/s², 하트는 그대로).
+   * 안쪽 울타리에 대고 누르면 보드가 울타리를 따라 펴져 그냥 미끄러진다 — 굽이는 안쪽으로 (냥코인 줄도 안쪽)
+   */
+  fenceDrag: 7,
   /** 고양이 가로 반폭 · 앞뒤로 닿는 거리(m) */
   catR: 0.09,
   reach: 1.0,
@@ -114,6 +127,61 @@ const role = (k: ObKind): Role => OBS[k].role;
 /** 부딪히는 것 (줄마다 하나는 비워 둬야 하는 것) */
 export const solid = (k: ObKind) => role(k) === 'hit' || role(k) === 'tall';
 
+/** 굽이: d0 ~ d1 동안 길 가운데가 c0 → c1 (코사인으로 부드럽게). 코스 = 굽이들을 거리 순으로 */
+export type Bend = { d0: number; d1: number; c0: number; c1: number };
+/** 곧은 길 (체크용) */
+export const STRAIGHT: Bend[] = [{ d0: -1e9, d1: 1e9, c0: 0, c1: 0 }];
+
+/** 코스를 깐다 — 처음은 곧게, 그 뒤 왼쪽 · 오른쪽 번갈아 굽이 (가끔 곧은 길). 결승 너머까지 */
+export function makeCourse(rng: () => number): Bend[] {
+  const C = SAND.course;
+  const out: Bend[] = [{ d0: -1e9, d1: C.start, c0: 0, c1: 0 }];
+  let d = C.start;
+  let c = 0;
+  let dir = rng() < 0.5 ? -1 : 1;
+  while (d < SAND.length + 150) {
+    const late = Math.min(1, d / SAND.length);
+    const shift = C.shift[0] + rng() * (C.shift[1] - C.shift[0]);
+    const steep = (C.slope[0] + (C.slope[1] - C.slope[0]) * late) * (0.85 + 0.15 * rng());
+    const len = ((Math.PI / 2) * shift) / steep; // 코사인 굽이의 가장 급한 기울기 = π/2 × shift / 길이
+    out.push({ d0: d, d1: d + len, c0: c, c1: c + dir * shift });
+    d += len;
+    c += dir * shift;
+    dir = -dir;
+    if (rng() < 0.4) {
+      const st = C.straight[0] + rng() * (C.straight[1] - C.straight[0]);
+      out.push({ d0: d, d1: d + st, c0: c, c1: c });
+      d += st;
+    }
+  }
+  return out;
+}
+/** 거리 d 를 지나는 굽이 */
+function bendAt(course: Bend[], d: number) {
+  let lo = 0;
+  let hi = course.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (course[mid].d0 <= d) lo = mid;
+    else hi = mid - 1;
+  }
+  return course[lo];
+}
+/** 거리 d 의 길 가운데 (가로 자리) */
+export function center(course: Bend[], d: number) {
+  const b = bendAt(course, d);
+  if (d >= b.d1) return b.c1;
+  const t = Math.max(0, (d - b.d0) / (b.d1 - b.d0));
+  return b.c0 + ((b.c1 - b.c0) * (1 - Math.cos(Math.PI * t))) / 2;
+}
+/** 거리 d 에서 길 가운데가 1m 마다 옆으로 가는 양 (+ = 오른쪽으로 휜다) */
+export function slope(course: Bend[], d: number) {
+  const b = bendAt(course, d);
+  if (d >= b.d1 || d < b.d0) return 0;
+  const L = b.d1 - b.d0;
+  return ((b.c1 - b.c0) * Math.PI * Math.sin((Math.PI * (d - b.d0)) / L)) / (2 * L);
+}
+
 /** got = 주웠다 · hit = 이미 작동했다(부딪힘·뜀) */
 export type Ob = { kind: ObKind; x: number; d: number; got?: boolean; hit?: boolean };
 /** 그리기용 짧은 효과 (시트의 효과 id) · 떠오르는 글자 */
@@ -127,6 +195,8 @@ export type SandEvent =
   | { type: 'bump' }
   | { type: 'boost' }
   | { type: 'pit' }
+  /** 굽이 바깥 울타리에 쓸린다 (0.3초마다) */
+  | { type: 'scrape' }
   | { type: 'slide'; k: number }
   | { type: 'carve'; gain: number }
   | { type: 'crash'; kind: ObKind }
@@ -153,6 +223,9 @@ export type SandState = {
   steer: number;
   /** 차오르는 중인 좌우 입력 -1..1 (처음 저항) */
   steerU: number;
+  /** 코스 (지그재그 굽이들) · 다음 쓸림 소리까지 */
+  course: Bend[];
+  scrapeT: number;
   /** 미끄러지는 중(촤악 뒤, 카빙 전) · 촤악 때 속도 · 카빙 가속이 남은 시간 · 그 가속(m/s²) */
   sliding: boolean;
   slideV: number;
@@ -184,27 +257,39 @@ const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v
 
 export function makeSandboard(rng: () => number = Math.random): SandState {
   const s: SandState = {
-    d: 0, x: 0, v: SAND.vMin, air: 0, airMax: 1, landT: 9, dizzy: 0, yaw: 0, yawV: 0, vx: 0, lean: 0, slip: 0, steer: 0, steerU: 0, sliding: false, slideV: 0, carveT: 0, carveRate: 0, flip: 1, t: 0,
+    d: 0, x: 0, v: SAND.vMin, air: 0, airMax: 1, landT: 9, dizzy: 0, yaw: 0, yawV: 0, vx: 0, lean: 0, slip: 0, steer: 0, steerU: 0, course: STRAIGHT, scrapeT: 0, sliding: false, slideV: 0, carveT: 0, carveRate: 0, flip: 1, t: 0,
     hearts: SAND.hearts, shield: 0, magnet: 0, boost: 0, phase: 'play', fell: false, coins: 0, crashes: 0, score: 0,
     obs: [], fx: [], pops: [], nextAt: 30, events: [], rng,
   };
+  s.course = makeCourse(rng);
   spawn(s);
   return s;
 }
 
 const pick = <T>(s: SandState, list: readonly T[]) => list[Math.floor(s.rng() * list.length)];
 
-/** 앞쪽에 줄을 깐다. 갈수록 장애물이 잦고 많아진다. 부딪히는 것끼리는 서로 다른 레인 — 늘 지나갈 길이 있다 */
+/**
+ * 앞쪽에 줄을 깐다. 갈수록 장애물이 잦고 많아진다. 부딪히는 것끼리는 서로 다른 레인 — 늘 지나갈 길이 있다.
+ * 레인은 그 거리의 길 가운데 기준. 굽이 한가운데는 안쪽에 냥코인 줄(가끔 바깥쪽에 장애물 하나), 점프대는 곧은 데서만 (공중에선 길을 못 따라간다)
+ */
 function spawn(s: SandState) {
   while (s.nextAt < s.d + SAND.ahead && s.nextAt < SAND.length - 25) {
     const d = s.nextAt;
     const late = d / SAND.length; // 0 → 1
-    const add = (kind: ObKind, x: number, dd = d) => s.obs.push({ kind, x: clamp(x, -0.92, 0.92), d: dd });
+    const add = (kind: ObKind, x: number, dd = d) => s.obs.push({ kind, x: center(s.course, dd) + clamp(x, -0.92, 0.92), d: dd });
     const coins = (x0: number, d0: number, n: number, slant = 0) => {
       for (let i = 0; i < n; i++) add('paw_coin', x0 + slant * i, d0 + i * 3);
     };
     const r = s.rng();
-    if (r < 0.36 + late * 0.12) {
+    const steep = SAND.course.slope[1];
+    const bend = slope(s.course, d + 8) / steep; // -1..1
+    const calm = Math.abs(bend) < 0.3 && Math.abs(slope(s.course, d + 24)) < 0.3 * steep;
+    if (Math.abs(bend) > 0.55) {
+      // 굽이 한가운데: 안쪽 울타리 가까이에 냥코인 줄 (안쪽으로 파고들면 줍는다), 가끔 바깥쪽에 장애물 하나
+      const inside = Math.sign(bend);
+      coins(inside * 0.76, d, 6);
+      if (s.rng() < 0.25 + late * 0.35) add(pick(s, HIT), -inside * 0.5, d + 12);
+    } else if (r < 0.36 + late * 0.12) {
       // 장애물 1~3개 (3개는 후반에만, 두 레인은 비운다)
       const n = s.rng() < 0.5 ? 1 : late > 0.45 && s.rng() < 0.35 ? 3 : 2;
       const lanes = [...SAND.lanes].sort(() => s.rng() - 0.5).slice(0, n);
@@ -213,7 +298,7 @@ function spawn(s: SandState) {
       if (s.rng() < 0.35) coins(pick(s, SAND.lanes.filter((l) => !lanes.includes(l))), d - 4, 3);
     } else if (r < 0.62) {
       coins(pick(s, SAND.lanes), d, 5, s.rng() < 0.4 ? (s.rng() < 0.5 ? -0.12 : 0.12) : 0);
-    } else if (r < 0.71) {
+    } else if (r < 0.71 && calm) {
       // 점프대 → 공중 냥코인 + 끝에 냥코인 더미
       const x0 = SAND.lanes[1 + Math.floor(s.rng() * 3)];
       add('jump_ramp', x0);
@@ -249,39 +334,49 @@ const fx = (s: SandState, id: SandFx['id'], x = s.x, d = s.d, flip?: number) => 
 type Lateral = Pick<SandState, 'x' | 'vx' | 'yaw' | 'yawV'>;
 /**
  * 좌우 한 걸음 (u = 누르는 쪽 -1..1). 보드 각도 스프링 → 그립 지연으로 가로 속도 → 자리. 미끄러짐을 돌려준다.
- * 가장자리에선 선다 — 바깥으로 계속 누르면 보드는 경계를 따라 펴지고 미끄러짐은 0 (벽에 대고 누른다고 모래를 튀기며 느려지지 않게)
+ * c = 이 거리의 길 가운데 · cv = 길(울타리)이 옆으로 가는 빠르기. 울타리에선 선다 — 울타리 쪽으로 계속 누르면 보드가 울타리를 따라 펴지고
+ * 미끄러짐은 0 (벽에 대고 누른다고 모래를 튀기며 느려지지 않게). 굽이 바깥 울타리는 고양이를 밀고 간다
  */
-function lateral(l: Lateral, u: number, dt: number, move = 1) {
-  // 가장자리 쪽(-1, 0, 1). 여유 0.03: 펴진 보드가 살짝 넘쳐 가장자리를 벗어났다 다시 꺾이기를 되풀이하지 않게 (떨림)
-  const side = (x: number) => (x >= SAND.edge - 0.03 ? 1 : x <= -SAND.edge + 0.03 ? -1 : 0);
+function lateral(l: Lateral, u: number, dt: number, move = 1, c = 0, cv = 0) {
+  // 울타리 쪽(-1, 0, 1). 여유 0.03: 펴진 보드가 살짝 넘쳐 울타리를 벗어났다 다시 꺾이기를 되풀이하지 않게 (떨림)
+  const side = (x: number) => (x - c >= SAND.edge - 0.03 ? 1 : x - c <= -SAND.edge + 0.03 ? -1 : 0);
   const pinned = side(l.x) !== 0 && Math.sign(u) === side(l.x);
   const pressed = u !== 0;
-  // 가장자리에 눌려 보드가 펴질 땐 뗄 때 스프링으로 (덜 출렁이게 — 넘쳐 반대로 꺾이면 가장자리에서 튕겨 나와 다시 촤악 했다)
+  // 울타리에 눌려 보드가 펴질 땐 뗄 때 스프링으로 (덜 출렁이게 — 넘쳐 반대로 꺾이면 울타리에서 튕겨 나와 다시 촤악 했다).
+  // 펴지는 방향은 울타리를 따라 (곧은 길이면 똑바로)
   const w = pressed && !pinned ? SAND.yawW : SAND.yawWOut;
   const z = pressed && !pinned ? SAND.yawZ : SAND.yawZOut;
-  l.yawV += (w * w * ((pinned ? 0 : u) * SAND.yawMax - l.yaw) - 2 * z * w * l.yawV) * dt;
+  const aim = pinned ? clamp(cv / SAND.steer, -1, 1) : u;
+  l.yawV += (w * w * (aim * SAND.yawMax - l.yaw) - 2 * z * w * l.yawV) * dt;
   l.yaw += l.yawV * dt;
   const lean = l.yaw / SAND.yawMax;
   l.vx += (lean * SAND.steer - l.vx) * (1 - Math.exp(-dt / (pressed ? SAND.gripIn : SAND.gripOut)));
   l.x += l.vx * dt * move; // 공중이면 옆으로 가는 거리만 airSteer 배
-  if (l.x >= SAND.edge) {
-    l.x = SAND.edge;
-    l.vx = Math.min(0, l.vx);
-  } else if (l.x <= -SAND.edge) {
-    l.x = -SAND.edge;
-    l.vx = Math.max(0, l.vx);
+  // 울타리는 못 넘는다. 길이 휘면 울타리와 같이 옆으로 간다
+  if (l.x - c >= SAND.edge) {
+    l.x = c + SAND.edge;
+    l.vx = Math.min(cv, l.vx);
+  } else if (l.x - c <= -SAND.edge) {
+    l.x = c - SAND.edge;
+    l.vx = Math.max(cv, l.vx);
   }
-  // 가장자리로 밀고 있으면 미끄러짐 0 — 닿는 순간에도 "촤악" 하지 않는다
-  return pinned || (side(l.x) !== 0 && Math.sign(l.yaw) === side(l.x)) ? 0 : Math.min(1, Math.abs(lean - l.vx / SAND.steer));
+  // 울타리로 밀고 있거나 바깥 울타리에 밀려 가면 미끄러짐 0 — 닿는 순간에도 "촤악" 하지 않는다 (밀려 가며 느려지는 건 울타리 몫)
+  const at = side(l.x);
+  return pinned || (at !== 0 && (Math.sign(l.yaw) === at || at === -Math.sign(cv))) ? 0 : Math.min(1, Math.abs(lean - l.vx / SAND.steer));
 }
 
-/** 지금 손을 떼면 어디서 멈추나 — 공중이면 남은 공중 시간 동안은 airSteer 만큼만 (자동 조종 · 검증용) */
-export function coast(s: Lateral & { air?: number }) {
+/** 지금 손을 떼면 secs 초 뒤 어디 있나 — 공중이면 남은 공중 시간 동안은 airSteer 만큼만, 굽이면 울타리에 밀리는 것까지 (자동 조종 · 검증용) */
+export function coast(s: Lateral & { air?: number; d?: number; v?: number; course?: Bend[] }, secs = 1) {
   const l = { x: s.x, vx: s.vx, yaw: s.yaw, yawV: s.yawV };
   let air = s.air ?? 0;
-  for (let i = 0; i < 60; i++) {
-    air -= 1 / 60; // 한 프레임과 같은 차례 — 공중 시간을 먼저 줄이고 움직인다
-    lateral(l, 0, 1 / 60, air > 0 ? SAND.airSteer : 1);
+  let d = s.d ?? 0;
+  const v = s.v ?? 0;
+  const course = s.course ?? STRAIGHT;
+  for (let i = 0; i < Math.round(secs * 60); i++) {
+    // 한 프레임과 같은 차례 — 공중 시간을 줄이고 앞으로 간 뒤 옆으로
+    air -= 1 / 60;
+    d += v / 60;
+    lateral(l, 0, 1 / 60, air > 0 ? SAND.airSteer : 1, center(course, d), slope(course, d) * v);
   }
   return l.x;
 }
@@ -323,11 +418,26 @@ export function updateSandboard(s: SandState, input: SandInput, dt: number) {
     fx(s, 'jump_puff');
     s.events.push({ type: 'jump' });
   }
+  // 앞으로 먼저 — 좌우는 이번 프레임이 끝나는 거리의 울타리에 맞춘다 (그리는 자리와 같게)
+  s.d += s.v * dt;
   // 좌우 = 드리프트: 보드가 먼저 꺾이고 몸이 늦게 따라온다. 그 차이(미끄러짐)만큼 모래를 튀기고 속도를 깎는다
   const want = s.dizzy > 0 ? 0 : clamp(input.mx, -1, 1);
   // 처음 저항: 누르면 입력이 steerIn 초에 걸쳐 차오른다 (반대로 누르면 그쪽으로 넘어가며, 떼면 바로 0)
   s.steerU = want === 0 ? 0 : s.steerU + (want - s.steerU) * (1 - Math.exp(-dt / SAND.steerIn));
-  s.slip = lateral(s, s.steerU, dt, s.air > 0 ? SAND.airSteer : 1);
+  const c = center(s.course, s.d);
+  const cv = slope(s.course, s.d) * s.v;
+  s.slip = lateral(s, s.steerU, dt, s.air > 0 ? SAND.airSteer : 1, c, cv);
+  // 굽이 바깥 울타리에 밀려 가면 쓸리며 느려진다 (하트는 그대로) — 0.3초마다 모래 · 소리
+  const touch = Math.abs(s.x - c) >= SAND.edge - 1e-6 ? Math.sign(s.x - c) : 0;
+  const push = touch !== 0 && touch === -Math.sign(cv) ? Math.abs(cv) : 0;
+  if (push > 0.1 && s.air <= 0 && s.dizzy <= 0) {
+    s.v -= Math.max(0, Math.min(s.v - SAND.vMin * 0.6, SAND.fenceDrag * push * dt));
+    if ((s.scrapeT -= dt) <= 0) {
+      s.scrapeT = 0.3;
+      fx(s, 'carve_spray', s.x, s.d - 0.6, -touch);
+      s.events.push({ type: 'scrape' });
+    }
+  } else s.scrapeT = 0;
   s.lean = s.yaw / SAND.yawMax;
   s.steer = Math.abs(s.lean) > 0.12 ? Math.sign(s.lean) : 0;
   if (s.steer !== 0) s.flip = s.steer;
@@ -357,7 +467,6 @@ export function updateSandboard(s: SandState, input: SandInput, dt: number) {
     s.carveT -= dt;
     s.v = Math.min(top + SAND.carveMax, s.v + s.carveRate * dt);
   }
-  s.d += s.v * dt;
 
   for (const ob of s.obs) {
     if (ob.got || ob.hit) continue;

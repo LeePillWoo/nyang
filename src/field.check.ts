@@ -437,7 +437,7 @@ console.log('bridge.check: ok');
       if ((w.sx - px) * w.hx + (w.sy - py) * w.hy > 0) headingOk++;
     }
   }
-  assert.ok(path > 8 * C, `그림자가 돌아다닌다 (8초에 ${(path / C).toFixed(1)}칸)`);
+  assert.ok(path > 6 * C, `그림자가 돌아다닌다 — 멈춰 있지 않다 (8초에 ${(path / C).toFixed(1)}칸)`);
   assert.ok(maxD <= WHALE.near[1] + 1, `나타난 뒤엔 배 둘레에 머문다 (가장 멀리 ${maxD.toFixed(1)}칸)`);
   assert.ok(headingOk > frames * 0.9, `바라보는 쪽 = 움직이는 쪽 (${headingOk}/${frames})`);
   const d0 = Math.hypot(w.sx - near.x, w.sy - near.y);

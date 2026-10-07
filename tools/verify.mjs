@@ -19,7 +19,7 @@ const FIELD = readJson('../src/data/field.json');
 const WAVE_DATA = readJson('../src/data/waves.json');
 const PLAYER_DATA = readJson('../src/data/player.json');
 const SKILL_DATA = readJson('../src/data/skills.json');
-const { OBS: SAND_OBS, coast: sandCoast } = await import('../src/sandboard.ts');
+const { OBS: SAND_OBS, coast: sandCoast, center: sandCenter } = await import('../src/sandboard.ts');
 /** 개방 구역(field.json open) 안의 워프 — 잠긴 구역 밖 워프는 갈 수 없는 게 맞다 */
 const inOpen = (x, y) => {
   const c = Math.min(FIELD.grid[0] - 1, Math.floor((x * FIELD.grid[0]) / FIELD.size[0]));
@@ -1182,21 +1182,40 @@ try {
         return D.apply(this, a);
       };
     });
-    // 자동 조종: 빈 레인으로 A/D, 6m 안의 낮은 장애물은 Space 로 점프 (높은 것·구덩이는 피하기만)
+    // 자동 조종: 빈 레인으로 A/D, 6m 안의 낮은 장애물은 Space 로 점프 (높은 것·구덩이는 피하기만). 길이 지그재그라 레인은 그 거리의 길 가운데 기준
     const roles = Object.fromEntries(Object.entries(SAND_OBS).map(([k, o]) => [k, [o.role, o.r]]));
     let held = null;
     let shot = false;
+    let xLo = 0;
+    let xHi = 0;
+    let off = 0;
     const t0 = Date.now();
+    await page.evaluate(() => {
+      window.__scrapes = 0;
+      const s = __game.sandboard;
+      // 울타리에 쓸린 횟수 (사건은 프레임마다 지워지니 그리기 때마다 센다)
+      const loop = () => {
+        window.__scrapes += __game.sandboard.events.filter((e) => e.type === 'scrape').length;
+        if (__game.sandboard === s && s.phase === 'play') requestAnimationFrame(loop);
+      };
+      loop();
+    });
     while (Date.now() - t0 < 120000) {
       const s = await page.evaluate((roles) => {
         const s = __game.sandboard;
         const bad = (o) => ['hit', 'tall', 'pit'].includes(roles[o.kind][0]) && !o.hit;
-        return { phase: s.phase, x: s.x, vx: s.vx, yaw: s.yaw, yawV: s.yawV, d: s.d, t: s.t, air: s.air, obs: s.obs.filter((o) => bad(o) && o.d > s.d && o.d < s.d + 22).map((o) => [o.x, o.d, roles[o.kind][1], roles[o.kind][0]]) };
+        const sx = __game.sandScreen(s.x, s.d).x / innerWidth;
+        return { phase: s.phase, x: s.x, vx: s.vx, yaw: s.yaw, yawV: s.yawV, d: s.d, v: s.v, t: s.t, air: s.air, sx, course: s.course, obs: s.obs.filter((o) => bad(o) && o.d > s.d && o.d < s.d + 22).map((o) => [o.x, o.d, roles[o.kind][1], roles[o.kind][0]]) };
       }, roles);
       if (s.phase !== 'play') break;
+      xLo = Math.min(xLo, s.x);
+      xHi = Math.max(xHi, s.x);
+      if (s.sx < 0.15 || s.sx > 0.85) off++;
+      const C = (d) => sandCenter(s.course, d);
       const lanes = [-0.8, -0.4, 0, 0.4, 0.8];
-      const lane = lanes.map((l) => ({ l, bad: s.obs.filter(([x, , r]) => Math.abs(x - l) < r + 0.2).length + Math.abs(l - s.x) * 0.01 })).sort((a, b) => a.bad - b.bad)[0].l;
-      const pred = sandCoast(s); // 지금 떼면 멈출 자리 (드리프트로 더 미끄러지는 만큼)
+      const lane = lanes.map((l) => ({ l, bad: s.obs.filter(([x, d, r]) => Math.abs(x - C(d) - l) < r + 0.2).length + Math.abs(l - (s.x - C(s.d))) * 0.01 })).sort((a, b) => a.bad - b.bad)[0].l;
+      // 지금 떼면 0.4초 뒤 자리 (드리프트로 더 미끄러지는 만큼, 굽이면 길이 옆으로 가는 만큼) — 그때의 길 가운데 기준
+      const pred = sandCoast(s, 0.4) - C(s.d + s.v * 0.4);
       const want = Math.abs(lane - pred) < 0.04 ? null : lane > pred ? 'KeyD' : 'KeyA';
       if (want !== held) {
         if (held) await page.keyboard.up(held);
@@ -1212,7 +1231,10 @@ try {
     }
     if (held) await page.keyboard.up(held);
     const end = await page.evaluate(() => ({ fell: __game.sandboard.fell, hearts: __game.sandboard.hearts, phase: __game.sandboard.phase, coins: __game.sandboard.coins, crashes: __game.sandboard.crashes, score: __game.sandboard.score, t: __game.sandboard.t, bag: __game.bag.coins, best: __game.records.sandboard }));
-    check(end.phase === 'done' && !end.fell, `피하고 점프하며 끝까지 가면 완주 (${end.t.toFixed(1)}초 · 냥코인 ${end.coins} · 부딪힘 ${end.crashes} · 하트 ${end.hearts} · 점수 ${end.score})`);
+    const scrapes = await page.evaluate(() => window.__scrapes);
+    check(end.phase === 'done' && !end.fell, `피하고 점프하며 끝까지 가면 완주 (${end.t.toFixed(1)}초 · 냥코인 ${end.coins} · 부딪힘 ${end.crashes} · 하트 ${end.hearts} · 울타리 쓸림 ${scrapes} · 점수 ${end.score})`);
+    check(xHi - xLo > 1.5, `길이 지그재그로 휘어 고양이도 옆으로 크게 오간다 (가로 자리 ${xLo.toFixed(1)} ~ ${xHi.toFixed(1)})`);
+    check(off === 0, `카메라가 따라가 고양이는 늘 화면 가운데 70% 안 (벗어난 때 ${off}번)`);
     check(end.coins > 0 && end.bag === coins0 + end.coins, '주운 냥코인이 가방에');
     const bad = await page.evaluate(() => window.__badDraw);
     check(bad.length === 0, `끝까지 달리는 동안 NaN 좌표로 그린 것 ${bad.length}번 (뒤쪽 장식이 왼쪽 위에 모이던 버그)${bad.length ? ' — 처음 ' + bad[0] + 'm' : ''}`);
@@ -1437,6 +1459,7 @@ try {
       const s = __game.sandboard;
       s.obs = [];
       s.nextAt = 9999;
+      s.course = [{ d0: -1e9, d1: 1e9, c0: 0, c1: 0 }]; // 곧은 길에서 (굽이에 밀려 각도가 섞이지 않게)
     });
     await sleep(1600);
     const shots = [];
