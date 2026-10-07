@@ -19,7 +19,7 @@ const FIELD = readJson('../src/data/field.json');
 const WAVE_DATA = readJson('../src/data/waves.json');
 const PLAYER_DATA = readJson('../src/data/player.json');
 const SKILL_DATA = readJson('../src/data/skills.json');
-const { OBS: SAND_OBS, coast: sandCoast, center: sandCenter, width: sandWidth } = await import('../src/sandboard.ts');
+const { OBS: SAND_OBS, SAND: SAND_CFG, coast: sandCoast, center: sandCenter, width: sandWidth } = await import('../src/sandboard.ts');
 /** 개방 구역(field.json open) 안의 워프 — 잠긴 구역 밖 워프는 갈 수 없는 게 맞다 */
 const inOpen = (x, y) => {
   const c = Math.min(FIELD.grid[0] - 1, Math.floor((x * FIELD.grid[0]) / FIELD.size[0]));
@@ -1263,7 +1263,7 @@ try {
     check(end.best !== null && end.best >= end.score, `최고 점수 저장 (${end.best})`);
     // 결승 뒤: 그 속도로 미끄러지다 서고, 카드는 cardDelay 초 뒤에 뜬다 (넘는 순간 딱 멈추고 카드가 바로 덮던 것)
     await page.waitForFunction(() => __game.sandboard.doneT > 1.3, { timeout: 5000 }).catch(() => {});
-    const glide = await page.evaluate(() => __game.sandboard.d - 900);
+    const glide = await page.evaluate((L) => __game.sandboard.d - L, SAND_CFG.length);
     check(glide > 10, `결승을 넘으면 미끄러지다 선다 (${glide.toFixed(1)}m)`);
     await page.screenshot({ path: fsPath(new URL('sandboard-done.png', OUT)) });
     await click2(page, (await page.evaluate(() => __game.miniScreen())).again);
@@ -1551,20 +1551,20 @@ try {
     });
     await page.goto(base + '?trace&sandboard', { waitUntil: 'load' });
     await page.waitForFunction(() => window.__sheets && window.__game?.sandboard, { timeout: 60000 });
-    const r = await page.evaluate(async () => {
+    const r = await page.evaluate(async (L) => {
       const s = __game.sandboard;
       s.obs = [];
       s.nextAt = 1e9;
       setInterval(() => (s.hearts = 3), 50);
-      s.d = 400;
+      s.d = 250;
       await new Promise((res) => setTimeout(res, 2500));
-      s.d = 845;
+      s.d = L - 55;
       await new Promise((res) => setTimeout(res, 2200));
       const med = (a) => [...a].sort((x, y) => x - y)[Math.floor(a.length / 2)];
-      const flat = window.__cost.filter(([d]) => d > 405 && d < 450).map(([, t]) => t);
-      const curl = window.__cost.filter(([d]) => d > 850 && d < 899).map(([, t]) => t);
+      const flat = window.__cost.filter(([d]) => d > 255 && d < 300).map(([, t]) => t);
+      const curl = window.__cost.filter(([d]) => d > L - 50 && d < L - 1).map(([, t]) => t);
       return { flat: med(flat), curl: med(curl), n: [flat.length, curl.length] };
-    });
+    }, SAND_CFG.length);
     check(r.curl <= r.flat * 2 + 1.5, `결승 앞도 평면 구간처럼 가볍게 그린다 (한 프레임 중간값: 평면 ${r.flat.toFixed(2)}ms · 결승 앞 ${r.curl.toFixed(2)}ms, ${r.n.join('/')}프레임)`);
     check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
     await page.close();

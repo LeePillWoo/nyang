@@ -6,7 +6,8 @@
  * 그림을 불러오지 않는 순수 로직이라 node 에서 체크된다 (그리기는 sandboard-draw.ts).
  */
 export const SAND = {
-  length: 900,
+  /** 코스 길이 (m) — 2026-10-07 사용자 요청으로 900 → 630 (30% 짧게) */
+  length: 630,
   vMin: 13,
   vMax: 24,
   accel: 2.4,
@@ -45,7 +46,7 @@ export const SAND = {
   edge: 0.92,
   /**
    * 코스 (2026-10-07 사용자 의견 — 커브가 너무 많다: 커브는 짧게 한 판에 두세 번만, 나머지는 예전처럼 곧은 길에 장애물을 더):
-   * 곧은 길이 대부분이고, 커브 구간이 curves 번 — 코스를 고르게 나눈 칸마다 하나씩. 커브 구간은 둘 중 하나:
+   * 곧은 길이 대부분이고, 커브 구간이 curves 번(코스를 630m 로 줄이며 2번 — 같은 길이에 커브가 몰리지 않게) — 코스를 고르게 나눈 칸마다 하나씩. 커브 구간은 둘 중 하나:
    * 지그재그(zigzag — 비스듬히 곧은 다리 둘이 짧은 모퉁이로 좌우 번갈아, 약 70m) · 시케인(chicane — 길이 narrow 로 좁아지며 짧게 좌우로 세 번, 약 60m).
    * 다리 기울기(길 가운데가 1m 마다 옆으로 가는 양)는 최고 속도에서 가로 1.3 쯤 (보드를 다 꺾은 2.5 의 절반) — 넉넉히 따라간다.
    * 처음 start m 와 결승 앞 finish m 는 곧게
@@ -53,7 +54,7 @@ export const SAND = {
   course: {
     start: 40,
     finish: 75,
-    curves: [2, 3],
+    curves: [2, 2],
     zigzag: { slope: [0.042, 0.055], leg: [18, 24], corner: [9, 12], chance: 0.6 },
     chicane: { slope: 0.05, leg: 11, corner: 6, legs: 3 },
     narrow: 0.8,
@@ -93,7 +94,7 @@ export const SAND = {
   magnetD: 10,
   shield: 10,
   /** 장애물 줄 사이 거리 (m) */
-  gap: [12, 18],
+  gap: [10, 20],
   lanes: [-0.8, -0.4, 0, 0.4, 0.8],
   /** 이만큼 앞까지 미리 깔아 둔다 (m) */
   ahead: 110,
@@ -256,7 +257,8 @@ export type Fences = ReturnType<typeof fences>;
 export type Ob = { kind: ObKind; x: number; d: number; got?: boolean; hit?: boolean };
 /** 그리기용 짧은 효과 (시트의 효과 id) · 떠오르는 글자 */
 export type SandFx = { id: 'jump_puff' | 'land_burst' | 'hit_stars' | 'pickup_sparkle' | 'carve_spray'; x: number; d: number; t: number; flip?: number };
-export type SandPop = { text: string; x: number; d: number; t: number };
+/** 떠오르는 글자 — sum 이 있으면 냥코인 글자 (잇달아 주우면 +1 → +2 → +3 으로 하나에 모은다) */
+export type SandPop = { text: string; x: number; d: number; t: number; sum?: number };
 export type SandEvent =
   | { type: 'coin'; n: number }
   | { type: 'jump' }
@@ -342,10 +344,12 @@ export function makeSandboard(rng: () => number = Math.random): SandState {
 const pick = <T>(s: SandState, list: readonly T[]) => list[Math.floor(s.rng() * list.length)];
 
 /**
- * 앞쪽에 깐다. 곧은 길엔 줄마다 장애물 · 냥코인 · 보상 — 갈수록 잦고 많게 (장애물 줄이 절반 넘게, 뒤로 갈수록 한 줄에 셋도),
- * 가끔 점프대 줄(모든 레인 — 크게 떠서 구덩이 줄을 건너뛴다) · 슬랄롬(높은 장애물 좌우 번갈아, 반대쪽에 냥코인).
- * 부딪히는 것끼리는 서로 다른 레인 — 늘 지나갈 길이 있다 (레인은 그 거리의 길 가운데 · 폭 기준).
- * 커브 구간은 길 가운데를 따라 냥코인만 — 그 8m 앞과 끝나고 12m 도 장애물 없이 (꺾으며 길을 가로지르는 동안 피할 틈이 없다)
+ * 앞쪽에 깐다. 곧은 길엔 9~20m 마다(갈수록 촘촘히) 장애물 무리 · 냥코인 · 점프대 · 나무 울타리 · 구덩이 · 둔덕 · 가속 발판 · 보상 —
+ * 자리는 흩뿌린다 (2026-10-07 사용자 의견 "장애물이 너무 규칙적" — 레인 다섯 자리에 줄 세워 격자처럼 보였다).
+ * 장애물 무리는 먼저 비워 둘 길(레인 하나)을 정하고 — 앞 무리가 22m 안이면 그 길에서 한 레인 안, 한 레인만 옮기면 빠져나간다 —
+ * 장애물은 그 길만 피해 가로 아무 데나 · 앞뒤로 ±2.5m. 가끔 점프대 줄(모든 레인 — 크게 떠서 구덩이 줄을 건너뛴다) · 슬랄롬(높은 장애물 좌우 번갈아).
+ * 냥코인은 아껴서 (같은 날 "코인이 너무 많다" — 판마다 143 → 40 쯤). 커브 구간은 길 가운데를 따라 냥코인 몇 개만,
+ * 그 8m 앞과 끝나고 12m 는 장애물 없이 (꺾으며 길을 가로지르는 동안 피할 틈이 없다)
  */
 function spawn(s: SandState) {
   while (s.nextAt < s.d + SAND.ahead && s.nextAt < SAND.length - 25) {
@@ -354,6 +358,8 @@ function spawn(s: SandState) {
     const g = segAt(s.course, d);
     const w = width(s.course, d).w;
     const lanes = SAND.lanes.map((l) => l * w);
+    /** 가로 아무 데나 (달릴 수 있는 폭의 m 배 안) */
+    const anyX = (m = 0.95) => (s.rng() * 2 - 1) * SAND.edge * w * m;
     const add = (kind: ObKind, x: number, dd = d) => {
       const f = fences(s.course, dd);
       s.obs.push({ kind, x: f.c + clamp(x, -SAND.edge * f.w, SAND.edge * f.w), d: dd });
@@ -361,88 +367,102 @@ function spawn(s: SandState) {
     const coins = (x0: number, d0: number, n: number, slant = 0) => {
       for (let i = 0; i < n; i++) add('paw_coin', x0 + slant * i, d0 + i * 3);
     };
-    const gap = SAND.gap[0] + s.rng() * (SAND.gap[1] - SAND.gap[0]) * (1 - late * 0.25);
+    const gap = SAND.gap[0] + s.rng() * (SAND.gap[1] - SAND.gap[0]) * (1 - late * 0.3);
     if (curvy(g)) {
-      // 커브 구간: 길 가운데를 따라 냥코인 — 따라 꺾으면 줍는다
+      // 커브 구간: 길 가운데를 따라 냥코인 몇 개 — 따라 꺾으면 줍는다
       let end = g.d1;
       for (const q of s.course.segs) if (curvy(q) && Math.abs(q.d0 - end) < 1e-6) end = q.d1;
-      for (let dd = d; dd < end - 2; dd += 3) add('paw_coin', 0, dd);
-      s.nextAt = end + 12;
+      for (let dd = d + 4; dd < end - 2; dd += 10) add('paw_coin', 0, dd);
+      s.nextAt = end + 13.5; // 12m + 무리의 앞뒤 흩뜨림 1.5m
       continue;
     }
-    // 다음 커브 구간까지 남은 곧은 길 — 8m 안이면 비우고 그 구간부터
+    // 다음 커브 구간까지 남은 곧은 길 — 9.5m(8m + 무리의 앞뒤 흩뜨림) 안이면 비우고 그 구간부터
     const next = s.course.segs.find((q) => curvy(q) && q.d0 >= d);
     const room = (next ? next.d0 : SAND.length - 25) - d;
-    if (next && room < 8) {
+    if (next && room < 9.5) {
       s.nextAt = next.d0;
       continue;
     }
     const r = s.rng();
     if (r < 0.05 && room > 45 && d > 100) {
-      // 점프대 줄: 모든 레인 → 크게 떠서 구덩이 줄을 건너뛰고 공중 냥코인 세 줄, 내려앉는 곳에 냥코인 더미
+      // 점프대 줄: 모든 레인 → 크게 떠서 구덩이 줄을 건너뛰고 공중 냥코인 한 줄, 내려앉는 곳에 냥코인 더미
       for (const x of lanes) add('jump_ramp', x);
       for (const x of lanes) add('sand_pit', x, d + 10);
-      for (const x of [-0.5 * w, 0, 0.5 * w]) for (let i = 0; i < 4; i++) add('paw_coin', x, d + 5 + i * 4);
+      for (let i = 0; i < 3; i++) add('paw_coin', 0, d + 6 + i * 5);
       add('coin_pile', 0, d + 25);
       s.nextAt = d + 40;
-      continue;
-    }
-    if (r < 0.1 && room > 55 && d > 100) {
-      // 슬랄롬: 높은 장애물(점프로 못 넘는다)이 좌우 번갈아, 반대쪽에 냥코인 — 다 주우려면 이리저리 꺾는다
-      let side = s.rng() < 0.5 ? -1 : 1;
-      for (let i = 0; i < 5; i++) {
-        add(pick(s, TALL), side * 0.4 * w, d + i * 12);
-        add('paw_coin', -side * 0.45 * w, d + i * 12);
-        side = -side;
-      }
-      s.nextAt = d + 62;
       s.lastRow = null;
       continue;
     }
-    const q = s.rng();
-    if (q < 0.5 + late * 0.15) {
-      // 장애물 1~3개 (3개는 후반에만, 두 레인은 비운다). 앞 장애물 줄이 22m 안이면 빈 레인이 그 줄의 빈 레인과 이웃하게 —
-      // 한 레인만 옮기면 빠져나간다 (멀리 떨어지면 0.5초 안에 길을 가로질러야 했다)
-      const n = s.rng() < 0.45 ? 1 : late > 0.45 && s.rng() < 0.4 ? 3 : 2;
-      const prev = s.lastRow && d - s.lastRow.d < 22 ? s.lastRow.free : null;
-      let at = [...lanes].sort(() => s.rng() - 0.5).slice(0, n);
-      for (let k = 0; prev && k < 12; k++) {
-        const free = lanes.filter((l) => !at.includes(l));
-        if (free.some((f) => prev.some((p) => Math.abs(f - p) <= 0.45 * w))) break;
-        at = [...lanes].sort(() => s.rng() - 0.5).slice(0, k < 8 ? n : 1);
+    if (r < 0.1 && room > 66 && d > 100) {
+      // 슬랄롬: 높은 장애물(점프로 못 넘는다)이 좌우 번갈아(자리 · 간격은 조금씩 다르게), 두 번은 반대쪽에 냥코인
+      let side = s.rng() < 0.5 ? -1 : 1;
+      let dd = d;
+      for (let i = 0; i < 5; i++) {
+        add(pick(s, TALL), side * (0.3 + s.rng() * 0.18) * w, dd);
+        if (i % 2 === 1) add('paw_coin', -side * 0.45 * w, dd);
+        side = -side;
+        dd += 10 + s.rng() * 4;
       }
-      for (const x of at) add(s.rng() < 0.22 + late * 0.15 ? pick(s, TALL) : pick(s, HIT), x + (s.rng() - 0.5) * 0.06);
-      s.lastRow = { d, free: lanes.filter((l) => !at.includes(l)) };
-      // 빈 레인에 냥코인 한 줄 (가끔)
-      if (s.rng() < 0.35) coins(pick(s, lanes.filter((l) => !at.includes(l))), d - 4, 3);
-    } else if (q < 0.72) {
-      coins(pick(s, lanes), d, 5, s.rng() < 0.4 ? (s.rng() < 0.5 ? -0.12 : 0.12) : 0);
-    } else if (q < 0.78 && room > 25) {
-      // 점프대 → 공중 냥코인 + 끝에 냥코인 더미 (뜬 채 커브로 넘어가지 않게 곧은 길이 25m 넘게 남았을 때만)
-      const x0 = lanes[1 + Math.floor(s.rng() * 3)];
+      s.nextAt = dd + 2;
+      s.lastRow = null;
+      continue;
+    }
+    /** 장애물 무리: 비워 둘 길을 정하고(앞 무리가 22m 안이면 그 길에서 한 레인 안), 장애물은 그 길만 피해 가로 아무 데나(m 배 안) · 앞뒤로 ±1.5m */
+    const cluster = (kinds: ObKind[], m = 1) => {
+      const prev = s.lastRow && d - s.lastRow.d < 22 ? s.lastRow.free[0] : null;
+      const keep = pick(s, prev === null ? lanes : lanes.filter((l) => Math.abs(l - prev) <= 0.45 * w));
+      const placed: { x: number; r: number }[] = [];
+      for (const kind of kinds) {
+        const rr = OBS[kind].r;
+        for (let k = 0; k < 16; k++) {
+          const x = anyX(m);
+          // 비워 둔 길 둘레(고양이 반폭 + 여유)와 이미 놓인 장애물은 피한다
+          if (Math.abs(x - keep) < rr + SAND.catR + 0.14 || placed.some((p) => Math.abs(p.x - x) < p.r + rr + 0.02)) continue;
+          placed.push({ x, r: rr });
+          add(kind, x, d + (s.rng() - 0.5) * 3);
+          break;
+        }
+      }
+      s.lastRow = { d, free: [keep] };
+      return keep;
+    };
+    const q = s.rng();
+    const P = 0.55 + late * 0.15; // 장애물 무리 (나머지는 아래 비율로 나눈다)
+    const u = (q - P) / (1 - P);
+    if (q < P) {
+      const n = s.rng() < 0.4 ? 1 : late > 0.4 && s.rng() < 0.4 ? 3 : 2;
+      const keep = cluster(Array.from({ length: n }, () => (s.rng() < 0.22 + late * 0.15 ? pick(s, TALL) : pick(s, HIT))));
+      // 비워 둔 길에 냥코인 (가끔)
+      if (s.rng() < 0.12) coins(keep, d - 7, 3);
+    } else if (u < 0.15) {
+      coins(anyX(0.8), d, 4, (s.rng() - 0.5) * 0.24);
+    } else if (u < 0.3 && room > 25) {
+      // 점프대 → 공중 냥코인 + 가끔 끝에 냥코인 더미 (뜬 채 커브로 넘어가지 않게 곧은 길이 25m 넘게 남았을 때만)
+      const x0 = anyX(0.6);
       add('jump_ramp', x0);
-      for (let i = 0; i < 4; i++) add('paw_coin', x0, d + 6 + i * 3);
-      if (s.rng() < 0.5) add('coin_pile', x0, d + 19);
-    } else if (q < 0.83) {
-      // 낮은 나무 울타리: 뛰어넘거나 가장자리로 돌아간다
-      add('wood_barrier', pick(s, [-0.35, 0, 0.35]) * w);
-    } else if (q < 0.87) {
-      add('sand_pit', pick(s, lanes));
-      if (s.rng() < 0.5) add('sand_pit', pick(s, lanes), d + 8);
-    } else if (q < 0.91) {
+      for (let i = 0; i < 3; i++) add('paw_coin', x0, d + 7 + i * 4);
+      if (s.rng() < 0.25) add('coin_pile', x0, d + 20);
+    } else if (u < 0.45) {
+      // 낮은 나무 울타리: 뛰어넘거나 돌아간다 (장애물 무리처럼 비워 둘 길을 남긴다)
+      cluster(['wood_barrier'], 0.45);
+    } else if (u < 0.6) {
+      add('sand_pit', anyX());
+      if (s.rng() < 0.5) add('sand_pit', anyX(), d + 6 + s.rng() * 6);
+    } else if (u < 0.74) {
       // 모래 둔덕 → 작은 뜀 + 냥코인
-      const x0 = pick(s, lanes);
+      const x0 = anyX(0.85);
       add('sand_bump', x0);
-      coins(x0, d + 5, 3);
-    } else if (q < 0.95) {
-      // 가속 발판 → 빨라진 채 냥코인 줄
-      const x0 = lanes[1 + Math.floor(s.rng() * 3)];
+      coins(x0, d + 6, 2);
+    } else if (u < 0.88) {
+      // 가속 발판 → 빨라진 채 냥코인
+      const x0 = anyX(0.55);
       add('boost_pad', x0);
-      coins(x0, d + 6, 6);
+      coins(x0, d + 7, 2);
     } else {
       // 보상 하나: 자석 · 방패 · 하트 · 보물상자
       const p = s.rng();
-      add(p < 0.35 ? 'magnet_pickup' : p < 0.65 ? 'shield_pickup' : p < 0.85 ? 'heart_pickup' : 'treasure_chest', pick(s, lanes));
+      add(p < 0.35 ? 'magnet_pickup' : p < 0.65 ? 'shield_pickup' : p < 0.85 ? 'heart_pickup' : 'treasure_chest', anyX(0.8));
     }
     s.nextAt += gap;
   }
@@ -629,7 +649,10 @@ export function updateSandboard(s: SandState, input: SandInput, dt: number) {
         ob.got = true;
         s.coins += n;
         fx(s, 'pickup_sparkle', ob.x, ob.d);
-        pop(s, `+${n}`, ob.x, ob.d);
+        // 잇달아 주우면 글자 하나로 모은다 (+1 → +2 → +3) — 떠오르는 글자가 화면에 잔뜩 쌓이지 않게
+        const last = s.pops[s.pops.length - 1];
+        if (last?.sum !== undefined && last.t < 0.35) Object.assign(last, { sum: last.sum + n, text: `+${last.sum + n}`, x: ob.x, d: ob.d, t: 0 });
+        else s.pops.push({ text: `+${n}`, x: ob.x, d: ob.d, t: 0, sum: n });
         s.events.push({ type: 'coin', n });
         break;
       }

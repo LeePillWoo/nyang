@@ -77,12 +77,16 @@ for (let seed = 1; seed <= 30; seed++) {
 for (const k of ['run', 'leg', 'corner', 'chicane']) assert.ok((kinds[k] ?? 0) >= 3, `30판에 ${k} 가 나온다 (${kinds[k] ?? 0})`);
 console.log(`  코스 30판: 커브 구간 판마다 평균 ${(curveSum / 30).toFixed(1)}번 · 조각 ${Object.entries(kinds).map(([k, n]) => `${k} ${n}`).join(' · ')}`);
 
-// 1) 물건: 장애물 줄마다 레인 하나는 비어 있다(레인은 그 거리의 길 가운데 · 폭 기준). 가까운(22m 안) 다음 줄은 빈 레인이 앞 줄의 빈 레인과 이웃한다.
-//    물건은 모두 울타리 안. 부딪히는 것은 커브 구간과 그 8m 앞 · 12m 뒤에 없다 (꺾으며 가로지를 틈). 점프대 줄은 모든 레인을 덮는다.
-//    곧은 길엔 장애물이 촘촘하다. 고루 나온다 (30판, 지나간 건 지워지니 모아 둔다)
+// 1) 물건: 장애물은 흩뿌려져 있다 (레인 자리에 줄 서지 않고 가로 · 앞뒤가 제각각). 그래도 늘 빠져나갈 길이 이어진다 —
+//    거리 0.32m 마다 고양이가 갈 수 있는 가로 자리를 따라간다 (한 걸음에 0.02 = 최고 속도에서 보드를 다 꺾은 가로 속도의 60% 쯤 · 점프 없이,
+//    부딪히는 것 둘레 r + catR 은 막힘, 울타리 안). 물건은 모두 울타리 안, 부딪히는 것은 커브 구간과 그 8m 앞 · 12m 뒤에 없다,
+//    점프대 줄은 모든 레인을 덮는다, 냥코인은 아껴서 (100m 마다 8개 아래). 고루 나온다 (30판, 지나간 건 지워지니 모아 둔다)
 const seen = new Set<ObKind>();
-const rowCounts: number[] = [];
+const solidCounts: number[] = [];
+const coinCounts: number[] = [];
 const rampRows: { seed: number; d: number }[] = [];
+let offLane = 0;
+let solidAll = 0;
 for (let seed = 1; seed <= 30; seed++) {
   const s = makeSandboard(seeded(seed));
   const all = new Set<Ob>();
@@ -92,24 +96,42 @@ for (let seed = 1; seed <= 30; seed++) {
     s.phase = 'play';
     for (const o of s.obs) all.add(o);
   }
-  const rows = new Map<number, Ob[]>();
-  for (const o of all) if (solid(o.kind)) rows.set(o.d, [...(rows.get(o.d) ?? []), o]);
-  rowCounts.push(rows.size);
-  assert.ok(rows.size >= 18, `seed ${seed}: 장애물 줄 ${rows.size} (촘촘하게)`);
-  const freeOf = (d: number, obs: Ob[]) => {
+  const solids = [...all].filter((o) => solid(o.kind)).sort((p, q) => p.d - q.d);
+  solidCounts.push(solids.length);
+  coinCounts.push([...all].filter((o) => o.kind === 'paw_coin').length);
+  assert.ok(solids.length >= 15, `seed ${seed}: 장애물 ${solids.length}개 (촘촘하게)`);
+  for (const o of solids) {
+    const f = fences(s.course, o.d);
+    solidAll++;
+    if (SAND.lanes.every((l) => Math.abs(o.x - f.c - l * f.w) > 0.05)) offLane++;
+  }
+  // 빠져나갈 길: 가로 칸 0.02 — 코스 가운데가 움직이는 만큼 넓게
+  let cMin = 0;
+  let cMax = 0;
+  for (let d = 0; d <= SAND.length; d += 2) {
+    cMin = Math.min(cMin, center(s.course, d));
+    cMax = Math.max(cMax, center(s.course, d));
+  }
+  const X0 = cMin - 1.3;
+  const N = Math.ceil((cMax - cMin + 2.6) / 0.02);
+  let reach = new Uint8Array(N).fill(1);
+  let k0 = 0;
+  for (let d = 0; d <= SAND.length; d += 0.32) {
     const f = fences(s.course, d);
-    return SAND.lanes.map((l) => l * f.w).filter((l) => obs.every((o) => Math.abs(o.x - f.c - l) >= OBS[o.kind].r + SAND.catR));
-  };
-  let prev: { d: number; free: number[] } | null = null;
-  for (const [d, obs] of [...rows].sort((p, q) => p[0] - q[0])) {
-    const free = freeOf(d, obs);
-    assert.ok(free.length >= 1, `seed ${seed} ${d}m: 빈 레인이 있다`);
-    if (prev && d - prev.d < 22 && obs.length > 1)
-      assert.ok(
-        free.some((x) => prev!.free.some((p) => Math.abs(x - p) <= 0.45 * fences(s.course, d).w)),
-        `seed ${seed} ${d.toFixed(0)}m: 빈 레인이 앞 줄(${(d - prev.d).toFixed(0)}m 전)의 빈 레인과 이웃한다`,
-      );
-    prev = { d, free };
+    const next = new Uint8Array(N);
+    for (let i = 0; i < N; i++) if (reach[i] || reach[i - 1] || reach[i + 1]) next[i] = 1;
+    while (k0 < solids.length && solids[k0].d < d - SAND.reach) k0++;
+    let any = false;
+    for (let i = 0; i < N; i++) {
+      if (!next[i]) continue;
+      const x = X0 + i * 0.02;
+      let ok = x >= f.lo && x <= f.hi;
+      for (let j = k0; ok && j < solids.length && solids[j].d < d + SAND.reach; j++) if (Math.abs(solids[j].x - x) < OBS[solids[j].kind].r + SAND.catR) ok = false;
+      next[i] = ok ? 1 : 0;
+      any ||= ok;
+    }
+    assert.ok(any, `seed ${seed} ${d.toFixed(1)}m: 빠져나갈 길이 이어진다`);
+    reach = next;
   }
   for (const o of all) {
     const f = fences(s.course, o.d);
@@ -132,7 +154,13 @@ for (let seed = 1; seed <= 30; seed++) {
 const missing = (Object.keys(OBS) as ObKind[]).filter((k) => !seen.has(k));
 assert.equal(missing.length, 0, `30판에 모든 물건이 나온다 (안 나온 것: ${missing.join(', ')})`);
 assert.ok(rampRows.length >= 3, `30판에 점프대 줄 ${rampRows.length}번`);
-console.log(`  장애물 줄: 판마다 ${Math.min(...rowCounts)} ~ ${Math.max(...rowCounts)} (평균 ${(rowCounts.reduce((x, y) => x + y, 0) / rowCounts.length).toFixed(1)}) · 점프대 줄 30판에 ${rampRows.length}번`);
+assert.ok(offLane / solidAll > 0.6, `장애물은 흩뿌려진다 — 레인 자리를 벗어난 것 ${((offLane / solidAll) * 100).toFixed(0)}%`);
+const avg = (v: number[]) => v.reduce((x, y) => x + y, 0) / v.length;
+const coinPer100 = (avg(coinCounts) * 100) / SAND.length;
+assert.ok(coinPer100 < 8, `냥코인은 아껴서 — 100m 마다 ${coinPer100.toFixed(1)}개`);
+console.log(
+  `  물건 30판: 장애물 판마다 ${Math.min(...solidCounts)} ~ ${Math.max(...solidCounts)} (평균 ${avg(solidCounts).toFixed(1)}, 레인 자리를 벗어난 것 ${((offLane / solidAll) * 100).toFixed(0)}%) · 냥코인 판마다 평균 ${avg(coinCounts).toFixed(1)} (100m 마다 ${coinPer100.toFixed(1)}) · 점프대 줄 ${rampRows.length}번`,
+);
 
 /** 곧은 길에 깔린 물건을 비우고 (앞 d m · x 자리에 물건 하나씩 놓고 시험) */
 const fresh = (seed = 2) => {
@@ -513,7 +541,7 @@ const legCourse = (d0: number, k: number, len: number): Course => ({
   const fin = a.s.events.find((e) => e.type === 'finish');
   assert.ok(a.s.phase === 'done' && fin && !a.s.fell, '끝까지 가면 완주');
   assert.ok(a.s.coins > 0, `냥코인을 줍는다 (${a.s.coins})`);
-  console.log(`  샌드보드 ${SAND.length}m (커브 두세 번): ${a.t.toFixed(1)}초 · 냥코인 ${a.s.coins} · 부딪힘 ${a.s.crashes} · 울타리 쓸림 ${a.scrapes} · 점수 ${a.s.score}`);
+  console.log(`  샌드보드 ${SAND.length}m (커브 두 번): ${a.t.toFixed(1)}초 · 냥코인 ${a.s.coins} · 부딪힘 ${a.s.crashes} · 울타리 쓸림 ${a.scrapes} · 점수 ${a.s.score}`);
   if (a.s.crashes === 0) assert.equal(a.s.score, a.s.coins + SAND.cleanBonus, '무사 완주 보너스');
   else assert.equal(a.s.score, a.s.coins);
   // 결승 뒤: 조작은 안 먹고(점프 · 좌우 없음) 그 속도로 미끄러지다 서서히 선다, 반짝임 · 골인 글자. 카드는 cardDelay 초 뒤 (그리기)
