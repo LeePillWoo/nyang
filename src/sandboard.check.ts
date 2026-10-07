@@ -1,7 +1,24 @@
-// node src/sandboard.check.ts  (npm run check) — 길이 지그재그로 크게 휘고(따라갈 수 있게), 늘 지나갈 길이 있고, 점프로 넘고(높은 건 점프대로만),
-// 부딪히면 하트를 잃고, 굽이 바깥 울타리에 밀리면 느려지고, 방패·자석·하트·가속·구덩이·둔덕이 제 일을 하고, 끝까지 가면 완주 / 하트를 다 잃으면 넘어져 끝
+// node src/sandboard.check.ts  (npm run check) — 길이 다리 · 모퉁이로 지그재그 꺾이고(따라갈 수 있게) 폭이 바뀌고, 늘 지나갈 길이 있고,
+// 점프로 넘고(높은 건 점프대로만), 부딪히면 하트를 잃고, 안쪽으로 오는 울타리에 밀리면 느려지고, 방패·자석·하트·가속·구덩이·둔덕이 제 일을 하고,
+// 끝까지 가면 완주 / 하트를 다 잃으면 넘어져 끝
 import assert from 'node:assert/strict';
-import { center, coast, makeSandboard, OBS, SAND, slope, solid, STRAIGHT, updateSandboard, type Ob, type ObKind, type SandState } from './sandboard.ts';
+import {
+  center,
+  coast,
+  fences,
+  makeSandboard,
+  OBS,
+  SAND,
+  slope,
+  solid,
+  STRAIGHT,
+  updateSandboard,
+  width,
+  type Course,
+  type Ob,
+  type ObKind,
+  type SandState,
+} from './sandboard.ts';
 
 const seeded = (seed: number) => () => {
   seed |= 0;
@@ -13,27 +30,44 @@ const seeded = (seed: number) => () => {
 const DT = 1 / 60;
 const still = { mx: 0, jump: false };
 
-// 0) 코스 모양: 처음 start m 는 곧게, 그 뒤 굽이가 왼쪽 · 오른쪽 번갈아 크게 휜다. 가장 급한 곳도 slope[1] 을 넘지 않고(최고 속도로
-//    따라갈 수 있게) 가운데가 튀지 않는다. slope() 는 center() 의 기울기와 같다 (울타리가 미는 빠르기 · 자동 조종이 쓴다)
+// 0) 코스 모양: 조각이 끊김 없이 이어지고(가운데가 튀지 않음), 처음 start m 와 결승 앞 finish m 는 곧게.
+//    다리는 왼쪽 · 오른쪽 번갈아, 모퉁이는 짧게, 기울기는 한도 안 (최고 속도로 따라갈 수 있게), 폭은 좁게 ~ 넓게 안.
+//    slope() 는 center() 의 기울기, dw 는 폭의 기울기와 같다 (울타리가 미는 빠르기 · 자동 조종이 쓴다). 30판에 넓은 직선 · 점프대 줄 · 시케인이 다 나온다
+const kinds: Record<string, number> = {};
 for (let seed = 1; seed <= 30; seed++) {
   const s = makeSandboard(seeded(seed));
-  const bends = s.course.filter((b) => b.c1 !== b.c0 && b.d0 < SAND.length);
-  assert.ok(bends.length >= 8, `seed ${seed}: 굽이 ${bends.length}개`);
-  bends.forEach((b, i) => {
-    assert.ok(Math.abs(b.c1 - b.c0) >= SAND.course.shift[0] - 1e-9, `seed ${seed}: 굽이마다 크게`);
-    if (i) assert.notEqual(Math.sign(b.c1 - b.c0), Math.sign(bends[i - 1].c1 - bends[i - 1].c0), `seed ${seed}: 왼쪽 · 오른쪽 번갈아`);
+  const C = SAND.course;
+  const segs = s.course.segs;
+  segs.forEach((g, i) => {
+    kinds[g.kind] = (kinds[g.kind] ?? 0) + 1;
+    if (!i) return;
+    assert.ok(Math.abs(g.d0 - segs[i - 1].d1) < 1e-9, `seed ${seed}: 조각이 이어진다`);
+    assert.ok(Math.abs(center(s.course, g.d0 - 1e-7) - g.c0) < 1e-5, `seed ${seed} ${g.d0.toFixed(0)}m: 가운데가 튀지 않는다`);
+    if (g.kind === 'corner') assert.ok(g.d1 - g.d0 <= C.corner[0] * 1.2 + 1e-9, `seed ${seed}: 모퉁이는 짧게 (${(g.d1 - g.d0).toFixed(1)}m)`);
   });
+  const legs = segs.filter((g) => g.s0 === g.s1 && g.s1 !== 0);
+  assert.ok(legs.filter((g) => g.kind === 'leg').length >= 6, `seed ${seed}: 다리 ${legs.length}개`);
+  legs.forEach((g, i) => i && assert.notEqual(Math.sign(g.s1), Math.sign(legs[i - 1].s1), `seed ${seed} ${g.d0.toFixed(0)}m: 왼쪽 · 오른쪽 번갈아`));
+  const fin = segs[segs.length - 1];
+  assert.ok(fin.kind === 'finish' && fin.d0 <= SAND.length - C.finish + 1e-9, `결승 앞 ${C.finish}m 는 곧게 (${fin.d0.toFixed(0)}m 부터)`);
   for (let d = -10; d <= SAND.length + 20; d += 0.25) {
     const k = slope(s.course, d);
-    assert.ok(Math.abs(k) <= SAND.course.slope[1] + 1e-9, `seed ${seed} ${d}m: 기울기 ${k}`);
-    assert.ok(Math.abs(center(s.course, d + 0.25) - center(s.course, d)) <= SAND.course.slope[1] * 0.25 + 1e-9, `seed ${seed} ${d}m: 가운데가 튀지 않는다`);
-    if (d <= SAND.course.start) assert.equal(center(s.course, d), 0, '처음은 곧게');
+    const { w, dw } = width(s.course, d);
+    assert.ok(Math.abs(k) <= Math.max(C.slope[1], C.chicane.slope) + 1e-9, `seed ${seed} ${d}m: 기울기 ${k}`);
+    assert.ok(w >= C.narrow - 1e-9 && w <= C.wide + 1e-9, `seed ${seed} ${d}m: 폭 ${w}`);
+    if (d <= C.start) assert.ok(center(s.course, d) === 0 && w === 1, '처음은 곧게');
     const num = (center(s.course, d + 0.01) - center(s.course, d - 0.01)) / 0.02;
     assert.ok(Math.abs(num - k) < 1e-4, `seed ${seed} ${d}m: slope = center 의 기울기 (${num} · ${k})`);
+    const numW = (width(s.course, d + 0.01).w - width(s.course, d - 0.01).w) / 0.02;
+    assert.ok(Math.abs(numW - dw) < 1e-3, `seed ${seed} ${d}m: dw = 폭의 기울기 (${numW} · ${dw})`);
   }
 }
+for (const k of ['leg', 'corner', 'chicane', 'straight', 'jump']) assert.ok((kinds[k] ?? 0) >= 3, `30판에 ${k} 가 나온다 (${kinds[k] ?? 0})`);
+console.log(`  코스 30판: ${Object.entries(kinds).map(([k, n]) => `${k} ${n}`).join(' · ')}`);
 
-// 1) 물건: 장애물 줄마다 레인 하나는 비어 있다(레인은 그 거리의 길 가운데 기준). 물건은 모두 울타리 안. 고루 나온다 (30판, 지나간 건 지워지니 모아 둔다)
+// 1) 물건: 장애물 줄마다 레인 하나는 비어 있다(레인은 그 거리의 길 가운데 · 폭 기준). 물건은 모두 울타리 안.
+//    부딪히는 것은 모퉁이 · 시케인과 그 8m 앞, 모퉁이 12m 뒤에 없다 (꺾으며 가로지를 틈). 점프대 줄은 모든 레인을 덮는다.
+//    고루 나온다 (30판, 지나간 건 지워지니 모아 둔다)
 const seen = new Set<ObKind>();
 for (let seed = 1; seed <= 30; seed++) {
   const s = makeSandboard(seeded(seed));
@@ -46,13 +80,26 @@ for (let seed = 1; seed <= 30; seed++) {
   }
   const rows = new Map<number, Ob[]>();
   for (const o of all) if (solid(o.kind)) rows.set(o.d, [...(rows.get(o.d) ?? []), o]);
-  assert.ok(rows.size >= 10, `seed ${seed}: 장애물 줄 ${rows.size}`);
+  assert.ok(rows.size >= 5, `seed ${seed}: 장애물 줄 ${rows.size}`);
   for (const [d, obs] of rows) {
-    const c = center(s.course, d);
-    const free = SAND.lanes.filter((l) => obs.every((o) => Math.abs(o.x - c - l) >= OBS[o.kind].r + SAND.catR));
+    const f = fences(s.course, d);
+    const free = SAND.lanes.map((l) => l * f.w).filter((l) => obs.every((o) => Math.abs(o.x - f.c - l) >= OBS[o.kind].r + SAND.catR));
     assert.ok(free.length >= 1, `seed ${seed} ${d}m: 빈 레인이 있다`);
   }
-  for (const o of all) assert.ok(Math.abs(o.x - center(s.course, o.d)) <= SAND.edge + 1e-9, `seed ${seed} ${o.d.toFixed(0)}m ${o.kind}: 울타리 안`);
+  for (const o of all) {
+    const f = fences(s.course, o.d);
+    assert.ok(o.x >= f.lo - 1e-9 && o.x <= f.hi + 1e-9, `seed ${seed} ${o.d.toFixed(0)}m ${o.kind}: 울타리 안`);
+    if (!solid(o.kind)) continue;
+    const bad = s.course.segs.find((q) => (q.kind === 'corner' && o.d > q.d0 - 8 && o.d < q.d1 + 12) || (q.kind === 'chicane' && o.d > q.d0 - 8 && o.d < q.d1));
+    assert.ok(!bad, `seed ${seed} ${o.d.toFixed(1)}m ${o.kind}: 모퉁이 둘레엔 장애물이 없다 (${bad?.kind} ${bad?.d0.toFixed(0)}~${bad?.d1.toFixed(0)}m)`);
+  }
+  const ramps = [...all].filter((o) => o.kind === 'jump_ramp');
+  for (const g of s.course.segs.filter((q) => q.kind === 'jump' && q.d0 < SAND.length - 60)) {
+    const row = ramps.filter((o) => o.d > g.d0 && o.d < g.d1);
+    const f = fences(s.course, row[0]?.d ?? g.d0);
+    for (let x = f.lo; x <= f.hi; x += 0.02)
+      assert.ok(row.some((o) => Math.abs(o.x - x) < OBS.jump_ramp.r + SAND.catR), `seed ${seed} ${g.d0.toFixed(0)}m: 점프대 줄이 모든 자리를 덮는다 (${(x - f.c).toFixed(2)})`);
+  }
   for (const o of all) seen.add(o.kind);
 }
 const missing = (Object.keys(OBS) as ObKind[]).filter((k) => !seen.has(k));
@@ -329,41 +376,89 @@ const until = (s: SandState, f: () => boolean, input = still, max = 10) => {
   assert.ok(Math.abs(airPred - fly.x) < 0.01, `공중에서 떼도 멈출 자리를 미리 셀 수 있다 (${airPred.toFixed(3)} · ${fly.x.toFixed(3)})`);
 }
 
-// 6-2) 울타리: 가장 급한 굽이에서 가만히 있으면 바깥 울타리에 밀려 가며 쓸리고(scrape — 촤악은 아님) 느려진다.
-//      굽는 쪽으로 누르고 있으면 안쪽 울타리를 따라 그냥 미끄러진다 (쓸림 없음, 빠름). 어느 쪽이든 울타리는 못 넘는다
+// 6-2) 울타리: 가장 급한 다리(오른쪽으로)를 가만히 지나면 뒤따라오는 왼쪽 울타리에 밀려 가며 쓸리고(scrape — 촤악은 아님) 느려진다.
+//      길이 가는 쪽으로 누르고 있으면 그쪽 울타리를 따라 그냥 미끄러진다 (쓸림 없음, 빠름). 어느 쪽이든 울타리는 못 넘는다
+const legCourse = (d0: number, k: number, len: number): Course => ({
+  segs: [
+    { d0: -1e9, d1: d0, c0: 0, s0: 0, s1: 0, kind: 'start' },
+    { d0, d1: d0 + 8, c0: 0, s0: 0, s1: k, kind: 'corner' },
+    { d0: d0 + 8, d1: d0 + 8 + len, c0: 4 * k, s0: k, s1: k, kind: 'leg' },
+    { d0: d0 + 8 + len, d1: 1e9, c0: 4 * k + k * len, s0: k, s1: k, kind: 'finish' },
+  ],
+  widths: [{ d: 0, w: 1 }],
+});
 {
   const run = (mx: number) => {
     const s = fresh();
     s.v = SAND.vMax;
-    const L = ((Math.PI / 2) * 2) / SAND.course.slope[1];
     const d0 = s.d + 5;
-    s.course = [
-      { d0: -1e9, d1: d0, c0: 0, c1: 0 },
-      { d0, d1: d0 + L, c0: 0, c1: 2 },
-      { d0: d0 + L, d1: 1e9, c0: 2, c1: 2 },
-    ];
+    s.course = legCourse(d0, SAND.course.slope[1], 60);
     let scrapes = 0;
     let slides = 0;
     let outside = 0;
-    while (s.d < d0 + L) {
+    while (s.d < d0 + 68) {
       updateSandboard(s, { mx, jump: false }, DT);
       scrapes += s.events.filter((e) => e.type === 'scrape').length;
       slides += s.events.filter((e) => e.type === 'slide').length;
-      const rel = s.x - center(s.course, s.d);
-      assert.ok(Math.abs(rel) <= SAND.edge + 1e-9, `울타리는 못 넘는다 (${rel})`);
-      if (rel <= -SAND.edge + 1e-6) outside += DT;
+      const f = fences(s.course, s.d);
+      assert.ok(s.x >= f.lo - 1e-9 && s.x <= f.hi + 1e-9, `울타리는 못 넘는다 (${(s.x - f.c).toFixed(3)})`);
+      if (s.x <= f.lo + 1e-6) outside += DT;
     }
     return { s, scrapes, slides, outside };
   };
   const loose = run(0);
   const held = run(1);
   console.log(
-    `  울타리: 가장 급한 굽이(오른쪽 2)를 가만히 → 바깥 울타리에 ${loose.outside.toFixed(1)}초 · 쓸림 ${loose.scrapes}번 · ${SAND.vMax} → ${loose.s.v.toFixed(1)} m/s` +
+    `  울타리: 가장 급한 다리(오른쪽)를 가만히 → 왼쪽 울타리에 ${loose.outside.toFixed(1)}초 · 쓸림 ${loose.scrapes}번 · ${SAND.vMax} → ${loose.s.v.toFixed(1)} m/s` +
       ` / 오른쪽 누르고 → 쓸림 ${held.scrapes}번 · ${held.s.v.toFixed(1)} m/s`,
   );
-  assert.ok(loose.outside > 1 && loose.scrapes >= 3 && loose.slides === 0, '가만히 있으면 바깥 울타리에 밀려 가며 쓸린다 (촤악은 아님)');
-  assert.ok(loose.s.v < SAND.vMax - 3, `바깥 울타리에 쓸리면 느려진다 (${loose.s.v.toFixed(1)})`);
-  assert.ok(held.scrapes === 0 && held.s.v > SAND.vMax - 1, `굽는 쪽으로 누르면 안 쓸리고 빠르다 (${held.s.v.toFixed(1)})`);
+  assert.ok(loose.outside > 1 && loose.scrapes >= 3 && loose.slides === 0, '가만히 있으면 뒤따라오는 울타리에 밀려 가며 쓸린다 (촤악은 아님)');
+  assert.ok(loose.s.v < SAND.vMax - 3, `울타리에 쓸리면 느려진다 (${loose.s.v.toFixed(1)})`);
+  assert.ok(held.scrapes === 0 && held.s.v > SAND.vMax - 1, `길이 가는 쪽으로 누르면 안 쓸리고 빠르다 (${held.s.v.toFixed(1)})`);
+}
+
+// 6-3) 좁아지는 길: 넓은 직선(1.3)에서 오른쪽 끝에 붙어 있다가 길이 0.8 로 좁아지면 울타리가 안쪽으로 밀고 온다 — 못 넘고, 쓸린다
+{
+  const s = fresh();
+  s.v = SAND.vMax;
+  const d0 = s.d + 10;
+  s.course = { segs: STRAIGHT.segs, widths: [{ d: 0, w: 1.3 }, { d: d0, w: 1.3 }, { d: d0 + 12, w: 0.8 }] };
+  s.x = SAND.edge * 1.3;
+  let scrapes = 0;
+  while (s.d < d0 + 20) {
+    updateSandboard(s, { mx: 1, jump: false }, DT);
+    scrapes += s.events.filter((e) => e.type === 'scrape').length;
+    const f = fences(s.course, s.d);
+    assert.ok(s.x <= f.hi + 1e-9, `좁아지는 울타리도 못 넘는다 (${s.x.toFixed(3)} > ${f.hi.toFixed(3)})`);
+  }
+  assert.ok(Math.abs(s.x - SAND.edge * 0.8) < 0.01 && scrapes >= 1, `좁아지면 안쪽으로 밀려 들어오며 쓸린다 (${s.x.toFixed(3)} · 쓸림 ${scrapes})`);
+}
+
+// 6-4) 점프대 줄: 넓은 직선의 점프대 줄은 어느 자리로 지나가도 크게 떠서 구덩이 줄을 건너뛴다
+{
+  let s: SandState | undefined;
+  for (let seed = 1; seed < 80 && !s; seed++) {
+    const q = makeSandboard(seeded(seed));
+    if (q.course.segs.some((g) => g.kind === 'jump' && g.d0 < SAND.length - 120)) s = q;
+  }
+  assert.ok(s, '점프대 줄이 있는 코스');
+  const g = s.course.segs.find((q) => q.kind === 'jump')!;
+  for (const off of [-0.9, -0.62, -0.2, 0.21, 0.7]) {
+    const q = makeSandboard(() => 0.5);
+    Object.assign(q, { course: s.course, nextAt: 30, obs: [] });
+    q.d = g.d0 - 30;
+    updateSandboard(q, still, 0); // 그 직선까지 깐다
+    q.obs = q.obs.filter((o) => o.d > g.d0 && o.d < g.d1);
+    const row = q.obs.filter((o) => o.kind === 'jump_ramp');
+    const f = fences(q.course, row[0].d);
+    Object.assign(q, { d: row[0].d - 3, x: f.c + off * (f.hi - f.c), vx: 0, yaw: 0, yawV: 0, v: SAND.vMax, phase: 'play', crashes: 0, dizzy: 0, air: 0 });
+    const seenEv = new Set<string>();
+    while (q.d < row[0].d + 14) {
+      updateSandboard(q, still, DT);
+      for (const e of q.events) seenEv.add(e.type);
+    }
+    assert.ok(seenEv.has('ramp') && !seenEv.has('pit') && q.crashes === 0, `점프대 줄 (${off}): 떠서 구덩이를 건너뛴다 (${[...seenEv].join(',')})`);
+  }
 }
 
 // 7) 완주: 빈 레인으로 피하고, 낮은 건 점프로 넘는 간단한 조종으로 지그재그 코스를 끝까지. 무사하면 보너스. 끝난 뒤엔 멈춘다
@@ -373,10 +468,12 @@ const until = (s: SandState, f: () => boolean, input = still, max = 10) => {
     let t = 0;
     let scrapes = 0;
     while (s.phase === 'play' && t < 120) {
-      const rel = (o: Ob) => o.x - center(s.course, o.d); // 레인은 그 거리의 길 가운데 기준
+      const rel = (o: Ob) => o.x - center(s.course, o.d); // 레인은 그 거리의 길 가운데 · 폭 기준
       const threats = s.obs.filter((o) => (solid(o.kind) || OBS[o.kind].role === 'pit') && !o.hit && o.d > s.d && o.d < s.d + 22);
       const here = s.x - center(s.course, s.d);
+      const w = width(s.course, s.d + 10).w;
       const lane = SAND.lanes
+        .map((l) => l * w)
         .map((l) => ({ l, bad: threats.filter((o) => Math.abs(rel(o) - l) < OBS[o.kind].r + 0.16).length + Math.abs(l - here) * 0.01 }))
         .sort((p, q) => p.bad - q.bad)[0].l;
       const near = threats.some((o) => o.d - s.d < 6 && Math.abs(o.x - s.x) < OBS[o.kind].r + SAND.catR + 0.02 && OBS[o.kind].role === 'hit');
@@ -395,9 +492,21 @@ const until = (s: SandState, f: () => boolean, input = still, max = 10) => {
   console.log(`  샌드보드 ${SAND.length}m (지그재그): ${a.t.toFixed(1)}초 · 냥코인 ${a.s.coins} · 부딪힘 ${a.s.crashes} · 울타리 쓸림 ${a.scrapes} · 점수 ${a.s.score}`);
   if (a.s.crashes === 0) assert.equal(a.s.score, a.s.coins + SAND.cleanBonus, '무사 완주 보너스');
   else assert.equal(a.s.score, a.s.coins);
+  // 결승 뒤: 조작은 안 먹고(점프 · 좌우 없음) 그 속도로 미끄러지다 서서히 선다, 반짝임 · 골인 글자. 카드는 cardDelay 초 뒤 (그리기)
+  assert.ok(a.s.fx.some((f) => f.id === 'pickup_sparkle') && a.s.pops.some((p) => p.text === '골인!'), '골인: 결승선에 반짝임');
   const d0 = a.s.d;
+  const v0 = a.s.v;
+  let ev = 0;
+  for (let k = 0; k < 4 / DT; k++) {
+    updateSandboard(a.s, { mx: 1, jump: true }, DT);
+    ev += a.s.events.length;
+  }
+  const glide = a.s.d - d0;
+  console.log(`  결승 뒤: ${v0.toFixed(1)} m/s 로 넘어 ${glide.toFixed(1)}m 미끄러지다 선다`);
+  assert.ok(ev === 0 && a.s.v === 0 && glide > 10 && glide < 30 && a.s.air <= 0, `끝난 뒤엔 조작 없이 미끄러지다 선다 (${glide.toFixed(1)}m)`);
+  const d1 = a.s.d;
   updateSandboard(a.s, { mx: 1, jump: true }, DT);
-  assert.ok(a.s.d === d0 && a.s.events.length === 0, '끝난 뒤엔 멈춘다');
+  assert.ok(a.s.d === d1 && a.s.events.length === 0 && a.s.doneT > SAND.cardDelay, '선 뒤엔 그대로');
 
   let wins = 0;
   for (let seed = 1; seed <= 10; seed++) if (!drive(seed).s.fell) wins++;

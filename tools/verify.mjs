@@ -19,7 +19,7 @@ const FIELD = readJson('../src/data/field.json');
 const WAVE_DATA = readJson('../src/data/waves.json');
 const PLAYER_DATA = readJson('../src/data/player.json');
 const SKILL_DATA = readJson('../src/data/skills.json');
-const { OBS: SAND_OBS, coast: sandCoast, center: sandCenter } = await import('../src/sandboard.ts');
+const { OBS: SAND_OBS, coast: sandCoast, center: sandCenter, width: sandWidth } = await import('../src/sandboard.ts');
 /** 개방 구역(field.json open) 안의 워프 — 잠긴 구역 밖 워프는 갈 수 없는 게 맞다 */
 const inOpen = (x, y) => {
   const c = Math.min(FIELD.grid[0] - 1, Math.floor((x * FIELD.grid[0]) / FIELD.size[0]));
@@ -1212,7 +1212,8 @@ try {
       xHi = Math.max(xHi, s.x);
       if (s.sx < 0.15 || s.sx > 0.85) off++;
       const C = (d) => sandCenter(s.course, d);
-      const lanes = [-0.8, -0.4, 0, 0.4, 0.8];
+      const w = sandWidth(s.course, s.d + 10).w;
+      const lanes = [-0.8, -0.4, 0, 0.4, 0.8].map((l) => l * w);
       const lane = lanes.map((l) => ({ l, bad: s.obs.filter(([x, d, r]) => Math.abs(x - C(d) - l) < r + 0.2).length + Math.abs(l - (s.x - C(s.d))) * 0.01 })).sort((a, b) => a.bad - b.bad)[0].l;
       // 지금 떼면 0.4초 뒤 자리 (드리프트로 더 미끄러지는 만큼, 굽이면 길이 옆으로 가는 만큼) — 그때의 길 가운데 기준
       const pred = sandCoast(s, 0.4) - C(s.d + s.v * 0.4);
@@ -1227,7 +1228,7 @@ try {
         shot = true;
         await page.screenshot({ path: fsPath(new URL('sandboard-run.png', OUT)) });
       }
-      await sleep(40);
+      await sleep(15); // 촘촘히 — 꺾이는 길에서 키를 늦게 떼면 부딪힌다
     }
     if (held) await page.keyboard.up(held);
     const end = await page.evaluate(() => ({ fell: __game.sandboard.fell, hearts: __game.sandboard.hearts, phase: __game.sandboard.phase, coins: __game.sandboard.coins, crashes: __game.sandboard.crashes, score: __game.sandboard.score, t: __game.sandboard.t, bag: __game.bag.coins, best: __game.records.sandboard }));
@@ -1239,7 +1240,10 @@ try {
     const bad = await page.evaluate(() => window.__badDraw);
     check(bad.length === 0, `끝까지 달리는 동안 NaN 좌표로 그린 것 ${bad.length}번 (뒤쪽 장식이 왼쪽 위에 모이던 버그)${bad.length ? ' — 처음 ' + bad[0] + 'm' : ''}`);
     check(end.best !== null && end.best >= end.score, `최고 점수 저장 (${end.best})`);
-    await sleep(400);
+    // 결승 뒤: 그 속도로 미끄러지다 서고, 카드는 cardDelay 초 뒤에 뜬다 (넘는 순간 딱 멈추고 카드가 바로 덮던 것)
+    await page.waitForFunction(() => __game.sandboard.doneT > 1.3, { timeout: 5000 }).catch(() => {});
+    const glide = await page.evaluate(() => __game.sandboard.d - 900);
+    check(glide > 10, `결승을 넘으면 미끄러지다 선다 (${glide.toFixed(1)}m)`);
     await page.screenshot({ path: fsPath(new URL('sandboard-done.png', OUT)) });
     await click2(page, (await page.evaluate(() => __game.miniScreen())).again);
     const again = await page.waitForFunction(() => __game.sandboard.phase === 'play' && __game.sandboard.d < 30, { timeout: 4000 }).then(() => true, () => false);
@@ -1459,7 +1463,7 @@ try {
       const s = __game.sandboard;
       s.obs = [];
       s.nextAt = 9999;
-      s.course = [{ d0: -1e9, d1: 1e9, c0: 0, c1: 0 }]; // 곧은 길에서 (굽이에 밀려 각도가 섞이지 않게)
+      s.course = { segs: [{ d0: -1e9, d1: 1e9, c0: 0, s0: 0, s1: 0, kind: 'start' }], widths: [{ d: 0, w: 1 }] }; // 곧은 길에서 (울타리에 밀려 각도가 섞이지 않게)
     });
     await sleep(1600);
     const shots = [];
@@ -1500,6 +1504,47 @@ try {
     }, shots);
     await p2.screenshot({ path: fsPath(new URL('sandboard-drift.png', OUT)) });
     await p2.close();
+    check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
+    await page.close();
+  }
+
+  // 3-10) 샌드보드 결승 앞 프레임 비용: 결승 앞도 평면 구간처럼 가볍게 그린다 (2026-10-07 — 예전엔 결승 앞만 원근으로 말며 바닥을 1px 줄마다
+  //  따로 칠해 한 프레임이 0.7 → 3~9ms 로 늘어 고해상도 · 고주사율 화면에서 결승 앞 길이 빤짝거렸다. 지금은 결승까지 평면).
+  //  큰 고해상도 화면(1920×1000 배율 2)에서 게임 rAF 콜백(갱신 + 그리기) 시간의 중간값을 평면 구간과 견준다
+  console.log('\n[샌드보드 결승 앞 프레임 비용]');
+  {
+    const page = await browser.newPage();
+    await page.setViewport({ width: 1920, height: 1000, deviceScaleFactor: 2 });
+    const errors = [];
+    page.on('pageerror', (e) => errors.push(e.message));
+    await page.evaluateOnNewDocument(() => {
+      const raf = window.requestAnimationFrame.bind(window);
+      window.__cost = [];
+      window.requestAnimationFrame = (cb) =>
+        raf((ts) => {
+          const t0 = performance.now();
+          cb(ts);
+          const s = window.__game?.sandboard;
+          if (s) window.__cost.push([s.d, performance.now() - t0]);
+        });
+    });
+    await page.goto(base + '?trace&sandboard', { waitUntil: 'load' });
+    await page.waitForFunction(() => window.__sheets && window.__game?.sandboard, { timeout: 60000 });
+    const r = await page.evaluate(async () => {
+      const s = __game.sandboard;
+      s.obs = [];
+      s.nextAt = 1e9;
+      setInterval(() => (s.hearts = 3), 50);
+      s.d = 400;
+      await new Promise((res) => setTimeout(res, 2500));
+      s.d = 845;
+      await new Promise((res) => setTimeout(res, 2200));
+      const med = (a) => [...a].sort((x, y) => x - y)[Math.floor(a.length / 2)];
+      const flat = window.__cost.filter(([d]) => d > 405 && d < 450).map(([, t]) => t);
+      const curl = window.__cost.filter(([d]) => d > 850 && d < 899).map(([, t]) => t);
+      return { flat: med(flat), curl: med(curl), n: [flat.length, curl.length] };
+    });
+    check(r.curl <= r.flat * 2 + 1.5, `결승 앞도 평면 구간처럼 가볍게 그린다 (한 프레임 중간값: 평면 ${r.flat.toFixed(2)}ms · 결승 앞 ${r.curl.toFixed(2)}ms, ${r.n.join('/')}프레임)`);
     check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
     await page.close();
   }

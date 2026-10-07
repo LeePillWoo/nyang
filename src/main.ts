@@ -76,7 +76,7 @@ import { drawMaze, mazeView } from './maze-draw.ts';
 import { makeMaze, updateMaze, type MazeEvent, type MazeState } from './maze.ts';
 import { miniButtonAt, miniLayout, type MiniButton } from './mini-draw.ts';
 import { drawSandboard, SAND_IMAGES, sandPoint, type SandArt } from './sandboard-draw.ts';
-import { makeSandboard, updateSandboard, type SandEvent, type SandState } from './sandboard.ts';
+import { makeSandboard, SAND, updateSandboard, type SandEvent, type SandState } from './sandboard.ts';
 import { loadSheet, type Sheet } from './sheet.ts';
 import { buttonAt, controls, drawControls, followStick, onStick, safe, stickBase, stickVector, ui, type ButtonId } from './touch.ts';
 
@@ -189,7 +189,7 @@ let fishKey = false;
 let fishHover: FishingButton = null;
 /** 미니게임(미로 · 샌드보드) 버튼 위에 마우스 */
 let miniHover: MiniButton = null;
-const miniDone = () => (scene === 'maze' ? maze.phase === 'done' : sand.phase === 'done');
+const miniDone = () => (scene === 'maze' ? maze.phase === 'done' : sand.phase === 'done' && sand.doneT >= SAND.cardDelay); // 샌드보드는 결승 뒤 미끄러지다 카드가 뜬 뒤부터
 /** 고래 배 속 미로 — 결과 카드에 다시 버튼이 없다 */
 const inWhale = () => scene === 'maze' && maze.theme === 'whale';
 const toFishing = (p: { x: number; y: number }) => ({
