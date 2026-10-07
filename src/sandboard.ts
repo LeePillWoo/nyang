@@ -39,6 +39,11 @@ export const SAND = {
   /** 고양이 가로 반폭 · 앞뒤로 닿는 거리(m) */
   catR: 0.09,
   reach: 1.0,
+  /**
+   * 공중에선 좌우로 땅의 이만큼만 움직인다 (2026-10-07 사용자 의견 — 점프 중에도 땅과 똑같이 옆으로 가서 어색했다. 아예 못 움직이면 재미가 없어 살짝만).
+   * 보드 각도 · 가로 속도는 땅에서처럼 계속 따라가고 옆으로 가는 거리만 줄인다 — 착지하면 끊김 없이 그대로 이어진다
+   */
+  airSteer: 0.2,
   /** 공중 시간: 점프 · 모래 둔덕 · 점프대(+ 속도) */
   jump: 0.6,
   bump: 0.45,
@@ -238,7 +243,7 @@ type Lateral = Pick<SandState, 'x' | 'vx' | 'yaw' | 'yawV'>;
  * 좌우 한 걸음 (u = 누르는 쪽 -1..1). 보드 각도 스프링 → 그립 지연으로 가로 속도 → 자리. 미끄러짐을 돌려준다.
  * 가장자리에선 선다 — 바깥으로 계속 누르면 보드는 경계를 따라 펴지고 미끄러짐은 0 (벽에 대고 누른다고 모래를 튀기며 느려지지 않게)
  */
-function lateral(l: Lateral, u: number, dt: number) {
+function lateral(l: Lateral, u: number, dt: number, move = 1) {
   // 가장자리 쪽(-1, 0, 1). 여유 0.03: 펴진 보드가 살짝 넘쳐 가장자리를 벗어났다 다시 꺾이기를 되풀이하지 않게 (떨림)
   const side = (x: number) => (x >= SAND.edge - 0.03 ? 1 : x <= -SAND.edge + 0.03 ? -1 : 0);
   const pinned = side(l.x) !== 0 && Math.sign(u) === side(l.x);
@@ -249,7 +254,7 @@ function lateral(l: Lateral, u: number, dt: number) {
   l.yaw += l.yawV * dt;
   const lean = l.yaw / SAND.yawMax;
   l.vx += (lean * SAND.steer - l.vx) * (1 - Math.exp(-dt / (pressed ? SAND.gripIn : SAND.gripOut)));
-  l.x += l.vx * dt;
+  l.x += l.vx * dt * move; // 공중이면 옆으로 가는 거리만 airSteer 배
   if (l.x >= SAND.edge) {
     l.x = SAND.edge;
     l.vx = Math.min(0, l.vx);
@@ -261,10 +266,14 @@ function lateral(l: Lateral, u: number, dt: number) {
   return pinned || (side(l.x) !== 0 && Math.sign(l.yaw) === side(l.x)) ? 0 : Math.min(1, Math.abs(lean - l.vx / SAND.steer));
 }
 
-/** 지금 손을 떼면 어디서 멈추나 (자동 조종 · 검증용) */
-export function coast(s: Lateral) {
+/** 지금 손을 떼면 어디서 멈추나 — 공중이면 남은 공중 시간 동안은 airSteer 만큼만 (자동 조종 · 검증용) */
+export function coast(s: Lateral & { air?: number }) {
   const l = { x: s.x, vx: s.vx, yaw: s.yaw, yawV: s.yawV };
-  for (let i = 0; i < 60; i++) lateral(l, 0, 1 / 60);
+  let air = s.air ?? 0;
+  for (let i = 0; i < 60; i++) {
+    air -= 1 / 60; // 한 프레임과 같은 차례 — 공중 시간을 먼저 줄이고 움직인다
+    lateral(l, 0, 1 / 60, air > 0 ? SAND.airSteer : 1);
+  }
   return l.x;
 }
 const pop = (s: SandState, text: string, x: number, d: number) => s.pops.push({ text, x, d, t: 0 });
@@ -306,7 +315,7 @@ export function updateSandboard(s: SandState, input: SandInput, dt: number) {
     s.events.push({ type: 'jump' });
   }
   // 좌우 = 드리프트: 보드가 먼저 꺾이고 몸이 늦게 따라온다. 그 차이(미끄러짐)만큼 모래를 튀기고 속도를 깎는다
-  s.slip = lateral(s, s.dizzy > 0 ? 0 : clamp(input.mx, -1, 1), dt);
+  s.slip = lateral(s, s.dizzy > 0 ? 0 : clamp(input.mx, -1, 1), dt, s.air > 0 ? SAND.airSteer : 1);
   s.lean = s.yaw / SAND.yawMax;
   s.steer = Math.abs(s.lean) > 0.12 ? Math.sign(s.lean) : 0;
   if (s.steer !== 0) s.flip = s.steer;

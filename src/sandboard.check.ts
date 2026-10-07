@@ -278,6 +278,28 @@ const until = (s: SandState, f: () => boolean, input = still, max = 10) => {
   const v0 = a.v;
   for (let k = 0; k < 20; k++) updateSandboard(a, { mx: 1, jump: false }, DT);
   assert.ok(a.v >= v0 && !a.fx.some((f) => f.id === 'carve_spray'), '공중에선 미끄러지지 않는다');
+  // 공중에선 좌우로 땅의 airSteer(20%) 만큼만 간다 — 같은 조작을 땅과 공중에서 0.5초. 착지하면 끊김 없이 다시 그대로
+  const ground = fresh();
+  const air = fresh();
+  air.air = air.airMax = 0.7;
+  for (let k = 0; k < 30; k++) {
+    updateSandboard(ground, { mx: 1, jump: false }, DT);
+    updateSandboard(air, { mx: 1, jump: false }, DT);
+  }
+  const ratio = air.x / ground.x;
+  assert.ok(Math.abs(ratio - SAND.airSteer) < 0.01, `점프 중엔 좌우로 ${(ratio * 100).toFixed(0)}% 만 (땅 ${ground.x.toFixed(2)} · 공중 ${air.x.toFixed(2)})`);
+  until(air, () => air.air <= 0, { mx: 1, jump: false });
+  const nudge = (q: SandState) => {
+    const x0 = q.x;
+    updateSandboard(q, { mx: 1, jump: false }, DT);
+    return q.x - x0;
+  };
+  const vNow = air.vx;
+  assert.ok(Math.abs(nudge(air) - vNow * DT) < 0.002, '착지하면 바로 땅에서처럼 (옆으로 튀지 않는다)');
+  const airPred = coast({ ...air, air: 0.5 });
+  const fly = { ...air, air: 0.5, airMax: 0.5, events: [], fx: [], pops: [], obs: [] } as SandState;
+  for (let k = 0; k < 60; k++) updateSandboard(fly, still, DT);
+  assert.ok(Math.abs(airPred - fly.x) < 0.01, `공중에서 떼도 멈출 자리를 미리 셀 수 있다 (${airPred.toFixed(3)} · ${fly.x.toFixed(3)})`);
 }
 
 // 7) 완주: 빈 레인으로 피하고, 낮은 건 점프로 넘는 간단한 조종으로 끝까지. 무사하면 보너스. 끝난 뒤엔 멈춘다
