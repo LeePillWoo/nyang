@@ -88,7 +88,8 @@ export function drawSandboard(ctx: CanvasRenderingContext2D, cw: number, ch: num
   const k = Math.max(cw / 870, Math.min(ch / 1300, cw / 640));
   const cx = cw / 2;
   const half = PLAY_HALF * k;
-  const y0 = ch * 0.78;
+  // 치즈 자리 — 가로 휴대폰(터치)은 아래 가운데에 점프 버튼이 있어 조금 위로
+  const y0 = ch * (v.touch && cw > ch ? 0.64 : 0.78);
   const ppm = M * k;
   const D = Math.min(160, Math.max(25, y0 / (ppm * Math.log(1 / FAR))));
   Object.assign(sandView, { cx, half, y0, ppm, D });

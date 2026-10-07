@@ -652,9 +652,8 @@ export function drawXpBar(ctx: CanvasRenderingContext2D, d: Dungeon, t: number) 
 }
 
 /** 오른쪽 위: 가진 기술 (아이콘 + 레벨 점) + 남은 기술 칸(점선) — 오른쪽 끝 x = right, 위 y = top */
-export function drawSkillIcons(ctx: CanvasRenderingContext2D, d: Dungeon, right: number, top: number, t: number) {
+export function drawSkillIcons(ctx: CanvasRenderingContext2D, d: Dungeon, right: number, top: number, t: number, S = 42) {
   const owned = Object.entries(d.run.skills) as [SkillId, number][];
-  const S = 42;
   const per = 6;
   // 빈 칸: 기술은 SLOTS 가지까지라는 걸 보여 준다
   ctx.save();
@@ -693,21 +692,22 @@ export function drawSkillIcons(ctx: CanvasRenderingContext2D, d: Dungeon, right:
 const iconFrame = (anim: string, t: number) => (FX_ANIMS[anim]?.[3] ? frameAt(anim, t) : 4);
 
 /** 가운데 위: 웨이브 n / 전체 · 남은 적 (방 이름 밑) + 웨이브 안내 큰 글자 */
-export function drawWaveHud(ctx: CanvasRenderingContext2D, d: Dungeon, W: number, H: number, nameX: number, nameW: number) {
+export function drawWaveHud(ctx: CanvasRenderingContext2D, d: Dungeon, W: number, H: number, nameX: number, nameW: number, top = 50) {
   const w = d.wave;
   if (!w) return;
   const left = d.enemies.filter((e) => e.state !== 'pop').length + w.marks.length + (w.state === 'done' ? 0 : w.queue.length);
   const text = w.state === 'done' ? '모든 웨이브 클리어!' : `웨이브 ${w.i + 1} / ${w.total} · 남은 적 ${left}`;
   ctx.font = 'bold 14px system-ui, sans-serif';
   const tw = ctx.measureText(text).width + 24;
-  const cx = nameX + nameW / 2;
+  // 이름 알약 가운데 밑. 화면 밖으로 나가지 않게
+  const cx = Math.min(W - 8 - tw / 2, nameX + nameW / 2);
   ctx.fillStyle = 'rgba(70, 52, 42, 0.78)';
   ctx.beginPath();
-  ctx.roundRect(cx - tw / 2, 50, tw, 26, 13);
+  ctx.roundRect(cx - tw / 2, top, tw, 26, 13);
   ctx.fill();
   ctx.fillStyle = '#fff6d8';
   ctx.textAlign = 'center';
-  ctx.fillText(text, cx, 68);
+  ctx.fillText(text, cx, top + 18);
   // 큰 안내: 웨이브 시작 · 웨이브 클리어
   let big = '';
   let a = 0;

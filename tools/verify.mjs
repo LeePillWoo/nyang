@@ -558,6 +558,30 @@ try {
     const p2 = await page.evaluate(() => [__game.field.x, __game.field.y, __game.field.moving]);
     check(p1[0] - p0[0] > 30 && Math.abs(p1[1] - p0[1]) < 15, `조이스틱을 오른쪽으로 밀면 고양이가 오른쪽으로 간다 (${(p1[0] - p0[0]) | 0}, ${(p1[1] - p0[1]) | 0})`);
     check(!p2[2], '조이스틱에서 손을 떼면 멈춘다');
+    // 조이스틱은 모서리에서 조금 안쪽에 쉬고, 왼쪽 아래 영역 어디를 눌러도 그 자리에 생긴다 — 손가락이 멀어지면 받침이 따라온다
+    const st = on.c.stick;
+    check(st.x - st.r >= 40 && PHONE.height - (st.y + st.r) >= 30, `조이스틱이 구석에서 안쪽으로 (왼쪽 ${(st.x - st.r) | 0}px · 아래 ${(PHONE.height - st.y - st.r) | 0}px 떨어짐)`);
+    const at = { x: (st.zone.x0 + st.zone.x1) * 0.6, y: st.zone.y0 + (st.zone.y1 - st.zone.y0) * 0.5 };
+    const q0 = await page.evaluate(() => [__game.field.x, __game.field.y]);
+    const tt = await hold(page, at, { x: at.x + st.r * 3, y: at.y }, 700);
+    const held = await page.evaluate(() => __game.stick);
+    const q1 = await page.evaluate(() => [__game.field.x, __game.field.y]);
+    await tt.end();
+    check(
+      !!held && Math.abs(held.bx - (at.x + st.r * 2)) < 4 && Math.abs(held.by - at.y) < 4 && q1[0] - q0[0] > 20,
+      `영역 안 다른 곳을 눌러도 조이스틱이 그 자리에 생기고 손가락을 따라온다 (받침 ${held ? held.bx.toFixed(0) : '없음'} · 고양이 +${(q1[0] - q0[0]) | 0})`,
+    );
+    await sleep(300);
+    // 조이스틱 영역 안이어도 움직이지 않고 톡 누른 자리가 포탈이면 워프
+    const harbor = FIELD.warps.find((w) => w.id === 'cat_harbor');
+    await page.evaluate(([x, y]) => Object.assign(__game.field, { x, y, camX: x, camY: y }), [harbor.at[0] + 120, harbor.at[1] - 60]);
+    await sleep(400);
+    const ps = await page.evaluate(() => __game.portalScreen('cat_harbor'));
+    const inZone = ps.x >= st.zone.x0 && ps.x <= st.zone.x1 && ps.y >= st.zone.y0 && ps.y <= st.zone.y1;
+    await tap(page, ps);
+    const warped = await page.waitForFunction((b) => Math.hypot(__game.field.x - b[0], __game.field.y - b[1]) < 3, { timeout: 2500 }, harbor.back).then(() => true, () => false);
+    check(inZone && warped, `조이스틱 영역 안의 포탈도 톡 누르면 워프 (포탈 ${ps.x | 0}, ${ps.y | 0})`);
+    await sleep(300);
 
     await tap(page, on.c.buttons.find((b) => b.id === 'dex'));
     check(await page.evaluate(() => __game.dexOpen), '필드의 도감 버튼을 누르면 도감');
@@ -584,6 +608,8 @@ try {
     await sleep(900);
     const c = await page.evaluate(() => __game.controls);
     check(!!c.stick && !c.buttons.some((b) => b.id === 'punch') && c.buttons.some((b) => b.id === 'dash'), '던전: 조이스틱 · 구르기 버튼 (냥펀치 버튼 없음 — 자동)');
+    const dashB = c.buttons.find((b) => b.id === 'dash');
+    check(PHONE.width - (dashB.x + dashB.r) >= 40 && PHONE.height - (dashB.y + dashB.r) >= 30, `구르기 버튼도 구석에서 안쪽으로 (오른쪽 ${(PHONE.width - dashB.x - dashB.r) | 0}px)`);
     const x0 = await page.evaluate(() => __game.cat.x);
     const t = await hold(page, c.stick, { x: c.stick.x + c.stick.r * 0.9, y: c.stick.y }, 300);
     // 조이스틱으로 움직이는 동안 몬스터가 타격 범위에 들어오면 저절로 냥펀치
@@ -635,14 +661,14 @@ try {
     check(got === 'caught', `터치로 계속 감아 ★1 피라미를 낚았다 (${got})`);
     await sleep(600);
     await page.screenshot({ path: fsPath(new URL('touch-fishing-caught.png', OUT)) });
-    await tap(page, await page.evaluate(() => __game.fishScreen(70, 70))); // 도감 판
+    await tap(page, await page.evaluate(() => __game.fishButton('dex'))); // 도감 판 (화면 왼쪽 위)
     const dex = await page.evaluate(() => ({ open: __game.dexOpen, tab: __game.dexTab }));
     check(dex.open && dex.tab === SPOT_IDS[0], `낚시터 도감 판을 누르면 그 낚시터 탭으로 도감 (${dex.tab})`);
     await sleep(400);
     await page.screenshot({ path: fsPath(new URL('touch-fishing-dex.png', OUT)) });
     await tap(page, (await page.evaluate(() => __game.dexScreen())).close);
     check(!(await page.evaluate(() => __game.dexOpen)), '도감 ✕ 를 누르면 닫힌다');
-    await tap(page, await page.evaluate(() => __game.fishScreen(__game.fishing.spot.size[0] - 50, 45))); // 돌아가기
+    await tap(page, await page.evaluate(() => __game.fishButton('leave'))); // 돌아가기 (화면 오른쪽 위)
     const out = await page.waitForFunction(() => __game.scene === 'field', { timeout: 4000 }).then(() => true, () => false);
     check(out, '낚시터 돌아가기 버튼 (터치)');
     check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
@@ -658,6 +684,50 @@ try {
     await sleep(500);
     const st = await page.evaluate(() => ({ open: __game.dexOpen, scene: __game.scene }));
     check(opened && !st.open && st.scene === 'fishing', 'B 로 도감, Esc 는 도감만 닫는다');
+    check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
+    await page.close();
+  }
+  {
+    // 샌드보드 (휴대폰 가로): ◀ · 점프 · ▶ 가 한 줄로 (왼쪽 · 가운데 · 오른쪽), 구석에서 안쪽
+    const { page, errors } = await open('sandboard', '', PHONE, '&touch');
+    await sleep(600);
+    const b = Object.fromEntries((await page.evaluate(() => __game.controls)).buttons.map((v) => [v.id, v]));
+    check(
+      b.left && b.jump && b.right && b.left.x < b.jump.x && b.jump.x < b.right.x && Math.abs(b.left.y - b.jump.y) < 1 && Math.abs(b.right.y - b.jump.y) < 1 && Math.abs(b.jump.x - PHONE.width / 2) < 2,
+      `샌드보드 버튼 ◀ · 점프 · ▶ 순서로 한 줄 (${['left', 'jump', 'right'].map((k) => b[k]?.x | 0).join(' · ')})`,
+    );
+    check(b.left.x - b.left.r >= 40 && PHONE.width - (b.right.x + b.right.r) >= 40, '샌드보드 ◀ ▶ 도 구석에서 안쪽으로');
+    const pressedRight = page.waitForFunction(() => __game.sandboard.vx > 0.05 || __game.sandboard.x > 0.05, { polling: 'raf', timeout: 2500 }).then(() => true, () => false);
+    const fr = await page.touchscreen.touchStart(b.right.x, b.right.y);
+    check(await pressedRight, '▶ 를 누르면 오른쪽으로');
+    await fr.end();
+    await page.screenshot({ path: fsPath(new URL('touch-sandboard.png', OUT)) });
+    check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
+    await page.close();
+  }
+  {
+    // 세로 휴대폰 던전: 방이 너무 작아지지 않게 확대하고(고양이 키 약 70px), 고양이를 따라 방이 움직여 고양이가 화면 밖으로 안 나간다
+    const PORTRAIT = { width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true };
+    const { page, errors } = await open('dungeon', '', PORTRAIT, '&touch');
+    await autoPick(page);
+    await page.evaluate(() => setInterval(() => (__game.dungeon.P.invT = 1), 50));
+    const v0 = await page.evaluate(() => __game.dungeonCat);
+    const far = await page.evaluate(() => {
+      const d = __game.dungeon;
+      const g = d.room.grid;
+      let best = null;
+      for (let z = 0; z < g.h; z++) for (let x = 0; x < g.w; x++) if (!g.solid[z * g.w + x]) {
+        const p = d.room.toScreen((x + 0.5) * 2, (z + 0.5) * 2);
+        if (!best || p.sx > best.sx) best = { sx: p.sx, x: (x + 0.5) * 2, z: (z + 0.5) * 2 };
+      }
+      Object.assign(d.P, { x: best.x, z: best.z });
+      return best;
+    });
+    await sleep(300);
+    const v1 = await page.evaluate(() => __game.dungeonCat);
+    check(v0.scale >= 0.36, `세로 휴대폰 던전: 방 1px = ${v0.scale.toFixed(2)} CSS px (고양이 약 ${(190 * v0.scale) | 0}px)`);
+    check(v1.x > 0 && v1.x < PORTRAIT.width && far.sx > 0, `방 오른쪽 끝으로 가도 고양이가 화면 안에 (x ${v1.x | 0}px)`);
+    await page.screenshot({ path: fsPath(new URL('touch-dungeon-portrait.png', OUT)) });
     check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
     await page.close();
   }
@@ -1230,13 +1300,22 @@ try {
       for (const id of ['yarn_ball', 'spool', 'hairball', 'snare', 'catnip_cloud', 'zoom', 'tail_swirl', 'paw_combo', 'box_orbit', 'box_drop', 'loaf_shield', 'hiss', 'red_dot', 'pounce', 'claw', 'wind_mouse']) __game.learnSkill(id, 3);
       setInterval(() => __game.dungeon.choose && __game.pick(0), 40);
     });
+    // 4초 동안 가장 많았던 날아가는 것 · 효과 (한 순간만 세면 적이 다 쓰러진 쉬는 시간에 0 이 나온다)
+    await page.evaluate(() => {
+      window.__most = { ents: 0, fx: 0 };
+      setInterval(() => {
+        const r = __game.dungeon.run;
+        window.__most.ents = Math.max(window.__most.ents, r.ents.length);
+        window.__most.fx = Math.max(window.__most.fx, r.fx.length);
+      }, 50);
+    });
     await page.keyboard.down('Space');
     await sleep(300);
     await page.keyboard.up('Space');
     await sleep(1800);
     await page.screenshot({ path: fsPath(new URL('dungeon-skills.png', OUT)) });
     await sleep(2000);
-    const fx = await page.evaluate(() => ({ ents: __game.dungeon.run.ents.length, fx: __game.dungeon.run.fx.length, skills: Object.keys(__game.dungeon.run.skills).length }));
+    const fx = await page.evaluate(() => ({ ...window.__most, skills: Object.keys(__game.dungeon.run.skills).length }));
     check(fx.skills === 16 && fx.ents + fx.fx > 0, `기술 16가지 (날아가는 것 ${fx.ents} · 효과 ${fx.fx})`);
     // 웨이브가 넘어간다 → 마지막 웨이브엔 정예
     const w1 = await page.waitForFunction(() => __game.dungeon.wave.i >= 1, { timeout: 30000 }).then(() => true, () => false);

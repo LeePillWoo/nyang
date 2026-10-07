@@ -1,11 +1,16 @@
 // 화면 크기 대응 · 터치 조작. 좌표는 전부 CSS px (캔버스 실제 픽셀이 아니라) — 포인터 좌표와 바로 맞댄다.
 //  - ui(): 화면이 작으면 HUD·버튼을 줄이고 크면 키우는 배율
 //  - safe(): 노치·홈 막대를 피할 여백 (CSS env(safe-area-inset-*))
-//  - 터치 조작: 왼쪽 아래 동그란 조이스틱(필드·던전), 던전 오른쪽 아래 구르기 버튼 (냥펀치는 자동)
+//  - 터치 조작: 왼쪽 아래 영역의 떠다니는 조이스틱(필드·던전·미로 — 그 영역 어디를 눌러도 그 자리에 생긴다), 던전 오른쪽 아래 구르기 버튼 (냥펀치는 자동),
+//    샌드보드 ◀ · 점프 · ▶. 모서리에 붙이지 않고 화면 크기에 비례해 조금 안쪽으로 (2026-10-07 사용자 요청 — 엄지로 누르기 편하게)
 //  - 필드 도감 버튼은 터치가 아니어도 보인다 (마우스로도 누른다)
 
-/** HUD 배율 — 짧은 변이 560px 보다 좁은 화면(휴대폰)에서만 줄인다. 데스크톱·태블릿은 1 (예전 그대로) */
-export const ui = (w: number, h: number) => Math.max(0.7, Math.min(1, Math.min(w, h) / 560));
+/** HUD 배율 — 짧은 변이 500px 보다 좁은 화면(휴대폰)에서만 조금 줄인다 (최소 0.85 — 예전 0.7 은 휴대폰에서 너무 작았다). 데스크톱·태블릿은 1 */
+export const ui = (w: number, h: number) => Math.max(0.85, Math.min(1, Math.min(w, h) / 500));
+
+const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
+/** 조작이 화면 모서리에서 떨어진 거리 (CSS px) — 화면이 클수록 조금 더 안쪽. 가운데로 모으는 게 아니라 구석을 피하는 만큼 */
+export const inset = (w: number, h: number) => ({ x: clamp(w * 0.09, 28, 110), y: clamp(h * 0.09, 22, 80) });
 
 const probe = document.createElement('div');
 probe.style.cssText =
@@ -51,8 +56,10 @@ export function wrapText(ctx: CanvasRenderingContext2D, text: string, maxW: numb
 
 export type ButtonId = 'dash' | 'dex' | 'bag' | 'jump' | 'left' | 'right';
 export type Button = { id: ButtonId; x: number; y: number; r: number; label: string };
+/** 떠다니는 조이스틱: 쉬는 자리(x, y) · 반지름 r · 누르면 조이스틱이 생기는 영역 zone (CSS px) */
+export type Stick = { x: number; y: number; r: number; zone: { x0: number; y0: number; x1: number; y1: number } };
 /** k = HUD 배율 (그리기용) */
-export type Controls = { stick: { x: number; y: number; r: number } | null; buttons: Button[]; k: number };
+export type Controls = { stick: Stick | null; buttons: Button[]; k: number };
 export type Scene = 'field' | 'dungeon' | 'fishing' | 'maze' | 'sandboard';
 
 /** 도감 버튼 (알약) 크기 — Button.r 은 폭의 절반 */
@@ -72,23 +79,31 @@ export function controls(w: number, h: number, scene: Scene, touch: boolean): Co
   }
   if (scene === 'dungeon') pill('bag', 0, 122, '🎒 가방'); // 체력·경험치 판(14, 14, 높이 100) 밑
   if (!touch || scene === 'fishing') return { stick: null, buttons, k };
-  // 엄지로 누르는 것들은 휴대폰에서도 너무 작아지지 않게
-  const tk = Math.max(0.85, k);
-  const r = Math.round(60 * tk);
-  const pad = 26 * tk;
-  const stick = { x: s.l + pad + r, y: h - s.b - pad - r, r };
-  const pr = Math.round(48 * tk);
-  const px = w - s.r - pad - pr;
-  const py = h - s.b - pad - pr;
+  // 엄지로 누르는 것들은 모서리에서 조금 안쪽으로 (inset)
+  const r = Math.round(60 * k);
+  const ins = inset(w, h);
+  const portrait = h > w;
+  const pr = Math.round(48 * k);
+  const px = w - s.r - ins.x - pr;
+  const py = h - s.b - ins.y - pr;
   if (scene === 'dungeon') buttons.push({ id: 'dash', x: px, y: py, r: pr, label: '구르기' }); // 냥펀치는 자동
   if (scene === 'sandboard') {
-    // 샌드보드는 좌우만 — 조이스틱 대신 ← → 버튼 (누르고 있는 동안)
-    const ar = Math.round(44 * tk);
-    buttons.push({ id: 'left', x: s.l + pad + ar, y: py, r: ar, label: '◀' });
-    buttons.push({ id: 'right', x: s.l + pad + ar * 3.4, y: py, r: ar, label: '▶' });
-    buttons.push({ id: 'jump', x: px, y: py, r: pr * 1.1, label: '점프' });
+    // 샌드보드는 좌우만 — ◀ (왼쪽) · 점프 (가운데) · ▶ (오른쪽), 한 줄로 (2026-10-07 사용자 요청)
+    const ar = Math.round(46 * k);
+    const jr = Math.round(50 * k);
+    const y = h - s.b - ins.y - jr;
+    buttons.push({ id: 'left', x: s.l + ins.x + ar, y, r: ar, label: '◀' });
+    buttons.push({ id: 'jump', x: (s.l + w - s.r) / 2, y, r: jr, label: '점프' });
+    buttons.push({ id: 'right', x: w - s.r - ins.x - ar, y, r: ar, label: '▶' });
     return { stick: null, buttons, k };
   }
+  // 조이스틱은 쉬는 자리에 옅게 떠 있고, 왼쪽 아래 영역 어디를 눌러도 그 자리에 생긴다 (가로: 왼쪽 절반 · 아래 62%, 세로: 왼쪽 62% · 아래 절반)
+  const stick: Stick = {
+    x: s.l + ins.x + r,
+    y: h - s.b - ins.y - r,
+    r,
+    zone: { x0: s.l, y0: h * (portrait ? 0.5 : 0.38), x1: w * (portrait ? 0.62 : 0.5), y1: h - s.b },
+  };
   return { stick, buttons, k };
 }
 
@@ -97,25 +112,53 @@ export const buttonAt = (c: Controls, x: number, y: number) =>
   c.buttons.find((b) =>
     b.id === 'dex' || b.id === 'bag' ? Math.abs(x - b.x) <= b.r && Math.abs(y - b.y) <= (b.r * DEX.h) / DEX.w : Math.hypot(x - b.x, y - b.y) <= b.r * 1.2,
   ) ?? null;
-/** 조이스틱 둘레를 넉넉하게 잡는다 (엄지가 조금 빗나가도) */
-export const onStick = (c: Controls, x: number, y: number) => !!c.stick && Math.hypot(x - c.stick.x, y - c.stick.y) <= c.stick.r * 1.8;
+/** 조이스틱 영역 안인가 (쉬는 자리 둘레도 넉넉하게 — 엄지가 조금 빗나가도) */
+export const onStick = (c: Controls, x: number, y: number) => {
+  const st = c.stick;
+  if (!st) return false;
+  const z = st.zone;
+  return (x >= z.x0 && x <= z.x1 && y >= z.y0 && y <= z.y1) || Math.hypot(x - st.x, y - st.y) <= st.r * 1.8;
+};
+/** 누른 자리에 조이스틱을 놓는다 — 둘레가 화면 밖으로 나가지 않게 */
+export function stickBase(c: Controls, x: number, y: number, w: number, h: number) {
+  const r = c.stick!.r;
+  const s = safe();
+  return { bx: clamp(x, s.l + r * 0.7, w - s.r - r * 0.7), by: clamp(y, s.t + r * 0.7, h - s.b - r * 0.7) };
+}
+/** 손가락이 조이스틱 둘레(r) 밖으로 나가면 받침이 따라온다 — 방향을 바꿀 때 손가락을 다시 대지 않아도 되게 */
+export function followStick(c: Controls, p: { x: number; y: number; bx: number; by: number }) {
+  const r = c.stick!.r;
+  const dx = p.x - p.bx;
+  const dy = p.y - p.by;
+  const d = Math.hypot(dx, dy);
+  if (d > r) {
+    p.bx = p.x - (dx / d) * r;
+    p.by = p.y - (dy / d) * r;
+  }
+}
 
-/** 조이스틱 방향 (-1..1). 가운데 18% 는 안 움직인 것으로 */
-export function stickVector(c: Controls, x: number, y: number) {
+/** 조이스틱 방향 (-1..1). 받침(bx, by)에서 손가락(x, y)까지. 가운데 18% 는 안 움직인 것으로 */
+export function stickVector(c: Controls, p: { x: number; y: number; bx: number; by: number }) {
   if (!c.stick) return { mx: 0, my: 0, kx: 0, ky: 0 };
-  let dx = (x - c.stick.x) / c.stick.r;
-  let dy = (y - c.stick.y) / c.stick.r;
+  let dx = (p.x - p.bx) / c.stick.r;
+  let dy = (p.y - p.by) / c.stick.r;
   const d = Math.hypot(dx, dy);
   if (d > 1) [dx, dy] = [dx / d, dy / d];
   return d < 0.18 ? { mx: 0, my: 0, kx: dx, ky: dy } : { mx: dx, my: dy, kx: dx, ky: dy };
 }
 
-/** ctx 는 CSS px 좌표계로 맞춘 상태로. knob = 조이스틱 손잡이 위치(-1..1), pressed = 누르고 있는 버튼 */
-export function drawControls(ctx: CanvasRenderingContext2D, c: Controls, knob: { kx: number; ky: number } | null, pressed: Set<ButtonId>) {
+/**
+ * ctx 는 CSS px 좌표계로 맞춘 상태로. held = 쥐고 있는 조이스틱(받침 자리 bx, by · 손잡이 kx, ky) — 없으면 쉬는 자리에 옅게.
+ * pressed = 누르고 있는 버튼
+ */
+export function drawControls(ctx: CanvasRenderingContext2D, c: Controls, held: { bx: number; by: number; kx: number; ky: number } | null, pressed: Set<ButtonId>) {
   const k = c.k;
   ctx.save();
   if (c.stick) {
-    const { x, y, r } = c.stick;
+    const r = c.stick.r;
+    const x = held ? held.bx : c.stick.x;
+    const y = held ? held.by : c.stick.y;
+    ctx.globalAlpha = held ? 1 : 0.7;
     ctx.fillStyle = 'rgba(255,250,240,0.22)';
     ctx.strokeStyle = 'rgba(255,255,255,0.75)';
     ctx.lineWidth = 3;
@@ -123,14 +166,15 @@ export function drawControls(ctx: CanvasRenderingContext2D, c: Controls, knob: {
     ctx.arc(x, y, r, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
-    const kx = x + (knob?.kx ?? 0) * r * 0.62;
-    const ky = y + (knob?.ky ?? 0) * r * 0.62;
-    ctx.fillStyle = knob ? 'rgba(255,250,240,0.95)' : 'rgba(255,250,240,0.7)';
+    const kx = x + (held?.kx ?? 0) * r * 0.62;
+    const ky = y + (held?.ky ?? 0) * r * 0.62;
+    ctx.fillStyle = held ? 'rgba(255,250,240,0.95)' : 'rgba(255,250,240,0.7)';
     ctx.strokeStyle = 'rgba(120,85,55,0.45)';
     ctx.beginPath();
     ctx.arc(kx, ky, r * 0.42, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
+    ctx.globalAlpha = 1;
   }
   ctx.textAlign = 'center';
   for (const b of c.buttons) {
@@ -159,23 +203,5 @@ export function drawControls(ctx: CanvasRenderingContext2D, c: Controls, knob: {
     ctx.font = `bold ${Math.round(b.r * (b.id === 'left' || b.id === 'right' ? 0.62 : 0.36))}px system-ui, sans-serif`;
     ctx.fillText(b.label, b.x, b.y + b.r * 0.13);
   }
-  ctx.restore();
-}
-
-/** 세로 화면 안내 (막지는 않는다) — 이름표·도감 버튼·미니맵 밑 */
-export function drawRotateHint(ctx: CanvasRenderingContext2D, w: number) {
-  const s = safe();
-  const text = '📱 가로로 돌리면 더 넓게 보여요';
-  ctx.save();
-  ctx.font = 'bold 12px system-ui, sans-serif';
-  const tw = ctx.measureText(text).width + 24;
-  const y = s.t + 110;
-  ctx.fillStyle = 'rgba(70,52,42,0.78)';
-  ctx.beginPath();
-  ctx.roundRect(w / 2 - tw / 2, y, tw, 30, 15);
-  ctx.fill();
-  ctx.fillStyle = '#fff6d8';
-  ctx.textAlign = 'center';
-  ctx.fillText(text, w / 2, y + 20);
   ctx.restore();
 }

@@ -51,13 +51,35 @@ export type DungeonView = {
 };
 
 /** cw, ch 는 캔버스 실제 픽셀 */
+/**
+ * 방이 놓이는 자리 (캔버스 px). 방 그림 전체가 들어가게 맞추되, 방 1px 이 ROOM_MIN CSS px 보다 작아지게는 줄이지 않는다
+ * (고양이 190px → 약 70 CSS px). 그래서 세로 휴대폰처럼 방이 화면보다 넓어지면 그쪽은 고양이를 따라간다 (방 밖은 안 보이게).
+ * 세로 화면에서 방이 남으면 위 HUD 와 아래 조작 사이 가운데에 (2026-10-07)
+ */
+const ROOM_MIN = 0.37;
+export function roomView(cw: number, ch: number, d: Dungeon) {
+  const R = d.room;
+  const scale = Math.max(Math.min(cw / R.W, ch / R.H), ROOM_MIN * Math.min(devicePixelRatio, 2));
+  const rw = R.W * scale;
+  const rh = R.H * scale;
+  const c = R.toScreen(d.P.x, d.P.z);
+  const follow = (view: number, size: number, at: number) => Math.max(view - size, Math.min(0, view / 2 - at));
+  const ox = rw <= cw ? (cw - rw) / 2 : follow(cw, rw, c.sx * scale);
+  let oy: number;
+  if (rh > ch) oy = follow(ch, rh, (c.sy - 70) * scale);
+  else if (ch > cw) {
+    const top = ch * 0.17;
+    const bottom = ch * 0.25;
+    oy = Math.max(0, Math.min(ch - rh, top + (ch - top - bottom - rh) / 2));
+  } else oy = (ch - rh) / 2;
+  return { scale, ox, oy };
+}
+
 export function drawDungeon(ctx: CanvasRenderingContext2D, cw: number, ch: number, d: Dungeon, cat: Sheet, v: DungeonView) {
   const P = d.P;
   const R = d.room;
   const toScreen = R.toScreen;
-  const scale = Math.min(cw / R.W, ch / R.H);
-  const ox = (cw - R.W * scale) / 2;
-  const oy = (ch - R.H * scale) / 2;
+  const { scale, ox, oy } = roomView(cw, ch, d);
   /** 모션이 바뀔 때 크기가 툭 튀지 않게 목표값으로 수렴시킨다 (약 0.1초) */
   const ease = (cur: number, target: number) => cur + (target - cur) * (1 - Math.exp(-22 * v.dt));
 
@@ -416,20 +438,22 @@ function drawHud(ctx: CanvasRenderingContext2D, cw: number, ch: number, d: Dunge
   ctx.fillStyle = '#4a3b33';
   ctx.fillText(`${fps.toFixed(0)} fps`, W - 84, 28);
   if (d.classic) ctx.fillText(`적 ${d.enemies.filter((e) => e.state !== 'pop').length}`, W - 84, 50);
-  drawSkillIcons(ctx, d, W - 8, 40, v.t);
-  // 방 이름 — 가운데, 좁은 화면(세로)에선 체력 판(14..250) 오른쪽으로 비킨다
+  const narrow = W < 620; // 세로 휴대폰 — 기술 칸을 조금 작게, 방 이름 · 웨이브는 그 밑으로
+  drawSkillIcons(ctx, d, W - 8, 40, v.t, narrow ? 34 : 42);
+  // 방 이름 — 가운데 위. 좁은 화면(세로 휴대폰)에선 가운데 자리가 없어 오른쪽 기술 칸 밑으로 (웨이브도 그 밑)
   ctx.textAlign = 'center';
   ctx.font = 'bold 15px system-ui, sans-serif';
   const nw = ctx.measureText(d.room.def.name).width + 28;
-  const nx = Math.max(W / 2 - nw / 2, 260);
+  const nx = narrow ? W - 8 - nw : Math.max(W / 2 - nw / 2, 260);
+  const ny = narrow ? 96 : 14;
   ctx.fillStyle = 'rgba(255,250,240,0.85)';
   ctx.beginPath();
-  ctx.roundRect(nx, 14, nw, 30, 15);
+  ctx.roundRect(nx, ny, nw, 30, 15);
   ctx.fill();
   ctx.fillStyle = '#5b4a3f';
-  ctx.fillText(d.room.def.name, nx + nw / 2, 34);
+  ctx.fillText(d.room.def.name, nx + nw / 2, ny + 20);
   ctx.textAlign = 'left';
-  drawWaveHud(ctx, d, W, H, nx, nw);
+  drawWaveHud(ctx, d, W, H, nx, nw, ny + 36);
 
   if (d.phase !== 'playing') {
     ctx.textAlign = 'center';

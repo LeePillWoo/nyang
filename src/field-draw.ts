@@ -472,8 +472,14 @@ export function drawField(
   /** 지도를 끌어 둘러보는 중이면 카메라가 고양이 대신 이곳을 본다 */
   look: { x: number; y: number } | null = null,
 ) {
-  // 화면 넓이 view 를 꽉 채우되, 세로 화면에선 폭 480 은 보이게 (안 그러면 고양이 둘레 200px 만 크게 보인다)
-  const sc = Math.min(Math.max(cw / V0, ch / V1), cw / 480);
+  // 화면 넓이 view 를 꽉 채우되, 세로 화면에선 폭 480 은 보이게 (안 그러면 고양이 둘레 200px 만 크게 보인다).
+  // 다만 지도 1px 이 zoomMin CSS px 보다 작아지게는 줄이지 않는다 — 작은 창·휴대폰에서 고양이가 너무 작아 움직임이 안 보였다 (2026-10-07).
+  // 그보다 작은 화면은 확대를 그대로 두고 보이는 지도만 좁아진다
+  // zoomMin = [넓은 화면, 짧은 변 360px 이하] — 휴대폰은 손가락에 가려 조금 더 크게, 그 사이는 짧은 변에 따라 부드럽게
+  const dpr = Math.min(devicePixelRatio, 2);
+  const [z0, z1] = FIELD.zoomMin;
+  const small = Math.max(0, Math.min(1, (560 - Math.min(cw, ch) / dpr) / 200));
+  const sc = Math.max(Math.min(Math.max(cw / V0, ch / V1), cw / 480), (z0 + (z1 - z0) * small) * dpr);
   const vw = cw / sc;
   const vh = ch / sc;
   const amp = whaleShake(s.whale);

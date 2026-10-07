@@ -7,7 +7,7 @@ import { drawEmote } from './emote.ts';
 import { BIG, FISH, fishLen, mouth, RULES, SPOTS, strength, type Dex, type FailHint, type FailReason, type Fish, type FishEvent, type FishingState } from './fishing.ts';
 import { drawIcon, RARE } from './bag-draw.ts';
 import { ITEMS, TYPE_NAME } from './bag.ts';
-import { fitText } from './touch.ts';
+import { safe, fitText } from './touch.ts';
 
 /** 칸마다 [x, y, w, h, 내용 x, y, w, h] — 고양이는 뒤에 [발 x, y, 낚싯대 끝 x, y] (칸 기준) */
 type St = { name: string; fps: number; loop: boolean; frames: number[][] };
@@ -47,7 +47,7 @@ function fishImg(kind: string, caught: boolean): CanvasImageSource | null {
 }
 
 /** 캔버스 픽셀 기준 변환 (마우스 → 그림 좌표에 쓴다) */
-export const fishingView = { sc: 1, ox: 0, oy: 0 };
+export const fishingView = { sc: 1, ox: 0, oy: 0, vx0: 0, vy0: 0, vx1: 1, vy1: 1 };
 
 const at = (st: St, t: number) => {
   const i = Math.floor(Math.max(0, t) * st.fps);
@@ -217,15 +217,63 @@ export const dexReady = (s: FishingState) => s.phase === 'ready' || s.phase === 
 export type FishingButton = 'again' | 'leave' | 'dex' | null;
 /** 그림 좌표 (x, y) 에 있는 버튼 */
 export function fishingButtonAt(s: FishingState, x: number, y: number): FishingButton {
-  if (inRect(grow(exitBtn(s), s.spot.size[0] - 24, 22), x, y)) return 'leave';
+  const m = uiShift(s);
+  if (inRect(grow(exitBtn(s), s.spot.size[0] - 24, 22), x - m.exit[0], y - m.exit[1])) return 'leave';
   if (s.phase === 'caught') {
     const b = popupButtons(s);
     const [cx, cy] = popupCenter(s);
-    if (inRect(grow(b.again, cx, cy), x, y)) return 'again';
-    if (inRect(grow(b.leave, cx, cy), x, y)) return 'leave';
+    if (inRect(grow(b.again, cx, cy), x - m.popup[0], y - m.popup[1])) return 'again';
+    if (inRect(grow(b.leave, cx, cy), x - m.popup[0], y - m.popup[1])) return 'leave';
   }
-  if (dexReady(s) && inRect(grow(DEX_PANEL, DEX_PANEL.x, DEX_PANEL.y), x, y)) return 'dex';
+  if (dexReady(s) && inRect(grow(DEX_PANEL, DEX_PANEL.x, DEX_PANEL.y), x - m.dex[0], y - m.dex[1])) return 'dex';
   return null;
+}
+/** 버튼 가운데 (그림 좌표 — 검증 도구가 누를 자리) */
+export function fishingButtonCenter(s: FishingState, id: 'leave' | 'dex' | 'again' | 'popupLeave'): [number, number] {
+  const m = uiShift(s);
+  const mid = (r: Rect, d: [number, number]): [number, number] => [r.x + r.w / 2 + d[0], r.y + r.h / 2 + d[1]];
+  const [cx, cy] = popupCenter(s);
+  if (id === 'leave') return mid(grow(exitBtn(s), s.spot.size[0] - 24, 22), m.exit);
+  if (id === 'dex') return mid(grow(DEX_PANEL, DEX_PANEL.x, DEX_PANEL.y), m.dex);
+  return mid(grow(popupButtons(s)[id === 'again' ? 'again' : 'leave'], cx, cy), m.popup);
+}
+
+/**
+ * 판을 화면에 붙인다: 그림이 화면보다 크게 확대되거나(작은 화면) 남는 곳이 생기면(다른 화면 비율) 판이 그림 모서리 대신 화면 모서리에 오도록 옮길 양 (그림 좌표).
+ * 도감 판 = 화면 왼쪽 위, 돌아가기 = 오른쪽 위, 장력 판 = 아래 가운데, 알림 글자 · 낚음 팝업 = 보이는 곳 안. 그림이 화면에 꼭 맞으면(데스크톱) 0
+ */
+function uiShift(s: FishingState) {
+  const [W, H] = s.spot.size;
+  const v = fishingView;
+  const into = (c: number, half: number, a: number, b: number) => (b - a < half * 2 ? (a + b) / 2 : Math.max(a + half, Math.min(b - half, c))) - c;
+  const [pcx, pcy] = popupCenter(s);
+  return {
+    dex: [v.vx0, v.vy0] as [number, number],
+    exit: [v.vx1 - W, v.vy0] as [number, number],
+    tension: [(v.vx0 + v.vx1) / 2 - W / 2, v.vy1 - H] as [number, number],
+    banner: [into(W * 0.66, 330 * uiK, v.vx0, v.vx1), into(300, 60 * uiK, v.vy0, v.vy1)] as [number, number],
+    popup: [into(pcx, (POPUP.w / 2) * uiK * 1.1, v.vx0, v.vx1), into(pcy, (POPUP.h / 2) * uiK * 1.1, v.vy0, v.vy1)] as [number, number],
+  };
+}
+
+/**
+ * 그림이 화면에 놓이는 자리. 그림 전체가 들어가게 맞추되(데스크톱은 그대로), 작은 화면(휴대폰 · 세로)에선 그림 1px 이 FOCUS_MIN CSS px 이 될 때까지
+ * 놀이 영역(고양이 자리 ~ 물)을 맞춰 키운다 — 넘치는 쪽은 놀이 영역 가운데로, 그림 밖이 보이지 않게 (2026-10-07)
+ */
+const FOCUS_MIN = 0.6;
+function fitSpot(cw: number, ch: number, s: FishingState) {
+  const spot = s.spot;
+  const [W, H] = spot.size;
+  const xs = spot.water.map((p) => p[0]);
+  const ys = spot.water.map((p) => p[1]);
+  const x0 = Math.max(0, Math.min(spot.seat[0] - 230, Math.min(...xs) - 40));
+  const x1 = Math.min(W, Math.max(...xs) + 40);
+  const y0 = Math.max(0, Math.min(spot.seat[1] - 280, Math.min(...ys) - 30));
+  const y1 = Math.min(H, Math.max(...ys) + 40);
+  const dpr = Math.min(devicePixelRatio, 2);
+  const sc = Math.max(Math.min(cw / W, ch / H), Math.min(cw / (x1 - x0), ch / (y1 - y0), FOCUS_MIN * dpr));
+  const place = (view: number, size: number, at: number) => (size <= view ? (view - size) / 2 : Math.max(view - size, Math.min(0, view / 2 - at)));
+  return { sc, ox: place(cw, W * sc, ((x0 + x1) / 2) * sc), oy: place(ch, H * sc, ((y0 + y1) / 2) * sc) };
 }
 
 // ── 그리기 ──
@@ -235,11 +283,20 @@ export type FishingViewOpts = { t: number; dt: number; hover: FishingButton; tou
 export function drawFishing(ctx: CanvasRenderingContext2D, cw: number, ch: number, s: FishingState, v: FishingViewOpts) {
   const spot = s.spot;
   const [W, H] = spot.size;
-  const sc = Math.min(cw / W, ch / H);
-  const ox = (cw - W * sc) / 2;
-  const oy = (ch - H * sc) / 2;
-  Object.assign(fishingView, { sc, ox, oy });
-  uiK = Math.max(1, Math.min(1.8, 0.55 / (sc / Math.min(devicePixelRatio, 2))));
+  const { sc, ox, oy } = fitSpot(cw, ch, s);
+  const dpr = Math.min(devicePixelRatio, 2);
+  const sf = safe();
+  // 보이는 그림 범위 (노치 · 홈 막대 안쪽) — 판을 화면 모서리에 붙일 때 쓴다
+  Object.assign(fishingView, {
+    sc,
+    ox,
+    oy,
+    vx0: (sf.l * dpr - ox) / sc,
+    vy0: (sf.t * dpr - oy) / sc,
+    vx1: (cw - sf.r * dpr - ox) / sc,
+    vy1: (ch - sf.b * dpr - oy) / sc,
+  });
+  uiK = Math.max(1, Math.min(1.8, 0.55 / (sc / dpr)));
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.fillStyle = '#58b6dd'; // 화면 비율이 달라 남는 곳은 물빛으로
   ctx.fillRect(0, 0, cw, ch);
@@ -513,6 +570,7 @@ function drawCatch(ctx: CanvasRenderingContext2D, s: FishingState, v: FishingVie
   const p = Math.min(1, s.t / 0.25);
   const pop = (1 + 0.12 * Math.sin(p * Math.PI) - 0.12 * (1 - p)) * uiK; // 톡 튀어나온다
   ctx.save();
+  ctx.translate(...uiShift(s).popup);
   ctx.translate(b.x + b.w / 2, b.y + b.h / 2);
   ctx.scale(pop, pop);
   ctx.translate(-(b.x + b.w / 2), -(b.y + b.h / 2));
@@ -599,10 +657,12 @@ function button(ctx: CanvasRenderingContext2D, r: Rect, text: string, hover: boo
 
 function drawUi(ctx: CanvasRenderingContext2D, s: FishingState, v: FishingViewOpts) {
   const [W] = s.spot.size;
+  const m = uiShift(s);
   ctx.save();
   ctx.textAlign = 'left';
   // 도감 판 (누르면 전체 도감)
   ctx.save();
+  ctx.translate(...m.dex);
   zoom(ctx, DEX_PANEL.x, DEX_PANEL.y);
   const kinds = Object.keys(s.spot.fish);
   const got = kinds.filter((k) => s.dex[k]).length;
@@ -644,6 +704,7 @@ function drawUi(ctx: CanvasRenderingContext2D, s: FishingState, v: FishingViewOp
 
   // 돌아가기
   ctx.save();
+  ctx.translate(...m.exit);
   zoom(ctx, W - 24, 22);
   button(ctx, exitBtn(s), v.touch ? '돌아가기' : '돌아가기 (Esc)', v.hover === 'leave' && s.phase !== 'caught', 'plain');
   ctx.restore();
@@ -651,6 +712,7 @@ function drawUi(ctx: CanvasRenderingContext2D, s: FishingState, v: FishingViewOp
   // 장력 게이지
   if (s.phase === 'reel' || s.phase === 'hook') {
     ctx.save();
+    ctx.translate(...m.tension);
     zoom(ctx, ...tensionAnchor(s));
     drawTension(ctx, s, v.t);
     ctx.restore();
@@ -660,6 +722,7 @@ function drawUi(ctx: CanvasRenderingContext2D, s: FishingState, v: FishingViewOp
   if (banner) {
     const a = Math.min(1, (1.8 - banner.t) / 0.3);
     ctx.globalAlpha = a;
+    ctx.translate(...m.banner);
     zoom(ctx, W * 0.66, 300);
     ctx.font = 'bold 46px system-ui, sans-serif';
     ctx.textAlign = 'center';

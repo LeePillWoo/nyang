@@ -51,7 +51,7 @@ import {
 import { cardAt, cardRects, drawCards, drawResult, resultButtonAt, resultPoint, skillFxReady, type ResultButton } from './skills-draw.ts';
 import { learn as learnSkill, type SkillId } from './skills.ts';
 import { loadAxe, loadBoat, loadCat, loadSnow } from './cat.ts';
-import { drawDungeon, dungeonReady, roomReady } from './dungeon-draw.ts';
+import { drawDungeon, dungeonReady, roomReady, roomView } from './dungeon-draw.ts';
 import { makeDungeon, maxHp, pick, resetDungeon, skipWaves, updateDungeon, type Dungeon, type DungeonEvent } from './dungeon.ts';
 import { emotesReady, quiet, say, saying, tickEmote, type EmoteId } from './emote.ts';
 import { ENEMY_DEFS, type Kind } from './enemy.ts';
@@ -61,6 +61,7 @@ import {
   dexReady,
   drawFishing,
   fishingButtonAt,
+  fishingButtonCenter,
   fishingFx,
   fishingHelp,
   fishingReady,
@@ -77,7 +78,7 @@ import { miniButtonAt, miniLayout, type MiniButton } from './mini-draw.ts';
 import { drawSandboard, SAND_IMAGES, sandView, type SandArt } from './sandboard-draw.ts';
 import { makeSandboard, updateSandboard, type SandEvent, type SandState } from './sandboard.ts';
 import { loadSheet, type Sheet } from './sheet.ts';
-import { buttonAt, controls, drawControls, drawRotateHint, onStick, safe, stickVector, ui, type ButtonId } from './touch.ts';
+import { buttonAt, controls, drawControls, followStick, onStick, safe, stickBase, stickVector, ui, type ButtonId } from './touch.ts';
 
 const canvas = document.createElement('canvas');
 const ctx = canvas.getContext('2d')!;
@@ -199,8 +200,13 @@ const toFishing = (p: { x: number; y: number }) => ({
 // ── 터치 ── 손가락을 한 번이라도 대면(또는 ?touch) 조이스틱·버튼을 띄운다. 손가락마다(pointerId) 따로 쫓는다
 let touchOn = query.has('touch');
 if (touchOn) document.body.classList.add('touch');
-/** 조이스틱을 쥔 손가락과 그 위치 (CSS px) */
-let stick: { id: number; x: number; y: number } | null = null;
+/**
+ * 조이스틱을 쥔 손가락과 그 위치 · 조이스틱 받침 자리 (CSS px) — 누른 자리에 생기고 손가락이 멀어지면 따라온다.
+ * sx, sy · t0 · moved = 처음 누른 자리 · 때 · 움직였나 (필드: 움직이지 않고 톡 누른 자리가 포탈이면 워프)
+ */
+let stick: { id: number; x: number; y: number; bx: number; by: number; sx: number; sy: number; t0: number; moved: boolean } | null = null;
+const grabStick = (c: ReturnType<typeof ctl>, id: number, p: { x: number; y: number }) =>
+  (stick = { id, ...p, ...stickBase(c, p.x, p.y, innerWidth, innerHeight), sx: p.x, sy: p.y, t0: performance.now(), moved: false });
 /** 버튼을 누르고 있는 손가락 → 버튼 */
 const pressing = new Map<number, ButtonId>();
 const ctl = () => controls(innerWidth, innerHeight, scene, touchOn);
@@ -347,7 +353,7 @@ canvas.addEventListener('pointerdown', (e) => {
       return;
     }
     if (!stick && onStick(c, p.x, p.y)) {
-      stick = { id: e.pointerId, ...p };
+      grabStick(c, e.pointerId, p);
       return;
     }
     if (scene === 'sandboard') jumpQueued = true; // 화면 아무 데나 누르면 점프
@@ -362,7 +368,7 @@ canvas.addEventListener('pointerdown', (e) => {
     return;
   }
   if (!stick && onStick(c, p.x, p.y)) {
-    stick = { id: e.pointerId, ...p };
+    grabStick(c, e.pointerId, p);
     return;
   }
   if (scene === 'dungeon') return; // 냥펀치는 자동 · 낮잠이면 결과창의 버튼으로
@@ -375,6 +381,8 @@ canvas.addEventListener('pointermove', (e) => {
   const p = pos(e);
   if (stick?.id === e.pointerId) {
     Object.assign(stick, p);
+    if (Math.hypot(p.x - stick.sx, p.y - stick.sy) > DRAG_PX) stick.moved = true;
+    followStick(ctl(), stick);
     return;
   }
   if (panel) return;
@@ -420,7 +428,14 @@ canvas.addEventListener('pointermove', (e) => {
     canvas.style.cursor = drag?.moved ? 'grabbing' : overMap || buttonAt(ctl(), p.x, p.y) || portalAt(p.x, p.y) ? 'pointer' : 'grab';
 });
 function release(e: PointerEvent) {
-  if (stick?.id === e.pointerId) stick = null;
+  if (stick?.id === e.pointerId) {
+    // 필드: 조이스틱 영역이어도 움직이지 않고 톡 누른 자리가 포탈이면 워프 (영역 안에서도 포탈을 누를 수 있게)
+    const tap = !stick.moved && performance.now() - stick.t0 < 350 && e.type === 'pointerup';
+    const at = { x: stick.sx, y: stick.sy };
+    stick = null;
+    const w = tap && scene === 'field' ? portalAt(at.x, at.y) : null;
+    if (w) warpTo(w);
+  }
   pressing.delete(e.pointerId);
   if (fishPtr === e.pointerId) {
     fishPtr = null;
@@ -454,7 +469,7 @@ canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 const held = (...codes: string[]) => codes.some((c) => keys.has(c));
 /** 화면 기준 방향 입력 -1..1 — 키보드 + 조이스틱 */
 function input() {
-  const v = stick ? stickVector(ctl(), stick.x, stick.y) : { mx: 0, my: 0 };
+  const v = stick ? stickVector(ctl(), stick) : { mx: 0, my: 0 };
   const clamp = (a: number) => Math.max(-1, Math.min(1, a));
   const btn = [...pressing.values()];
   return {
@@ -620,6 +635,15 @@ if (trace)
       },
       /** 조이스틱·버튼 자리 (CSS px) */
       get controls() { return ctl(); },
+      /** 쥐고 있는 조이스틱 (손가락 x, y · 받침 bx, by — CSS px) */
+      get stick() { return stick; },
+      /** 던전 고양이의 화면 위치 (CSS px) — 작은 화면에선 방이 고양이를 따라 움직인다 */
+      get dungeonCat() {
+        const d = Math.min(devicePixelRatio, 2);
+        const v = roomView(canvas.width, canvas.height, dungeon);
+        const p = dungeon.room.toScreen(dungeon.P.x, dungeon.P.z);
+        return { x: (v.ox + p.sx * v.scale) / d, y: (v.oy + p.sy * v.scale) / d, scale: v.scale / d };
+      },
       get touch() { return touchOn; },
       get dexOpen() { return panel === 'dex'; },
       get bagOpen() { return panel === 'bag'; },
@@ -683,6 +707,12 @@ if (trace)
       get fishing() { return fishing; },
       /** 낚시 배경 그림 좌표 → 화면 위치 (CSS px) */
       fishScreen: (x: number, y: number) => {
+        const d = Math.min(devicePixelRatio, 2);
+        return { x: (fishingView.ox + x * fishingView.sc) / d, y: (fishingView.oy + y * fishingView.sc) / d };
+      },
+      /** 낚시 버튼 가운데 (CSS px) — 판이 화면 모서리에 붙어 그림 좌표만으론 못 찾는다 */
+      fishButton: (id: 'leave' | 'dex' | 'again' | 'popupLeave') => {
+        const [x, y] = fishingButtonCenter(fishing, id);
         const d = Math.min(devicePixelRatio, 2);
         return { x: (fishingView.ox + x * fishingView.sc) / d, y: (fishingView.oy + y * fishingView.sc) / d };
       },
@@ -1224,8 +1254,7 @@ function drawOverlay() {
   if (panel === 'shop') return drawShop(ctx, innerWidth, innerHeight, bag, SHOP, lastDt);
   if (panel === 'bag') return drawBag(ctx, innerWidth, innerHeight, bag, lastDt);
   const c = ctl();
-  drawControls(ctx, c, stick && stickVector(c, stick.x, stick.y), new Set(pressing.values()));
-  if (touchOn && innerHeight > innerWidth) drawRotateHint(ctx, innerWidth);
+  drawControls(ctx, c, stick && c.stick ? { bx: stick.bx, by: stick.by, ...stickVector(c, stick) } : null, new Set(pressing.values()));
   // 레벨 업 카드는 맨 위에 (조이스틱·버튼도 덮는다). 도움말 줄은 고르는 동안 숨긴다
   if (scene === 'dungeon' && dungeon.choose) drawCards(ctx, canvas.width, canvas.height, dungeon, cardHover, last / 1000, touchOn);
   if (scene === 'dungeon' && dungeon.result) drawResult(ctx, canvas.width, canvas.height, dungeon, resultHover, last / 1000, touchOn, dungeon.room.def.name);
@@ -1260,7 +1289,7 @@ const HELP_TOUCH = {
 function sayHelp() {
   const t = scene === 'fishing' ? fishingHelp(fishing, touchOn) : (touchOn ? HELP_TOUCH : HELP)[inWhale() ? 'whale' : scene];
   help.textContent = t;
-  help.hidden = !t;
+  help.hidden = !t || (touchOn && scene === 'sandboard'); // 터치 샌드보드는 아래 가운데가 점프 버튼 자리
 }
 const step = (t: string) => {
   help.textContent = t + ' 불러오는 중…';

@@ -41,15 +41,24 @@ const LOOK = {
   },
 };
 
+/** 칸이 이 CSS px 보다 작아지게는 줄이지 않는다 — 휴대폰에서 미로가 화면에 다 들어가게 줄이면 고양이가 너무 작았다. 넘치면 고양이를 따라간다 (2026-10-07) */
+const CELL_MIN = 30;
+
 export function drawMaze(ctx: CanvasRenderingContext2D, cw: number, ch: number, s: MazeState, cat: Sheet, v: MazeViewOpts) {
   const whale = s.theme === 'whale';
   const C = LOOK[s.theme];
   const dpr = Math.min(devicePixelRatio, 2);
   const L = miniLayout(cw / dpr, ch / dpr);
-  // 위 HUD(약 70px) 와 아래 안내줄을 비우고 가운데에
-  const px = Math.floor(Math.min((cw - 24 * dpr) / s.w, (ch - (L.s.t + 72) * dpr - 48 * dpr) / s.h));
-  const ox = Math.floor((cw - s.w * px) / 2);
-  const oy = Math.floor((L.s.t + 72) * dpr + (ch - (L.s.t + 72) * dpr - 48 * dpr - s.h * px) / 2);
+  // 위 HUD(약 70px) 와 아래 안내줄을 비운 자리에 — 다 들어가면 가운데, 넘치면 고양이를 따라간다 (미로 끝에선 멈춘다)
+  const top = (L.s.t + 72) * dpr;
+  const viewL = 12 * dpr;
+  const viewW = cw - 24 * dpr;
+  const viewH = ch - top - 48 * dpr;
+  const px = Math.max(Math.floor(Math.min(viewW / s.w, viewH / s.h)), Math.round(CELL_MIN * dpr));
+  const place = (start: number, view: number, size: number, at: number) =>
+    size <= view ? start + (view - size) / 2 : Math.max(start + view - size, Math.min(start, start + view / 2 - at));
+  const ox = Math.floor(place(viewL, viewW, s.w * px, (s.x / CELL) * px));
+  const oy = Math.floor(place(top, viewH, s.h * px, (s.z / CELL) * px));
   Object.assign(mazeView, { px, ox, oy });
 
   ctx.setTransform(1, 0, 0, 1, 0, 0);

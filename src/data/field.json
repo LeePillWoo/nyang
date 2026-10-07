@@ -3,6 +3,7 @@
   "size": [5016, 2823],
   "grid": [6, 6],
   "view": [836, 470],
+  "zoomMin": [1.5, 1.8],
   "biomes": [
     "ssssss",
     "ssss..",
