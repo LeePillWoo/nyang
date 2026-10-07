@@ -97,7 +97,7 @@ export function drawMinimap(ctx: CanvasRenderingContext2D, r: Rect, s: FieldStat
     const locked = warpLocked(w);
     ctx.beginPath();
     ctx.arc(mx, my, big ? 5 : w.to && !locked ? 3.2 : 2.4, 0, Math.PI * 2);
-    ctx.fillStyle = locked ? 'rgba(150,150,160,0.8)' : SPOTS[w.to] ? '#6fd3ff' : w.to === 'shop' ? '#ff8fc8' : w.to === 'maze' || w.to === 'sandboard' ? '#b48cff' : w.to ? '#ffd84a' : 'rgba(225,225,225,0.9)';
+    ctx.fillStyle = locked ? 'rgba(150,150,160,0.8)' : SPOTS[w.to] ? '#6fd3ff' : w.to === 'shop' ? '#ff8fc8' : ['maze', 'sandboard', 'timber'].includes(w.to) ? '#b48cff' : w.to ? '#ffd84a' : 'rgba(225,225,225,0.9)';
     ctx.fill();
     ctx.lineWidth = 1.2;
     ctx.strokeStyle = 'rgba(70,52,42,0.9)';
