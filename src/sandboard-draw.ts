@@ -103,6 +103,29 @@ function groundPattern(ctx: CanvasRenderingContext2D, art: SandArt) {
 /** 카메라 가로 자리 (새 판이면 그 자리에서 바로) */
 const cam = { run: null as SandState | null, x: 0, t: 0 };
 
+/**
+ * 들어가기 전에(화면이 가려진 동안) 미리 해 둔다 — 첫 프레임이 230ms 걸리고 처음 2초에 0.15~0.4초씩 멈칫하던 것 (2026-10-07 "처음에 렉"):
+ * 바닥 무늬를 만들고, 주행 · 드리프트 · 고개 돌림 컷의 보드 자리를 재고, 그림마다 한 번씩 작게 그려 그래픽 카드에 올리고 줄인 그림(밉맵)까지 만든다.
+ * 굵은 한글 · 이모지 글꼴도 미리 한 번 쓴다 — 처음 쓰는 순간 글꼴을 불러오느라 첫 프레임 213ms 중 207ms 가 글자 재기였다
+ */
+export function warmSandboard(ctx: CanvasRenderingContext2D, art: SandArt) {
+  groundPattern(ctx, art);
+  for (const row of ['ride', 'look_left', 'look_right', 'drift_left', 'drift_right']) rowAngle(art, row);
+  board(art, 'ride_01');
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.imageSmoothingQuality = 'medium';
+  ctx.globalAlpha = 0.01;
+  for (const img of Object.values(art)) ctx.drawImage(img, 0, 0, 4, 4);
+  const text = '🐾 모래 미끄럼틀 ⏱ 0:00.0 출발! 골인! 완주! 넘어졌어요 점수 냥코인 최고 기록 다시 타기 돌아가기 하트 +1 방패! 자석! 부스트! 막았다!';
+  for (const px of [15, 17, 18, 20, 26, 44]) {
+    ctx.font = `bold ${px}px system-ui, sans-serif`;
+    ctx.measureText(text);
+    ctx.fillText(text, 0, px);
+  }
+  ctx.restore();
+}
+
 export function drawSandboard(ctx: CanvasRenderingContext2D, cw: number, ch: number, s: SandState, art: SandArt, v: SandViewOpts) {
   const dpr = Math.min(devicePixelRatio, 2);
   // 화면 배율(배경 px → 화면 px). CSS px 로 정해 기기 픽셀로: 가로 화면은 길 폭이 화면의 45% 쯤 · 앞이 35m 쯤 보이게
@@ -200,13 +223,14 @@ export function drawSandboard(ctx: CanvasRenderingContext2D, cw: number, ch: num
       const extra = 0.38 + hash(i * 5 + side) * 1.3;
       at(d, () => spr(ctx, art, id, X(out(d, side, extra)), Y(d), DECO_K * k * (0.7 + h * 0.35)));
     }
-  // 모퉁이 6m 앞: 바깥쪽에 꺾는 쪽을 가리키는 표지판 (그림은 오른쪽을 가리켜서 왼쪽으로 꺾을 때만 좌우로 뒤집는다)
-  for (const g of s.course.segs) {
-    if (g.kind !== 'corner' || Math.abs(g.s1 - g.s0) < 0.02) continue;
+  // 모퉁이 · 시케인 입구 6m 앞: 바깥쪽에 꺾는 쪽을 가리키는 표지판 (그림은 오른쪽을 가리켜서 왼쪽으로 꺾을 때만 좌우로 뒤집는다)
+  s.course.segs.forEach((g, i) => {
+    const turn = g.kind === 'corner' || (g.kind === 'chicane' && s.course.segs[i - 1]?.kind !== 'chicane');
+    if (!turn || Math.abs(g.s1 - g.s0) < 0.02) return;
     const dir = Math.sign(g.s1 - g.s0);
     const d = g.d0 - 6;
     if (d < SAND.length - 20) at(d, () => spr(ctx, art, 'arrow_sign', X(out(d, -dir, 0.4)), Y(d), DECO_K * k * 0.85, dir));
-  }
+  });
   // 출발: 천막 · 보드 거치대 · 항아리 / 결승: 스핑크스 · 피라미드 · 등불 (울타리 바깥으로 extra)
   const deco = (id: string, side: number, extra: number, d: number, m = 1) => at(d, () => spr(ctx, art, id, X(out(d, side, extra)), Y(d), DECO_K * k * m));
   deco('tent', -1, 0.48, 6);

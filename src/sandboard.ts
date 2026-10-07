@@ -44,24 +44,18 @@ export const SAND = {
   carveMax: 5,
   edge: 0.92,
   /**
-   * 코스 (2026-10-07 사용자 의견 — 일자라 재미없다 → 둥근 굽이도 너무 스무스해 재미없다, 더 다이나믹하게):
-   * 비스듬히 곧게 내려가는 다리(leg)와 짧고 날카로운 모퉁이(corner)가 왼쪽 · 오른쪽 번갈아 — 진짜 지그재그.
-   * 다리 기울기(길 가운데가 1m 마다 옆으로 가는 양)는 처음 slope[0] → 결승 slope[1], 다리 길이 leg 처음 → 결승(± 35%),
-   * 모퉁이 길이 corner 처음 → 결승 — 갈수록 급하고 잦고 날카롭다. 가장 급한 다리도 최고 속도에서 가로 1.5 (보드를 다 꺾은 2.5 의 60%).
-   * 다리 대신 가끔: 넓은 직선(straightP — 폭 wide, 점프대 줄 · 슬랄롬 · 가속 발판 줄) · 시케인(chicaneP — 폭 narrow, 짧게 좌우 잇달아).
-   * 처음 start m 와 결승 앞 finish m 는 곧게 (결승 앞 원근이 말리는 구간)
+   * 코스 (2026-10-07 사용자 의견 — 커브가 너무 많다: 커브는 짧게 한 판에 두세 번만, 나머지는 예전처럼 곧은 길에 장애물을 더):
+   * 곧은 길이 대부분이고, 커브 구간이 curves 번 — 코스를 고르게 나눈 칸마다 하나씩. 커브 구간은 둘 중 하나:
+   * 지그재그(zigzag — 비스듬히 곧은 다리 둘이 짧은 모퉁이로 좌우 번갈아, 약 70m) · 시케인(chicane — 길이 narrow 로 좁아지며 짧게 좌우로 세 번, 약 60m).
+   * 다리 기울기(길 가운데가 1m 마다 옆으로 가는 양)는 최고 속도에서 가로 1.3 쯤 (보드를 다 꺾은 2.5 의 절반) — 넉넉히 따라간다.
+   * 처음 start m 와 결승 앞 finish m 는 곧게
    */
   course: {
     start: 40,
     finish: 75,
-    slope: [0.035, 0.062],
-    leg: [44, 22],
-    corner: [16, 8],
-    straight: [36, 48],
-    straightP: 0.2,
-    chicaneP: 0.12,
+    curves: [2, 3],
+    zigzag: { slope: [0.042, 0.055], leg: [18, 24], corner: [9, 12], chance: 0.6 },
     chicane: { slope: 0.05, leg: 11, corner: 6, legs: 3 },
-    wide: 1.3,
     narrow: 0.8,
   },
   /**
@@ -99,7 +93,7 @@ export const SAND = {
   magnetD: 10,
   shield: 10,
   /** 장애물 줄 사이 거리 (m) */
-  gap: [15, 24],
+  gap: [12, 18],
   lanes: [-0.8, -0.4, 0, 0.4, 0.8],
   /** 이만큼 앞까지 미리 깔아 둔다 (m) */
   ahead: 110,
@@ -151,19 +145,23 @@ export const solid = (k: ObKind) => role(k) === 'hit' || role(k) === 'tall';
 
 /**
  * 코스 조각 — d0 ~ d1 동안 길 가운데의 기울기(1m 마다 옆으로 가는 양, + = 오른쪽)가 s0 → s1 로 곧게 바뀐다.
- * 다리(leg) = 비스듬히 곧은 길(s0 = s1) · 모퉁이(corner) = 짧게 꺾임 · 시케인(chicane) = 짧은 다리와 모퉁이가 잇달아 ·
- * 넓은 직선(straight · jump — 점프대 줄) · 처음(start) · 결승(finish). kind 는 물건을 깔 때 쓴다
+ * 곧은 길: 처음(start) · 가운데(run) · 결승(finish). 커브 구간: 지그재그의 다리(leg — 비스듬히 곧은 길, s0 = s1)와 모퉁이(corner — 짧게 꺾임),
+ * 시케인(chicane — 짧은 다리와 모퉁이가 잇달아). kind 는 물건을 깔 때 쓴다
  */
-export type SegKind = 'start' | 'leg' | 'corner' | 'chicane' | 'straight' | 'jump' | 'finish';
+export type SegKind = 'start' | 'run' | 'finish' | 'leg' | 'corner' | 'chicane';
+/** 커브 구간의 조각인가 */
+export const curvy = (g: Seg) => g.kind === 'leg' || g.kind === 'corner' || g.kind === 'chicane';
 export type Seg = { d0: number; d1: number; c0: number; s0: number; s1: number; kind: SegKind };
 /** 코스 = 조각들(거리 순) + 길 폭(반폭 배율, 1 = 보통)이 바뀌는 곳들 (사이는 부드럽게) */
 export type Course = { segs: Seg[]; widths: { d: number; w: number }[] };
 /** 곧은 길 (체크용) */
 export const STRAIGHT: Course = { segs: [{ d0: -1e9, d1: 1e9, c0: 0, s0: 0, s1: 0, kind: 'start' }], widths: [{ d: 0, w: 1 }] };
 
+/** 커브 구간이 차지하는 가장 긴 길이 (m) — 지그재그 약 70m · 시케인 약 60m */
+export const CURVE_SPAN = 90;
 /**
- * 코스를 깐다 — 처음은 곧게, 그 뒤 다리 · 모퉁이가 왼쪽 · 오른쪽 번갈아 (가끔 넓은 직선 · 시케인), 결승 앞은 곧게.
- * 폭은 구간이 바뀌는 모퉁이에 걸쳐 바뀐다 (넓은 직선 wide · 시케인 narrow · 나머지 1)
+ * 코스를 깐다 — 대부분 곧은 길, 커브 구간은 curves 번만: 출발 80m 뒤 ~ 결승 곧은 길 앞을 고르게 나눈 칸마다 하나씩(칸 안 아무 데나).
+ * 커브 구간 = 지그재그(다리 둘이 짧은 모퉁이로 좌우 번갈아) 또는 시케인(길이 좁아지며 좌우로 세 번). 끝은 모퉁이로 다시 곧게
  */
 export function makeCourse(rng: () => number): Course {
   const C = SAND.course;
@@ -172,10 +170,7 @@ export function makeCourse(rng: () => number): Course {
   let d = C.start;
   let c = 0;
   let s = 0;
-  let w = 1;
   let dir = rng() < 0.5 ? -1 : 1;
-  let last: SegKind = 'start';
-  let sinceChicane = 9; // 시케인은 사이에 다른 구간이 둘은 끼게 (몰려 나오지 않게)
   const lerp = (a: readonly number[], t: number) => a[0] + (a[1] - a[0]) * t;
   const push = (len: number, s1: number, kind: SegKind) => {
     segs.push({ d0: d, d1: d + len, c0: c, s0: s, s1, kind });
@@ -183,48 +178,32 @@ export function makeCourse(rng: () => number): Course {
     s = s1;
     d += len;
   };
-  const widen = (to: number) => {
-    if (to === w) return;
-    widths.push({ d: d - 6, w }, { d: d + 6, w: to });
-    w = to;
-  };
-  const end = SAND.length - C.finish;
-  for (;;) {
-    const late = Math.min(1, d / SAND.length);
-    const corner = lerp(C.corner, late) * (0.8 + 0.4 * rng());
-    const r = rng();
-    sinceChicane++;
-    if (r < C.straightP && last !== 'straight' && last !== 'jump' && d > 120) {
-      const len = lerp(C.straight, rng());
-      if (d + corner + len + 20 > end) break;
-      widen(C.wide);
-      push(corner, 0, 'corner');
-      last = rng() < 0.45 ? 'jump' : 'straight';
-      push(len, 0, last);
-    } else if (r < C.straightP + C.chicaneP && sinceChicane > 2 && d > 150) {
+  const n = C.curves[0] + Math.floor(rng() * (C.curves[1] - C.curves[0] + 1));
+  const lo = C.start + 80;
+  const slot = (SAND.length - C.finish - CURVE_SPAN - lo) / n;
+  for (let i = 0; i < n; i++) {
+    push(lo + slot * i + rng() * Math.max(0, slot - CURVE_SPAN) - d, 0, 'run');
+    if (rng() < C.zigzag.chance) {
+      const z = C.zigzag;
+      for (let j = 0; j < 2; j++) {
+        const sl = dir * lerp(z.slope, rng());
+        push(lerp(z.corner, rng()), sl, 'corner');
+        push(lerp(z.leg, rng()), sl, 'leg');
+        dir = -dir;
+      }
+      push(lerp(z.corner, rng()), 0, 'corner');
+    } else {
       const ch = C.chicane;
-      if (d + ch.legs * (ch.corner + ch.leg) + 20 > end) break;
-      widen(C.narrow);
-      for (let i = 0; i < ch.legs; i++) {
+      widths.push({ d: d - 6, w: 1 }, { d: d + 6, w: C.narrow });
+      for (let j = 0; j < ch.legs; j++) {
         push(ch.corner, dir * ch.slope, 'chicane');
         push(ch.leg, dir * ch.slope, 'chicane');
         dir = -dir;
       }
-      last = 'chicane';
-      sinceChicane = 0;
-    } else {
-      const len = lerp(C.leg, late) * (0.65 + 0.7 * rng());
-      if (d + corner + len + 20 > end) break;
-      widen(1);
-      const sl = dir * lerp(C.slope, late) * (0.85 + 0.15 * rng());
-      push(corner, sl, 'corner');
-      push(len, sl, 'leg');
-      dir = -dir;
-      last = 'leg';
+      push(ch.corner, 0, 'chicane');
+      widths.push({ d: d - 6, w: C.narrow }, { d: d + 6, w: 1 });
     }
   }
-  widen(1);
-  push(C.corner[0], 0, 'corner');
   segs.push({ d0: d, d1: 1e9, c0: c, s0: 0, s1: 0, kind: 'finish' });
   return { segs, widths };
 }
@@ -338,8 +317,9 @@ export type SandState = {
   obs: Ob[];
   fx: SandFx[];
   pops: SandPop[];
-  /** 다음 줄을 깔 거리 */
+  /** 다음 줄을 깔 거리 · 마지막 장애물 줄의 거리와 빈 레인 (가까운 다음 줄은 빈 레인이 이웃하게) */
   nextAt: number;
+  lastRow: { d: number; free: number[] } | null;
   events: SandEvent[];
   rng: () => number;
 };
@@ -352,7 +332,7 @@ export function makeSandboard(rng: () => number = Math.random): SandState {
   const s: SandState = {
     d: 0, x: 0, v: SAND.vMin, air: 0, airMax: 1, landT: 9, dizzy: 0, yaw: 0, yawV: 0, vx: 0, lean: 0, slip: 0, steer: 0, steerU: 0, course: STRAIGHT, scrapeT: 0, sliding: false, slideV: 0, carveT: 0, carveRate: 0, flip: 1, t: 0,
     hearts: SAND.hearts, shield: 0, magnet: 0, boost: 0, phase: 'play', doneT: 0, fell: false, coins: 0, crashes: 0, score: 0,
-    obs: [], fx: [], pops: [], nextAt: 30, events: [], rng,
+    obs: [], fx: [], pops: [], nextAt: 30, lastRow: null, events: [], rng,
   };
   s.course = makeCourse(rng);
   spawn(s);
@@ -362,10 +342,10 @@ export function makeSandboard(rng: () => number = Math.random): SandState {
 const pick = <T>(s: SandState, list: readonly T[]) => list[Math.floor(s.rng() * list.length)];
 
 /**
- * 앞쪽에 깐다. 갈수록 장애물이 잦고 많아진다. 부딪히는 것끼리는 서로 다른 레인 — 늘 지나갈 길이 있다.
- * 레인은 그 거리의 길 가운데 · 폭 기준. 구간마다 다르게: 모퉁이(와 그 8m 앞)는 비우고, 시케인은 길 가운데를 따라 냥코인,
- * 넓은 직선은 점프대 줄(모든 레인 — 구덩이 줄을 건너뛴다) · 슬랄롬(높은 장애물 좌우 번갈아, 반대쪽에 냥코인) · 가속 발판 줄,
- * 다리는 줄마다 장애물 · 냥코인 · 보상 (가끔 길이 가는 쪽 울타리 가까이에 냥코인 줄). 점프대 하나짜리는 처음 · 결승의 곧은 길에서만
+ * 앞쪽에 깐다. 곧은 길엔 줄마다 장애물 · 냥코인 · 보상 — 갈수록 잦고 많게 (장애물 줄이 절반 넘게, 뒤로 갈수록 한 줄에 셋도),
+ * 가끔 점프대 줄(모든 레인 — 크게 떠서 구덩이 줄을 건너뛴다) · 슬랄롬(높은 장애물 좌우 번갈아, 반대쪽에 냥코인).
+ * 부딪히는 것끼리는 서로 다른 레인 — 늘 지나갈 길이 있다 (레인은 그 거리의 길 가운데 · 폭 기준).
+ * 커브 구간은 길 가운데를 따라 냥코인만 — 그 8m 앞과 끝나고 12m 도 장애물 없이 (꺾으며 길을 가로지르는 동안 피할 틈이 없다)
  */
 function spawn(s: SandState) {
   while (s.nextAt < s.d + SAND.ahead && s.nextAt < SAND.length - 25) {
@@ -382,78 +362,79 @@ function spawn(s: SandState) {
       for (let i = 0; i < n; i++) add('paw_coin', x0 + slant * i, d0 + i * 3);
     };
     const gap = SAND.gap[0] + s.rng() * (SAND.gap[1] - SAND.gap[0]) * (1 - late * 0.25);
-    if (g.kind === 'chicane') {
-      // 시케인: 꺾이는 길 가운데를 따라 냥코인 (장애물 없이 좌우로 잇달아 꺾기)
+    if (curvy(g)) {
+      // 커브 구간: 길 가운데를 따라 냥코인 — 따라 꺾으면 줍는다
       let end = g.d1;
-      for (const q of s.course.segs) if (q.kind === 'chicane' && q.d0 >= end - 1e-6 && q.d0 <= end + 1e-6) end = q.d1;
+      for (const q of s.course.segs) if (curvy(q) && Math.abs(q.d0 - end) < 1e-6) end = q.d1;
       for (let dd = d; dd < end - 2; dd += 3) add('paw_coin', 0, dd);
-      s.nextAt = end; // 이어지는 모퉁이는 아래 모퉁이 규칙이 비운다
+      s.nextAt = end + 12;
       continue;
     }
-    // 모퉁이 · 시케인과 그 8m 앞, 모퉁이 12m 뒤는 장애물을 두지 않는다 — 꺾으며 길을 가로지르는 동안 피할 틈이 없다
-    const turn = s.course.segs.find((q) => q.d0 < d + 8 && ((q.kind === 'corner' && q.d1 + 12 > d) || (q.kind === 'chicane' && q.d1 > d)));
-    if (turn) {
-      s.nextAt = turn.kind === 'chicane' ? turn.d0 : turn.d1 + 12;
-      continue;
-    }
-    if (g.kind === 'jump' || g.kind === 'straight') {
-      const d0 = g.d0 + 6; // 직선 처음부터 — 공중에 뜬 채 다음 모퉁이로 넘어가지 않게
-      if (g.kind === 'jump') {
-        // 점프대 줄: 모든 레인 → 크게 떠서 구덩이 줄을 건너뛰고 공중 냥코인 세 줄, 내려앉는 곳에 냥코인 더미
-        for (const x of lanes) add('jump_ramp', x, d0);
-        for (const x of lanes) add('sand_pit', x, d0 + 10);
-        for (const x of [-0.5 * w, 0, 0.5 * w]) for (let i = 0; i < 4; i++) add('paw_coin', x, d0 + 5 + i * 4);
-        add('coin_pile', 0, d0 + 25);
-      } else if (s.rng() < 0.55) {
-        // 슬랄롬: 높은 장애물(점프로 못 넘는다)이 좌우 번갈아, 반대쪽에 냥코인 — 다 주우려면 이리저리 꺾는다 (모퉁이 12m 뒤부터)
-        let side = s.rng() < 0.5 ? -1 : 1;
-        for (let dd = g.d0 + 12; dd < g.d1 - 8; dd += 10) {
-          add(pick(s, TALL), side * 0.4 * w, dd);
-          add('paw_coin', -side * 0.45 * w, dd);
-          side = -side;
-        }
-      } else {
-        // 가속 발판 줄: 가운데 세 레인 → 빨라진 채 냥코인 줄
-        for (const x of [-0.4 * w, 0, 0.4 * w]) add('boost_pad', x, d0);
-        coins(0, d0 + 8, 6);
-      }
-      s.nextAt = g.d1;
+    // 다음 커브 구간까지 남은 곧은 길 — 8m 안이면 비우고 그 구간부터
+    const next = s.course.segs.find((q) => curvy(q) && q.d0 >= d);
+    const room = (next ? next.d0 : SAND.length - 25) - d;
+    if (next && room < 8) {
+      s.nextAt = next.d0;
       continue;
     }
     const r = s.rng();
-    const calm = g.kind === 'start' || g.kind === 'finish';
-    if (g.kind === 'leg' && s.rng() < 0.25) {
-      // 길이 가는 쪽 울타리 가까이에 냥코인 줄 — 그쪽으로 붙어 타면 줍는다. 가끔 반대쪽에 장애물 하나
-      const lead = Math.sign(g.s1);
-      coins(lead * 0.76 * w, d, 5);
-      if (s.rng() < 0.3 + late * 0.3) add(pick(s, HIT), -lead * 0.45 * w);
-    } else if (r < 0.36 + late * 0.12) {
-      // 장애물 1~3개 (3개는 후반에만, 두 레인은 비운다)
-      const n = s.rng() < 0.5 ? 1 : late > 0.45 && s.rng() < 0.35 ? 3 : 2;
-      const at = [...lanes].sort(() => s.rng() - 0.5).slice(0, n);
+    if (r < 0.05 && room > 45 && d > 100) {
+      // 점프대 줄: 모든 레인 → 크게 떠서 구덩이 줄을 건너뛰고 공중 냥코인 세 줄, 내려앉는 곳에 냥코인 더미
+      for (const x of lanes) add('jump_ramp', x);
+      for (const x of lanes) add('sand_pit', x, d + 10);
+      for (const x of [-0.5 * w, 0, 0.5 * w]) for (let i = 0; i < 4; i++) add('paw_coin', x, d + 5 + i * 4);
+      add('coin_pile', 0, d + 25);
+      s.nextAt = d + 40;
+      continue;
+    }
+    if (r < 0.1 && room > 55 && d > 100) {
+      // 슬랄롬: 높은 장애물(점프로 못 넘는다)이 좌우 번갈아, 반대쪽에 냥코인 — 다 주우려면 이리저리 꺾는다
+      let side = s.rng() < 0.5 ? -1 : 1;
+      for (let i = 0; i < 5; i++) {
+        add(pick(s, TALL), side * 0.4 * w, d + i * 12);
+        add('paw_coin', -side * 0.45 * w, d + i * 12);
+        side = -side;
+      }
+      s.nextAt = d + 62;
+      s.lastRow = null;
+      continue;
+    }
+    const q = s.rng();
+    if (q < 0.5 + late * 0.15) {
+      // 장애물 1~3개 (3개는 후반에만, 두 레인은 비운다). 앞 장애물 줄이 22m 안이면 빈 레인이 그 줄의 빈 레인과 이웃하게 —
+      // 한 레인만 옮기면 빠져나간다 (멀리 떨어지면 0.5초 안에 길을 가로질러야 했다)
+      const n = s.rng() < 0.45 ? 1 : late > 0.45 && s.rng() < 0.4 ? 3 : 2;
+      const prev = s.lastRow && d - s.lastRow.d < 22 ? s.lastRow.free : null;
+      let at = [...lanes].sort(() => s.rng() - 0.5).slice(0, n);
+      for (let k = 0; prev && k < 12; k++) {
+        const free = lanes.filter((l) => !at.includes(l));
+        if (free.some((f) => prev.some((p) => Math.abs(f - p) <= 0.45 * w))) break;
+        at = [...lanes].sort(() => s.rng() - 0.5).slice(0, k < 8 ? n : 1);
+      }
       for (const x of at) add(s.rng() < 0.22 + late * 0.15 ? pick(s, TALL) : pick(s, HIT), x + (s.rng() - 0.5) * 0.06);
+      s.lastRow = { d, free: lanes.filter((l) => !at.includes(l)) };
       // 빈 레인에 냥코인 한 줄 (가끔)
       if (s.rng() < 0.35) coins(pick(s, lanes.filter((l) => !at.includes(l))), d - 4, 3);
-    } else if (r < 0.62) {
+    } else if (q < 0.72) {
       coins(pick(s, lanes), d, 5, s.rng() < 0.4 ? (s.rng() < 0.5 ? -0.12 : 0.12) : 0);
-    } else if (r < 0.71 && calm) {
-      // 점프대 → 공중 냥코인 + 끝에 냥코인 더미
+    } else if (q < 0.78 && room > 25) {
+      // 점프대 → 공중 냥코인 + 끝에 냥코인 더미 (뜬 채 커브로 넘어가지 않게 곧은 길이 25m 넘게 남았을 때만)
       const x0 = lanes[1 + Math.floor(s.rng() * 3)];
       add('jump_ramp', x0);
       for (let i = 0; i < 4; i++) add('paw_coin', x0, d + 6 + i * 3);
       if (s.rng() < 0.5) add('coin_pile', x0, d + 19);
-    } else if (r < 0.78) {
+    } else if (q < 0.83) {
       // 낮은 나무 울타리: 뛰어넘거나 가장자리로 돌아간다
       add('wood_barrier', pick(s, [-0.35, 0, 0.35]) * w);
-    } else if (r < 0.84) {
+    } else if (q < 0.87) {
       add('sand_pit', pick(s, lanes));
       if (s.rng() < 0.5) add('sand_pit', pick(s, lanes), d + 8);
-    } else if (r < 0.89) {
+    } else if (q < 0.91) {
       // 모래 둔덕 → 작은 뜀 + 냥코인
       const x0 = pick(s, lanes);
       add('sand_bump', x0);
       coins(x0, d + 5, 3);
-    } else if (r < 0.94) {
+    } else if (q < 0.95) {
       // 가속 발판 → 빨라진 채 냥코인 줄
       const x0 = lanes[1 + Math.floor(s.rng() * 3)];
       add('boost_pad', x0);

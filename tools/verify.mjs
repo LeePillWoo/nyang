@@ -1164,9 +1164,26 @@ try {
   {
     const { page, errors } = await open('field');
     const w = FIELD.warps.find((v) => v.to === 'sandboard');
+    // 들어간 직후 멈칫(처음 렉) 재기: 프레임마다 게임 콜백 시간 · 프레임 간격 (2026-10-07 — 첫 프레임 318ms + 0.3초 멈춤이었다:
+    // 굵은 한글 · 이모지 글꼴을 처음 쓰고, 큰 그림을 처음 그리며 풀고 올리고, 바닥 무늬 · 보드 자리를 그 자리에서 만들었다)
+    await page.evaluate(() => {
+      const raf = window.requestAnimationFrame.bind(window);
+      window.__enter = [];
+      let last = 0;
+      window.requestAnimationFrame = (cb) =>
+        raf((ts) => {
+          const t0 = performance.now();
+          cb(ts);
+          if (window.__game.scene === 'sandboard') window.__enter.push([performance.now() - t0, last ? ts - last : 0]);
+          last = ts;
+        });
+    });
     await page.evaluate((at) => Object.assign(__game.field, { x: at[0], y: at[1], camX: at[0], camY: at[1], armed: true, mode: 'walk' }), w.at);
     const inSand = await page.waitForFunction(() => __game.scene === 'sandboard', { timeout: 10000 }).then(() => true, () => false);
     check(inSand, `${w.label} 포탈에 서 있으면 샌드보드`);
+    // 브라우저 자동 조종은 키 반응이 늦어(15ms 마다 보고 누름) 촘촘한 장애물에 가끔 부딪힌다 — 하트를 넉넉히 줘서 끝까지 가는 흐름만 본다
+    // (늘 빠져나갈 길이 있는지는 sandboard.check 의 자동 조종이 40판으로 본다)
+    await page.evaluate(() => (__game.sandboard.hearts = 6));
     const coins0 = await page.evaluate(() => __game.bag.coins);
     // 그리기 감시: 이동(translate)이 NaN·무한이면 캔버스가 무시해서 그림이 왼쪽 위(0,0)에 그려진다 — 원근 뒤쪽 물건 버그
     await page.evaluate(() => {
@@ -1231,10 +1248,14 @@ try {
       await sleep(15); // 촘촘히 — 꺾이는 길에서 키를 늦게 떼면 부딪힌다
     }
     if (held) await page.keyboard.up(held);
+    const enter = await page.evaluate(() => window.__enter.slice(0, 100)); // 들어간 뒤 처음 100프레임 (약 1.7초)
+    const worstCb = Math.max(...enter.map(([c]) => c));
+    const worstGap = Math.max(...enter.slice(1).map(([, g]) => g));
+    check(worstCb < 40 && worstGap < 150, `들어간 직후 멈칫하지 않는다 (처음 ${enter.length}프레임 중 가장 긴 콜백 ${worstCb.toFixed(1)}ms · 간격 ${worstGap.toFixed(0)}ms)`);
     const end = await page.evaluate(() => ({ fell: __game.sandboard.fell, hearts: __game.sandboard.hearts, phase: __game.sandboard.phase, coins: __game.sandboard.coins, crashes: __game.sandboard.crashes, score: __game.sandboard.score, t: __game.sandboard.t, bag: __game.bag.coins, best: __game.records.sandboard }));
     const scrapes = await page.evaluate(() => window.__scrapes);
     check(end.phase === 'done' && !end.fell, `피하고 점프하며 끝까지 가면 완주 (${end.t.toFixed(1)}초 · 냥코인 ${end.coins} · 부딪힘 ${end.crashes} · 하트 ${end.hearts} · 울타리 쓸림 ${scrapes} · 점수 ${end.score})`);
-    check(xHi - xLo > 1.5, `길이 지그재그로 휘어 고양이도 옆으로 크게 오간다 (가로 자리 ${xLo.toFixed(1)} ~ ${xHi.toFixed(1)})`);
+    check(xHi - xLo > 0.6, `커브 구간에서 길을 따라 옆으로 오간다 (가로 자리 ${xLo.toFixed(1)} ~ ${xHi.toFixed(1)})`);
     check(off === 0, `카메라가 따라가 고양이는 늘 화면 가운데 70% 안 (벗어난 때 ${off}번)`);
     check(end.coins > 0 && end.bag === coins0 + end.coins, '주운 냥코인이 가방에');
     const bad = await page.evaluate(() => window.__badDraw);

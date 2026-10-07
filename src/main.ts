@@ -75,7 +75,7 @@ import { drawMinimap, fromMini, inMinimap, minimapPick, minimapRect, toMini } fr
 import { drawMaze, mazeView } from './maze-draw.ts';
 import { makeMaze, updateMaze, type MazeEvent, type MazeState } from './maze.ts';
 import { miniButtonAt, miniLayout, type MiniButton } from './mini-draw.ts';
-import { drawSandboard, SAND_IMAGES, sandPoint, type SandArt } from './sandboard-draw.ts';
+import { drawSandboard, SAND_IMAGES, sandPoint, warmSandboard, type SandArt } from './sandboard-draw.ts';
 import { makeSandboard, SAND, updateSandboard, type SandEvent, type SandState } from './sandboard.ts';
 import { loadSheet, type Sheet } from './sheet.ts';
 import { buttonAt, controls, drawControls, followStick, onStick, safe, stickBase, stickVector, ui, type ButtonId } from './touch.ts';
@@ -1000,18 +1000,27 @@ const enterWhale = () =>
     say('dizzy', 1.8);
     sayHelp();
   });
-/** 샌드보드 그림 (배경 3장 + 시트 5장) — 처음 들어갈 때 한 번 */
+/**
+ * 샌드보드 그림 (배경 3장 + 시트 5장) — 처음 들어갈 때 한 번. 미리 풀어 둔 ImageBitmap 으로 (그냥 Image 는 처음 그리는 순간 풀려서 멈칫했다),
+ * 화면이 가려진 동안 warmSandboard 로 바닥 무늬 · 보드 자리 · 그래픽 카드 올리기까지 해 두고 두 프레임 기다린다
+ */
 const sandArt: SandArt = {};
-const loadSandArt = () => Promise.all(SAND_IMAGES.map((p) => image(p).ready.then((img) => (sandArt[p] = img))));
+const loadSandArt = async () => {
+  await Promise.all(SAND_IMAGES.map(async (p) => (sandArt[p] ??= await createImageBitmap(await image(p).ready))));
+  warmSandboard(ctx, sandArt);
+  // 첫 화면을 한 번 미리 그려 둔다 (화면은 가려져 있다) — 큰 그림 · 바닥 무늬를 그래픽 카드에 올리는 게 첫 프레임에 몰리지 않게
+  drawSandboard(ctx, canvas.width, canvas.height, sand, sandArt, { t: performance.now() / 1000, touch: touchOn, hover: null, best: records.sandboard });
+  for (let i = 0; i < 2; i++) await new Promise((r) => requestAnimationFrame(r));
+};
 /** 모래 미끄럼틀 샌드보드 — 그림을 먼저 불러온다 */
 const enterSandboard = () =>
   goTo(async () => {
     step('모래 미끄럼틀');
+    sand = makeSandboard();
     await loadSandArt();
     scene = 'sandboard';
     roomId = 'sandboard';
     canvas.style.cursor = '';
-    sand = makeSandboard();
     miniHover = null;
     quiet();
     say('rhythm', 1.6);
@@ -1319,6 +1328,8 @@ const step = (t: string) => {
     await fishingReady(startSpot);
   }
   if (trace) Object.assign(window, { __sheets: { cat: catSheet, axe: axeSheet, boat: boatSheet, snow: snowSheet, ...sheets } });
+  // 소리 장치를 불러오는 동안 미리 만든다 — 처음 키를 누르는 순간 만들면 0.2~0.4초 멈칫했다 (켜기는 브라우저 규칙대로 첫 입력에서)
+  unlockAudio();
   sayHelp();
   requestAnimationFrame(frame);
 })();
