@@ -121,7 +121,8 @@ export type FailHint = 'approach' | 'tap' | 'flurry' | 'dunk' | 'nudge' | null;
  * 낚은 것. cm · g(무게), big = 월척(그 종의 큰 쪽 20%). record = 가장 긴 기록을 깼다.
  * item 이면 kind 는 아이템 id (건진 물건) — isNew·full 은 가방에 넣으면서 main 이 채운다
  */
-export type Catch = { kind: string; name: string; stars: number; cm: number; g: number; big: boolean; isNew: boolean; record: boolean; item?: boolean; full?: boolean };
+/** food = 요리 재료로 가방에 넣은 생선 수 (main 이 적는다 — 월척은 둘), foodFull = 가방이 가득해 못 넣었다 */
+export type Catch = { kind: string; name: string; stars: number; cm: number; g: number; big: boolean; isNew: boolean; record: boolean; item?: boolean; full?: boolean; food?: number; foodFull?: boolean };
 /** 소리·감정·이펙트용 사건. 한 프레임 동안만 남는다 */
 export type FishEvent =
   | { type: 'cast' }

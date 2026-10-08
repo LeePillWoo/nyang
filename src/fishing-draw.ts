@@ -611,7 +611,8 @@ function drawCatch(ctx: CanvasRenderingContext2D, s: FishingState, v: FishingVie
     ctx.fillText('★'.repeat(c.stars) + '☆'.repeat(5 - c.stars), cx, b.y + 293);
     ctx.fillStyle = '#5b4a3f';
     ctx.font = 'bold 32px system-ui, sans-serif';
-    fitText(ctx, `${c.cm.toFixed(1)} cm · ${grams(c.g)}`, cx, b.y + 330, b.w - 40, 32, 'bold ');
+    const food = c.foodFull ? ' · 🐟 가방 가득' : c.food ? ` · 🐟 생선 +${c.food}` : '';
+    fitText(ctx, `${c.cm.toFixed(1)} cm · ${grams(c.g)}${food}`, cx, b.y + 330, b.w - 40, 32, 'bold ');
   }
   const pill = (text: string, color: string, right: boolean) => {
     ctx.font = 'bold 26px system-ui, sans-serif';

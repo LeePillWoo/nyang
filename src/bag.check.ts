@@ -6,6 +6,7 @@ import icons from './data/item-icons.json' with { type: 'json' };
 import {
   addItem,
   BAG_SIZE,
+  PAGE,
   count,
   dropTable,
   equipAt,
@@ -58,7 +59,7 @@ const seeded = (seed: number) => () => {
   assert.equal(addItem(b, 'equipment_13', 3), 0);
   assert.equal(b.slots.filter((s) => s?.id === 'equipment_13').length, 3);
   assert.equal(addItem(b, 'nope', 1), 1, '모르는 아이템은 안 들어간다');
-  for (let i = 0; i < 30; i++) addItem(b, 'equipment_02');
+  for (let i = 0; i < BAG_SIZE + 5; i++) addItem(b, 'equipment_02');
   assert.equal(b.slots.every(Boolean), true);
   assert.equal(addItem(b, 'equipment_02'), 1, '꽉 차면 남는다');
   assert.equal(addItem(b, 'materials_05', 48), 0, '꽉 차도 덜 찬 묶음엔 들어간다 (51 → 99)');
@@ -82,15 +83,15 @@ const seeded = (seed: number) => () => {
   assert.equal(count(b, 'equipment_16'), 1);
 }
 
-// 4) 탐험 배낭: 가방 +6칸. 늘어난 칸에 물건이 있으면 못 벗는다
+// 4) 탐험 배낭: 가방 +한 쪽(PAGE 칸). 늘어난 칸에 물건이 있으면 못 벗는다
 {
   const b = makeBag();
   addItem(b, 'equipment_31');
   assert.equal(equipAt(b, 0), null);
-  assert.equal(b.slots.length, BAG_SIZE + 6);
+  assert.equal(b.slots.length, BAG_SIZE + PAGE);
   b.slots[BAG_SIZE + 3] = { id: 'materials_01', n: 1 };
   assert.notEqual(unequip(b, 'tool'), null, '끝 칸에 물건이 있으면 못 벗는다');
-  assert.equal(b.slots.length, BAG_SIZE + 6);
+  assert.equal(b.slots.length, BAG_SIZE + PAGE);
   b.slots[BAG_SIZE + 3] = null;
   assert.equal(unequip(b, 'tool'), null);
   assert.equal(b.slots.length, BAG_SIZE);
@@ -188,7 +189,7 @@ const seeded = (seed: number) => () => {
   assert.equal(b.coins, 10 + 2 * sellPrice('curios_01'));
   assert.equal(sellPrice('curios_01'), 15);
   assert.equal(b.found.curios_01, 3, '팔아도 도감은 그대로');
-  for (let k = 0; k < 40; k++) addItem(b, 'equipment_02');
+  for (let k = 0; k < BAG_SIZE + 5; k++) addItem(b, 'equipment_02');
   b.coins = 9999;
   assert.equal(buy(b, 'equipment_13'), '가방에 자리가 없어요');
   // 도감 전 저장(found 없음)은 가진 것으로 채운다
@@ -199,7 +200,10 @@ const seeded = (seed: number) => () => {
 // 8) 데이터: 아이템마다 아이콘 · 그림 파일 · 종류별 필수 값, 드롭 표의 아이템이 있고, 몬스터마다 드롭 표, 장비는 다 얻을 길이 있다
 {
   const ids = Object.keys(ITEMS);
-  assert.deepEqual(ids.sort(), Object.keys(icons).sort(), 'items.json 과 아이콘 좌표가 같은 108종');
+  // 아이콘 그림이 있는 108종 + 그림 없이 emoji 로 그리는 요리 재료 · 요리
+  assert.deepEqual(ids.filter((id) => !ITEMS[id].emoji).sort(), Object.keys(icons).sort(), 'items.json 과 아이콘 좌표가 같은 108종');
+  assert.ok(ids.filter((id) => ITEMS[id].emoji).every((id) => !(id in icons) && /^(cook|dish)_/.test(id)), 'emoji 물건은 요리 재료 · 요리만');
+  assert.ok(BAG_SIZE % PAGE === 0 && BAG_SIZE >= 4 * PAGE, '가방은 쪽 단위로 넉넉하게');
   for (const [id, [sheet]] of Object.entries(icons as Record<string, [string]>)) assert.ok(existsSync(new URL(`./assets/${sheet}.webp`, import.meta.url)), `${id} 그림 ${sheet}`);
   for (const [id, d] of Object.entries(ITEMS)) {
     assert.ok(d.name && d.desc, `${id} 이름·설명`);

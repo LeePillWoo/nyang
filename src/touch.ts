@@ -60,7 +60,7 @@ export type Button = { id: ButtonId; x: number; y: number; r: number; label: str
 export type Stick = { x: number; y: number; r: number; zone: { x0: number; y0: number; x1: number; y1: number } };
 /** k = HUD 배율 (그리기용) */
 export type Controls = { stick: Stick | null; buttons: Button[]; k: number };
-export type Scene = 'field' | 'dungeon' | 'fishing' | 'maze' | 'sandboard' | 'timber' | 'chase';
+export type Scene = 'field' | 'dungeon' | 'fishing' | 'maze' | 'sandboard' | 'timber' | 'chase' | 'village';
 
 /** 도감 버튼 (알약) 크기 — Button.r 은 폭의 절반 */
 const DEX = { w: 84, h: 36 };
@@ -78,6 +78,7 @@ export function controls(w: number, h: number, scene: Scene, touch: boolean): Co
     pill('bag', 1, 56, '🎒 가방');
   }
   if (scene === 'dungeon') pill('bag', 0, 122, '🎒 가방'); // 체력·경험치 판(14, 14, 높이 100) 밑
+  if (scene === 'village') pill('bag', 0, 82, '🎒 가방'); // 마을 알약(두 줄) 밑
   if (!touch || scene === 'fishing') return { stick: null, buttons, k };
   // 엄지로 누르는 것들은 모서리에서 조금 안쪽으로 (inset)
   const r = Math.round(60 * k);

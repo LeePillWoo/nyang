@@ -1,14 +1,16 @@
-// 가방 · 장비 화면 + 아이템 아이콘 그리기. 로직은 bag.ts.
+// 가방 · 장비 화면 + 아이템 아이콘 그리기. 로직은 bag.ts. 가방은 한 쪽 24칸씩 — ◀ ▶ · 옆으로 밀기 · ←/→ 로 넘긴다 (2026-10-08).
 // 디자인 좌표(가로 화면 1000×560 · 세로 화면 540×1040)로 그리고 화면에 맞춰 통째로 줄인다 (도감과 같은 방식). ctx 는 CSS px.
 //  가로: 왼쪽 장비 6칸 + 능력치 · 가운데 가방 6열 · 오른쪽 고른 물건 설명과 버튼
 //  세로: 위 장비 한 줄 + 능력치 · 가운데 가방 · 아래 설명과 버튼
 import { image } from './assets.ts';
 import {
+  BAG_SIZE,
   buy,
   count,
   equipAt,
   isEquip,
   ITEMS,
+  PAGE,
   removeAt,
   sellAt,
   sellPrice,
@@ -35,6 +37,15 @@ const ICON = icons as unknown as Record<string, [string, number, number, number,
 export const itemIconsReady = Promise.all([...new Set(Object.values(ICON).map((v) => v[0]))].map((p) => image(p).ready));
 /** 아이콘을 (cx, cy) 가운데, box 안에 맞춰. dark = 검은 실루엣 (도감에서 아직 못 얻은 것) */
 export function drawIcon(ctx: CanvasRenderingContext2D, id: string, cx: number, cy: number, box: number, dark = false) {
+  const e = ITEMS[id]?.emoji;
+  if (e) {
+    const a = ctx.globalAlpha;
+    if (dark) ctx.globalAlpha = a * 0.3;
+    const c = emojiOf(e);
+    ctx.drawImage(dark ? darkOf(c) : c, cx - box / 2, cy - box / 2, box, box);
+    ctx.globalAlpha = a;
+    return;
+  }
   const v = ICON[id];
   const img = v && image(v[0]).img;
   if (!img || !img.complete || !img.naturalWidth) return;
@@ -44,6 +55,22 @@ export function drawIcon(ctx: CanvasRenderingContext2D, id: string, cx: number, 
   if (dark) ctx.globalAlpha = a * 0.3; // 물고기·몬스터 실루엣처럼 옅게
   ctx.drawImage(dark ? darkOf(img) : img, x, y, w, h, cx - (w * k) / 2, cy - (h * k) / 2, w * k, h * k);
   ctx.globalAlpha = a;
+}
+/** 그림 없는 물건(요리 재료 · 요리)의 emoji 판 — 글자마다 한 번 그려 둔다 */
+const emojis = new Map<string, HTMLCanvasElement>();
+function emojiOf(ch: string) {
+  let c = emojis.get(ch);
+  if (!c) {
+    c = document.createElement('canvas');
+    c.width = c.height = 96;
+    const g = c.getContext('2d')!;
+    g.font = '78px "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", system-ui, sans-serif';
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.fillText(ch, 48, 52);
+    emojis.set(ch, c);
+  }
+  return c;
 }
 /** 검은 실루엣판 — 그림마다 한 번 만든다 (ctx.filter 는 iOS 사파리 17 이하에서 무시된다) */
 const darks = new Map<object, HTMLCanvasElement>();
@@ -140,10 +167,20 @@ export function statText(k: keyof Stats, v: number) {
 
 // ── 화면 상태 ──
 type Pick = { at: 'bag'; i: number } | { at: 'slot'; slot: Slot } | null;
-const bagView = { pick: null as Pick, sure: false, msg: '', msgT: 0 };
-/** 열 때마다 처음 상태로 */
+/** page = 지금 보는 가방 쪽 (가방 · 상점 팔기가 같이 쓴다) */
+export const bagView = { pick: null as Pick, sure: false, msg: '', msgT: 0, page: 0 };
+/** 열 때마다 처음 상태로 (보던 쪽은 그대로) */
 export function resetBagView() {
   Object.assign(bagView, { pick: null, sure: false, msg: '', msgT: 0 });
+}
+/** 가방 쪽 수 */
+export const pages = (b: Bag) => Math.max(1, Math.ceil(b.slots.length / PAGE));
+/** 가방 쪽 넘기기 (-1 앞 · 1 뒤). 넘겼으면 true */
+export function flipPage(b: Bag, dir: number) {
+  const p = Math.max(0, Math.min(pages(b) - 1, bagView.page + dir));
+  if (p === bagView.page) return false;
+  bagView.page = p;
+  return true;
 }
 const say = (msg: string) => Object.assign(bagView, { msg, msgT: 2.2 });
 
@@ -161,7 +198,12 @@ export function bagLayout(w: number, h: number, size: number) {
   const cell = wide ? 72 : 76;
   const gap = 8;
   const grid = { x: wide ? 290 : 22, y: wide ? 112 : 290 };
-  const cells = Array.from({ length: size }, (_, i): R => ({ x: grid.x + (i % 6) * (cell + gap), y: grid.y + Math.floor(i / 6) * (cell + gap), w: cell, h: cell }));
+  const cells = Array.from({ length: Math.min(size, PAGE) }, (_, i): R => ({ x: grid.x + (i % 6) * (cell + gap), y: grid.y + Math.floor(i / 6) * (cell + gap), w: cell, h: cell }));
+  // 쪽 넘기기: 칸 아래 ◀ 쪽 ▶
+  const py = grid.y + 4 * (cell + gap) + 4;
+  const gw = 6 * (cell + gap) - gap;
+  const prev: R = { x: grid.x, y: py, w: 64, h: 46 };
+  const next: R = { x: grid.x + gw - 64, y: py, w: 64, h: 46 };
   const slots = SLOTS.map((_, i): R => (wide ? { x: 20 + (i % 2) * 133, y: 112 + Math.floor(i / 2) * 96, w: 117, h: 86 } : { x: 20 + i * 85, y: 100, w: 77, h: 86 }));
   const detail: R = wide ? { x: 780, y: 100, w: 200, h: 440 } : { x: 20, y: 716, w: 500, h: 306 };
   // 버튼: 가로 화면은 설명 아래에 위아래로, 세로 화면은 나란히
@@ -182,6 +224,10 @@ export function bagLayout(w: number, h: number, size: number) {
     main,
     drop,
     gridLabelY: grid.y - 12,
+    prev,
+    next,
+    pageY: py + 30,
+    pageX: grid.x + gw / 2,
   };
 }
 
@@ -211,6 +257,10 @@ export function bagTap(w: number, h: number, x: number, y: number, b: Bag, env: 
   const px = (x - L.ox) / L.k;
   const py = (y - L.oy) / L.k;
   if (px < 0 || py < 0 || px > L.DW || py > L.DH || inR(L.close, px, py)) return 'close';
+  if (inR(L.prev, px, py) || inR(L.next, px, py)) {
+    flipPage(b, inR(L.prev, px, py) ? -1 : 1);
+    return null;
+  }
   const id = picked(b);
   if (id && inR(L.main, px, py) && mainLabel(b)) {
     bagView.sure = false;
@@ -248,7 +298,8 @@ export function bagTap(w: number, h: number, x: number, y: number, b: Bag, env: 
     Object.assign(bagView, { pick: null, sure: false });
     return 'changed';
   }
-  const i = L.cells.findIndex((r) => inR(r, px, py));
+  const c = L.cells.findIndex((r) => inR(r, px, py));
+  const i = c >= 0 ? bagView.page * PAGE + c : -1;
   const si = L.slots.findIndex((r) => inR(r, px, py));
   bagView.sure = false;
   if (i >= 0) bagView.pick = b.slots[i] ? { at: 'bag', i } : null;
@@ -257,7 +308,7 @@ export function bagTap(w: number, h: number, x: number, y: number, b: Bag, env: 
 }
 
 /** 칸 하나: 바탕(희귀도 테두리) · 아이콘 · 개수 */
-function itemCell(ctx: CanvasRenderingContext2D, r: R, id: string | null, n: number, on: boolean, label = '', labelColor = '#9a7b62') {
+export function itemCell(ctx: CanvasRenderingContext2D, r: R, id: string | null, n: number, on: boolean, label = '', labelColor = '#9a7b62') {
   const d = id ? ITEMS[id] : null;
   ctx.fillStyle = d ? '#ffffff' : 'rgba(120,85,55,0.08)';
   ctx.beginPath();
@@ -295,7 +346,7 @@ function itemCell(ctx: CanvasRenderingContext2D, r: R, id: string | null, n: num
 }
 
 /** 큰 버튼 */
-function button(ctx: CanvasRenderingContext2D, r: R, text: string, style: 'main' | 'soft' | 'warn') {
+export function button(ctx: CanvasRenderingContext2D, r: R, text: string, style: 'main' | 'soft' | 'warn') {
   ctx.fillStyle = style === 'main' ? '#f5a05a' : style === 'warn' ? '#ef6b5e' : 'rgba(120,85,55,0.14)';
   ctx.beginPath();
   ctx.roundRect(r.x, r.y, r.w, r.h, r.h / 2);
@@ -339,7 +390,7 @@ export function drawBag(ctx: CanvasRenderingContext2D, w: number, h: number, b: 
 
   // 능력치: 기본 + 장비·먹은 것 (더해진 만큼 초록)
   const st = stats(b);
-  const base: Record<keyof Stats, number> = { atk: player.punch.damage, hp: player.maxHp, def: 0, speed: 100, luck: 0, reel: 0, line: 0, bag: 24 };
+  const base: Record<keyof Stats, number> = { atk: player.punch.damage, hp: player.maxHp, def: 0, speed: 100, luck: 0, reel: 0, line: 0, bag: BAG_SIZE };
   const S = L.statsBox;
   const cols = L.wide ? 2 : 4;
   const cw = S.w / cols;
@@ -362,13 +413,48 @@ export function drawBag(ctx: CanvasRenderingContext2D, w: number, h: number, b: 
   ctx.font = 'bold 18px system-ui, sans-serif';
   ctx.fillText(`가방 ${b.slots.filter(Boolean).length}/${b.slots.length}`, L.cells[0].x, L.gridLabelY);
   if (L.wide) ctx.fillText('장비', 20, L.gridLabelY);
-  b.slots.forEach((s, i) => itemCell(ctx, L.cells[i], s?.id ?? null, s?.n ?? 0, pick?.at === 'bag' && pick.i === i));
+  bagView.page = Math.min(bagView.page, pages(b) - 1);
+  L.cells.forEach((r, c) => {
+    const i = bagView.page * PAGE + c;
+    if (i < b.slots.length) itemCell(ctx, r, b.slots[i]?.id ?? null, b.slots[i]?.n ?? 0, pick?.at === 'bag' && pick.i === i);
+  });
+  pager(ctx, L, b);
 
   // 고른 것
   drawDetail(ctx, L, b);
 
   toast(ctx, L, bagView.msg, bagView.msgT);
   ctx.restore();
+}
+
+/** 쪽 넘기기: ◀ · 쪽 점(물건이 든 쪽은 진하게) · 지금 쪽 · ▶ */
+function pager(ctx: CanvasRenderingContext2D, L: { prev: R; next: R; pageX: number; pageY: number }, b: Bag) {
+  const n = pages(b);
+  const p = bagView.page;
+  for (const [r, on, t] of [
+    [L.prev, p > 0, '◀'],
+    [L.next, p < n - 1, '▶'],
+  ] as [R, boolean, string][]) {
+    ctx.fillStyle = on ? '#f5a05a' : 'rgba(120,85,55,0.1)';
+    ctx.beginPath();
+    ctx.roundRect(r.x, r.y, r.w, r.h, r.h / 2);
+    ctx.fill();
+    ctx.fillStyle = on ? '#fff' : 'rgba(120,85,55,0.35)';
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 22px system-ui, sans-serif';
+    ctx.fillText(t, r.x + r.w / 2, r.y + r.h / 2 + 8);
+  }
+  const gap = 22;
+  for (let i = 0; i < n; i++) {
+    const used = b.slots.slice(i * PAGE, (i + 1) * PAGE).some(Boolean);
+    ctx.fillStyle = i === p ? '#f08a3c' : used ? 'rgba(120,85,55,0.45)' : 'rgba(120,85,55,0.18)';
+    ctx.beginPath();
+    ctx.arc(L.pageX + (i - (n - 1) / 2) * gap, L.pageY - 14, i === p ? 6 : 4.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.fillStyle = '#9a7b62';
+  ctx.font = 'bold 16px system-ui, sans-serif';
+  ctx.fillText(`${p + 1} / ${n} 쪽 · 옆으로 넘겨요`, L.pageX, L.pageY + 10);
 }
 
 /** 설명 칸 바탕 + 아무것도 안 골랐을 때 안내 */
@@ -455,7 +541,7 @@ function drawDetail(ctx: CanvasRenderingContext2D, L: ReturnType<typeof bagLayou
 }
 
 /** 창 위의 알림 한 줄 (가방 · 상점) */
-function toast(ctx: CanvasRenderingContext2D, L: { wide: boolean; DW: number; DH: number; detail: R }, msg: string, msgT: number) {
+export function toast(ctx: CanvasRenderingContext2D, L: { wide: boolean; DW: number; DH: number; detail: R }, msg: string, msgT: number) {
   if (msgT <= 0) return;
   ctx.globalAlpha = Math.min(1, msgT / 0.3);
   ctx.font = 'bold 20px system-ui, sans-serif';
@@ -472,7 +558,7 @@ function toast(ctx: CanvasRenderingContext2D, L: { wide: boolean; DW: number; DH
 }
 
 /** 창 머리: 제목 · 냥코인 · ✕ */
-function header(ctx: CanvasRenderingContext2D, L: { DW: number; close: R }, title: string, coins: number) {
+export function header(ctx: CanvasRenderingContext2D, L: { DW: number; close: R }, title: string, coins: number) {
   ctx.textAlign = 'left';
   ctx.fillStyle = '#5b4a3f';
   ctx.font = 'bold 34px system-ui, sans-serif';
@@ -503,6 +589,12 @@ const shopSay = (msg: string) => Object.assign(shopView, { msg, msgT: 2.2 });
 
 export function shopLayout(w: number, h: number, size: number) {
   const L = bagLayout(w, h, 0);
+  // 팔기 쪽 넘기기 — 칸 아래
+  const rows = Math.ceil(size / (L.wide ? 9 : 6));
+  const py = 160 + rows * 97 + 2;
+  const prev: R = { x: 20, y: py, w: 64, h: 46 };
+  const next: R = { x: (L.wide ? 20 + 9 * 83 - 7 : 22 + 6 * 83 - 7) - 64, y: py, w: 64, h: 46 };
+  const pager = { prev, next, pageX: (prev.x + next.x + next.w) / 2, pageY: py + 30 };
   const cols = L.wide ? 9 : 6;
   const cw = 76;
   const ch = 90;
@@ -510,11 +602,14 @@ export function shopLayout(w: number, h: number, size: number) {
   const gx = L.wide ? 20 : 22;
   const cells = Array.from({ length: size }, (_, i): R => ({ x: gx + (i % cols) * (cw + gap), y: 160 + Math.floor(i / cols) * (ch + gap), w: cw, h: ch }));
   const modes = [0, 1].map((i): R => ({ x: 20 + i * 146, y: 100, w: 138, h: 48 }));
-  return { ...L, cells, modes };
+  return { ...L, cells, modes, ...pager };
 }
 
-/** 지금 칸에 보이는 것: 사기 = 상점 물건, 팔기 = 가방 칸 */
-const shopItems = (b: Bag, stock: string[]): (string | null)[] => (shopView.mode === 'buy' ? stock : b.slots.map((s) => s?.id ?? null));
+/** 지금 칸에 보이는 것: 사기 = 상점 물건, 팔기 = 가방 지금 쪽의 칸 */
+const shopItems = (b: Bag, stock: string[]): (string | null)[] =>
+  shopView.mode === 'buy' ? stock : b.slots.slice(bagView.page * PAGE, (bagView.page + 1) * PAGE).map((s) => s?.id ?? null);
+/** 팔기에서 칸 번호 → 가방 칸 */
+const slotOf = (c: number) => (shopView.mode === 'buy' ? c : bagView.page * PAGE + c);
 
 /** 상점을 눌렀다. 'close' = 닫기, 'changed' = 가방이 바뀜(저장) */
 export function shopTap(w: number, h: number, x: number, y: number, b: Bag, stock: string[]): 'close' | 'changed' | null {
@@ -528,8 +623,12 @@ export function shopTap(w: number, h: number, x: number, y: number, b: Bag, stoc
     Object.assign(shopView, { mode: m ? 'sell' : 'buy', pick: null, sure: false });
     return null;
   }
+  if (shopView.mode === 'sell' && (inR(L.prev, px, py) || inR(L.next, px, py))) {
+    if (flipPage(b, inR(L.prev, px, py) ? -1 : 1)) Object.assign(shopView, { pick: null, sure: false });
+    return null;
+  }
   const i = shopView.pick;
-  const id = i === null ? null : items[i];
+  const id = i === null ? null : shopView.mode === 'buy' ? stock[i] : (b.slots[i]?.id ?? null);
   const many = !!id && !isEquip(id);
   const main = inR(L.main, px, py);
   if (id && i !== null && (main || (many && inR(L.drop, px, py)))) {
@@ -552,7 +651,7 @@ export function shopTap(w: number, h: number, x: number, y: number, b: Bag, stoc
     return 'changed';
   }
   const c = L.cells.findIndex((r) => inR(r, px, py));
-  Object.assign(shopView, { pick: c >= 0 && items[c] ? c : null, sure: false });
+  Object.assign(shopView, { pick: c >= 0 && items[c] ? slotOf(c) : null, sure: false });
   return null;
 }
 
@@ -587,13 +686,15 @@ export function drawShop(ctx: CanvasRenderingContext2D, w: number, h: number, b:
   });
   // 칸: 아이콘 + 값 (사기 = 값, 팔기 = 받을 값)
   const buyMode = shopView.mode === 'buy';
-  items.forEach((id, i) => {
+  items.forEach((id, c) => {
+    const i = slotOf(c);
     const n = buyMode ? 0 : (b.slots[i]?.n ?? 0);
-    itemCell(ctx, L.cells[i], id, n, shopView.pick === i, id ? `${buyMode ? ITEMS[id].price : sellPrice(id)}냥` : '', '#c98a1c');
+    itemCell(ctx, L.cells[c], id, n, shopView.pick === i, id ? `${buyMode ? ITEMS[id].price : sellPrice(id)}냥` : '', '#c98a1c');
   });
+  if (!buyMode) pager(ctx, L, b);
   // 고른 것
   const i = shopView.pick;
-  const id = i === null ? null : items[i];
+  const id = i === null ? null : buyMode ? shop.stock[i] : (b.slots[i]?.id ?? null);
   detailBox(ctx, L.detail, id ? null : buyMode ? '사고 싶은 물건을 누르세요' : '팔 물건을 누르세요');
   if (id && i !== null) {
     const n = b.slots[i]?.n ?? 0;

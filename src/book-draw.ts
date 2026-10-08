@@ -6,6 +6,8 @@ import { darkOf, drawIcon, RARE, statText, useLines } from './bag-draw.ts';
 import { dropTable, ITEMS, sellPrice, STAT_KEYS, TYPE_NAME, type ItemType } from './bag.ts';
 import drops from './data/drops.json' with { type: 'json' };
 import shop from './data/shop.json' with { type: 'json' };
+import villageData from './data/village.json' with { type: 'json' };
+import fieldData from './data/field.json' with { type: 'json' };
 import { ENEMY_DEFS } from './enemy.ts';
 import { fishCard } from './fishing-draw.ts';
 import { SPOTS, type Dex } from './fishing.ts';
@@ -113,8 +115,14 @@ export function bookTap(w: number, h: number, x: number, y: number): 'close' | n
 }
 
 // ── 얻는 곳 (아이템) — 한 번만 모은다 ──
-const SOURCES: Record<string, { monsters: string[]; all: boolean; spots: string[]; shop: boolean; boxes: string[]; start: boolean }> = {};
-for (const id of Object.keys(ITEMS)) SOURCES[id] = { monsters: [], all: false, spots: [], shop: false, boxes: [], start: false };
+const SOURCES: Record<string, { monsters: string[]; all: boolean; spots: string[]; shop: boolean; boxes: string[]; start: boolean; cook: boolean; fish: boolean; forest: boolean; gift: string[] }> = {};
+for (const id of Object.keys(ITEMS)) SOURCES[id] = { monsters: [], all: false, spots: [], shop: false, boxes: [], start: false, cook: false, fish: false, forest: false, gift: [] };
+for (const r of villageData.recipes) SOURCES[r.id].cook = true;
+SOURCES.cook_fish.fish = true;
+for (const [id] of [...fieldData.forest.finds, ...fieldData.forest.rustle.finds]) SOURCES[id as string].forest = true;
+for (const fr of villageData.friends)
+  for (const r of Object.values(fr.rewards) as { item?: string; items?: (string | number)[][] }[])
+    for (const id of [r.item, ...(r.items ?? []).map(([i]) => i as string)]) if (id && !SOURCES[id].gift.includes(fr.name)) SOURCES[id].gift.push(fr.name);
 for (const k of Object.keys(ENEMY_DEFS)) for (const [id] of dropTable(k)) SOURCES[id].monsters.push(k);
 for (const [id] of (drops as unknown as Record<string, [string, number][]>)._all) SOURCES[id].all = true;
 for (const [sid, s] of Object.entries(SPOTS)) for (const [id] of s.salvage ?? []) SOURCES[id].spots.push(sid);
@@ -345,6 +353,10 @@ function detail(ctx: CanvasRenderingContext2D, L: ReturnType<typeof bookLayout>,
       ...(s.all ? ['어느 몬스터나 드물게'] : []),
       ...(s.spots.length ? [`낚시: ${s.spots.map((v) => SPOTS[v].short).join(', ')}`] : []),
       ...(s.shop ? ['고등어 상점'] : []),
+      ...(s.cook ? ['고양이마을 요리 가판대'] : []),
+      ...(s.fish ? ['낚시 (물고기를 낚으면)'] : []),
+      ...(s.forest ? ['숲 도끼질 · 부스럭 수풀'] : []),
+      ...(s.gift.length ? [`마을 친구 선물: ${s.gift.join(', ')}`] : []),
       ...(s.boxes.length ? [s.boxes.map((v) => (d.found[v] ? ITEMS[v].name : '???')).join(', ')] : []),
     ];
     para(`얻는 곳: ${where.length ? where.join(' · ') : '아직 몰라요'}`, '#9a7b62', 15);

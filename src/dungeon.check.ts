@@ -295,6 +295,6 @@ for (const id of Object.keys(ROOMS)) {
   assert.ok(r.exits.some(([x, z]) => seen.has(z * r.gridW + x)), `${id}: 시작점에서 나가는 곳까지 못 간다`);
 }
 // 연결된 포탈은 있는 방이나 낚시터, 또는 상점('shop') · 미니게임('maze' · 'sandboard' · 'timber' · 'chase')을 가리킨다
-for (const w of data.warps) if (w.to) assert.ok(ROOMS[w.to] || SPOTS[w.to] || ['shop', 'maze', 'sandboard', 'timber', 'chase'].includes(w.to), `포탈 ${w.id}: 없는 방 ${w.to}`);
+for (const w of data.warps) if (w.to) assert.ok(ROOMS[w.to] || SPOTS[w.to] || ['shop', 'maze', 'sandboard', 'timber', 'chase', 'village'].includes(w.to), `포탈 ${w.id}: 없는 방 ${w.to}`);
 
 console.log('dungeon.check: ok');

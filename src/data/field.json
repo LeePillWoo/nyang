@@ -42,7 +42,7 @@
     "find": 0.07,
     "rest": 90,
     "cell": 4,
-    "finds": [["materials_01", 30], ["materials_04", 30], ["materials_05", 22], ["materials_06", 15], ["materials_28", 5], ["materials_15", 2]],
+    "finds": [["materials_01", 26], ["materials_02", 18], ["materials_04", 26], ["materials_05", 22], ["materials_06", 18], ["materials_28", 5], ["materials_15", 2]],
     "rustle": {
       "every": [6, 11],
       "life": 30,
@@ -176,7 +176,7 @@
       "at": [2223, 1586],
       "r": 18,
       "dwell": 0.8,
-      "to": "alley",
+      "to": "village",
       "back": [2223, 1616]
     },
     {
@@ -216,7 +216,7 @@
       "at": [2752, 1418],
       "r": 18,
       "dwell": 0.8,
-      "to": "",
+      "to": "alley",
       "back": [2752, 1448]
     },
     {

@@ -25,7 +25,8 @@ export const TYPE_NAME: Record<ItemType, string> = {
 /** 쓰기 효과: 체력 회복 · 잠깐 능력치(time 초) · 냥코인 · 열면 나오는 것(open 중 하나, key 가 있으면 그 아이템 하나를 쓴다) */
 export type Use = { heal?: number; buff?: Partial<Stats>; time?: number; coins?: number; open?: string[]; key?: string };
 /** price = 상점에서 살 때 값 (팔면 절반) */
-export type ItemDef = { name: string; type: ItemType; desc: string; price: number; rare?: number; stats?: Partial<Stats>; use?: Use };
+/** emoji = 아이콘 그림이 없는 물건 (요리 재료 · 요리 — 2026-10-08) 은 이 글자를 그린다 */
+export type ItemDef = { name: string; type: ItemType; desc: string; price: number; rare?: number; stats?: Partial<Stats>; use?: Use; emoji?: string };
 export const ITEMS = itemData as Record<string, ItemDef>;
 export const isEquip = (id: string) => SLOTS.includes(ITEMS[id]?.type as Slot);
 
@@ -40,7 +41,9 @@ export type Bag = {
   /** 지금까지 얻은 개수 (아이템 도감) — 팔거나 버려도 줄지 않는다 */
   found: Record<string, number>;
 };
-export const BAG_SIZE = 24;
+/** 가방 칸 — 한 쪽 PAGE 칸씩 옆으로 넘겨 본다 (2026-10-08 사용자 요청: 24 → 96, 4쪽) */
+export const BAG_SIZE = 96;
+export const PAGE = 24;
 export const MAX_STACK = 99;
 
 /** 새 가방 — 나뭇가지 검과 초보 낚싯대를 들고 시작한다 */
@@ -131,9 +134,19 @@ export function removeAt(b: Bag, i: number, n = Infinity) {
 }
 /** 어느 칸에서든 id 를 하나 뺀다 */
 function takeOne(b: Bag, id: string) {
-  const i = b.slots.findIndex((s) => s?.id === id);
-  if (i >= 0) removeAt(b, i, 1);
-  return i >= 0;
+  return take(b, id, 1) === 1;
+}
+/** 어느 칸에서든 id 를 n 개 뺀다 (뒤 칸부터 — 앞 칸 자리를 지킨다). 뺀 개수를 돌려준다 */
+export function take(b: Bag, id: string, n: number): number {
+  let left = n;
+  for (let i = b.slots.length - 1; i >= 0 && left > 0; i--) {
+    const s = b.slots[i];
+    if (s?.id !== id) continue;
+    const k = Math.min(left, s.n);
+    removeAt(b, i, k);
+    left -= k;
+  }
+  return n - left;
 }
 
 /** i 번 칸의 장비를 낀다 — 끼고 있던 건 그 칸으로. 안 되면 까닭을 돌려준다 */
