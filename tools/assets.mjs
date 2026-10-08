@@ -232,6 +232,23 @@ if (sandSrc.every((f) => fs.existsSync(f)) && (all || !fs.existsSync(SAND_OUT) |
   console.log(`  샌드보드 좌표  src/data/sandboard-atlas.json (프레임 ${Object.keys(frames).length})`);
 }
 
+// 마을 친구 시트 좌표 art/characters/npcs/village_cats/atlas.json → src/data/village-cats.json
+//   id → { name, file(확장자 없이), anims: { idle · solo_play · angry · affection · hungry · bored · sulk · sleep → { fps, loop, f: [[x, y, w, h, 발 px, 발 py] …] } } }
+//   atlas 의 file 경로(…/social/…)는 실제 자리와 달라 파일 이름만 쓴다. 칸은 명목 181px 이지만 행마다 잘린 rect 가 달라 rect 를 그대로 옮긴다
+const CATS_ATLAS = path.join(ART, 'characters/npcs/village_cats/atlas.json');
+const CATS_OUT = path.join(ROOT, 'src/data/village-cats.json');
+if (fs.existsSync(CATS_ATLAS) && (all || !fs.existsSync(CATS_OUT) || fs.statSync(CATS_ATLAS).mtimeMs > fs.statSync(CATS_OUT).mtimeMs)) {
+  const atlas = JSON.parse(fs.readFileSync(CATS_ATLAS, 'utf8').replace(/^﻿/, ''));
+  const out = {};
+  for (const sh of atlas.sheets) {
+    const anims = {};
+    for (const a of sh.animations) anims[a.id] = { fps: a.fps, loop: a.loop, f: a.frames.map((fr) => [...fr.rect, ...fr.pivotPx.map((v) => Math.round(v))]) };
+    out[sh.id] = { name: sh.name, file: 'characters/npcs/village_cats/' + path.basename(sh.file).replace(/.png$/, ''), anims };
+  }
+  fs.writeFileSync(CATS_OUT, JSON.stringify(out).replace(/\]\],"/g, ']],\n"') + '\n');
+  console.log(`  마을 친구 좌표  src/data/village-cats.json (${Object.keys(out).length}마리)`);
+}
+
 // 기술 이펙트 art/effects/skills_8x8/atlas.json → src/data/skill-fx.json (8×8 균등 격자, 칸 128px)
 //   sheets: 시트 id → 경로, anims: 동작 id → [시트, 행, fps, 반복 0/1, 바닥 0/1, 오른쪽 방향 0/1], beam: 레이저 빔 칸 안 이어 붙일 범위
 const SKILL_FX = path.join(ART, 'effects/skills_8x8/atlas.json');

@@ -7,17 +7,15 @@
 import { image } from './assets.ts';
 import { button, darkOf, drawIcon, RARE, statText, useLines } from './bag-draw.ts';
 import { dropTable, ITEMS, sellPrice, STAT_KEYS, TYPE_NAME, type ItemType } from './bag.ts';
-import drops from './data/drops.json' with { type: 'json' };
 import shop from './data/shop.json' with { type: 'json' };
-import villageData from './data/village.json' with { type: 'json' };
-import fieldData from './data/field.json' with { type: 'json' };
 import { ENEMY_DEFS } from './enemy.ts';
 import { FIELD, tileOpen, warpLocked } from './field.ts';
 import { fishCard } from './fishing-draw.ts';
 import { FISH, SPOTS, type Dex } from './fishing.ts';
 import { ROOMS } from './iso.ts';
-import { PLACE_COLOR, placeKind, type PlaceKind } from './minimap.ts';
+import { PLACE_COLOR, PLACE_ICON, PLACE_NAME, placeKind, type PlaceKind } from './places.ts';
 import { drawFrame, type Sheet } from './sheet.ts';
+import { ROOMS_OF, SOURCES } from './sources.ts';
 import { fitText, safe, wrapText } from './touch.ts';
 import { FRIENDS, hearts, knownRecipes, RECIPES, type VillageSave } from './village.ts';
 
@@ -33,6 +31,8 @@ export type BookData = {
   records: Record<string, number | null>;
   village: VillageSave;
   here: number[];
+  /** 지도의 장소로 바로 가기 (필드 · 마을 · 낚시터에서만 — 없으면 버튼이 안 보인다) */
+  travel?: (id: string) => void;
 };
 
 // ── 갈래 · 탭 ──
@@ -65,10 +65,10 @@ const ITEM_TABS: Tab[] = (
 
 // ── 지도 (사이트맵) — 열린 구역의 포탈을 종류별로. 잠긴 구역은 지도 틀 밖이라 개수만 센다 ──
 type Place = { id: string; label: string; to: string; kind: PlaceKind; at: number[]; open: boolean };
-const PLACES: Place[] = FIELD.warps.map((w) => ({ id: w.id, label: w.label, to: w.to, kind: placeKind(w.to), at: w.at, open: !warpLocked(w) }));
+const PLACES: Place[] = FIELD.warps.map((w) => ({ id: w.id, label: w.label, to: w.to, kind: placeKind(w.to, w.id), at: w.at, open: !warpLocked(w) }));
 const PLACE: Record<string, Place> = Object.fromEntries(PLACES.map((p) => [p.id, p]));
-const KIND_ICON: Record<PlaceKind, string> = { village: '🏡', shop: '🛒', dungeon: '⚔️', fish: '🎣', mini: '🎮', none: '🚧' };
-const KIND_NAME: Record<PlaceKind, string> = { village: '마을', shop: '상점', dungeon: '던전', fish: '낚시터', mini: '미니게임', none: '준비 중' };
+const KIND_ICON = PLACE_ICON;
+const KIND_NAME = PLACE_NAME;
 /** 미니게임 — 이름 · 한 줄 설명 · 최고 기록 글 */
 const MINI_INFO: Record<string, { name: string; about: string; best: (v: number) => string }> = {
   maze: { name: '피라미드 미로찾기', about: '횃불이 닿는 길만 보여요. 냥코인과 보물 상자를 찾아 빨리 탈출할수록 보너스', best: (v) => `${v}초` },
@@ -122,6 +122,7 @@ const SITE: { icon: string; tab?: string; title: () => string; line: (d: BookDat
     line: (d) => `미로 · 샌드보드 · 장작 패기 · 다람쥐 잡기 · 기록 ${MAP_TABS[4].ids.filter((id) => d.records[PLACE[id].to] != null).length}/${kindCount('mini')}`,
   },
   { icon: '🌍', title: () => '필드', line: () => '숲 도끼질 · 부스럭 수풀 · 다람쥐 · 바다 한가운데 고래' },
+  { icon: '🕳️', title: () => `동굴 ${PLACES.filter((p) => p.kind === 'cave').length}곳 · 준비 중`, line: () => `열린 구역에 ${PLACES.filter((p) => p.open && p.kind === 'cave').length}곳 — 던전이 아니라 나중에 다른 놀이가 들어와요` },
   { icon: '🔒', title: () => '잠긴 지역 · 준비 중', line: () => `잠긴 던전 ${lockedCount('dungeon')} · 낚시터 ${lockedCount('fish')} · 지도의 회색 점 ${PLACES.filter((p) => p.open && p.kind === 'none').length}곳은 아직 연결 전` },
 ];
 
@@ -138,6 +139,8 @@ export const bookView = {
   cat: 'fish' as BookCat,
   tab: { fish: SPOT_TABS[0].id, monster: MON_TABS[0].id, item: ITEM_TABS[0].id, map: MAP_TABS[0].id } as Record<BookCat, string>,
   pick: null as string | null,
+  /** 지도에서 "이동" 을 누른 장소 (포탈 id) */
+  go: null as string | null,
 };
 /** 연다 — 낚시터에서 열면 그 낚시터 물고기 */
 export function openBook(cat?: BookCat, tab?: string) {
@@ -179,10 +182,11 @@ export function bookLayout(w: number, h: number) {
   const map: R = { x: 20, y: top, w: (BOX.x1 - BOX.x0) * ms, h: (BOX.y1 - BOX.y0) * ms };
   const board: R = wide ? detail : { x: 20, y: map.y + map.h + 14, w: 500, h: DH - 20 - (map.y + map.h + 14) };
   const site = bookView.tab.map === 'all';
-  const rowH = site ? 46 : 36;
+  const rowH = site ? Math.min(46, Math.floor((board.h - 50) / SITE.length)) : 36; // 사이트맵 줄 여덟이 판 안에 들어가게
   const rows = (cat !== 'map' || bookView.pick ? [] : site ? SITE : ids).map((_, i): R => ({ x: board.x + 10, y: board.y + 44 + i * rowH, w: board.w - 20, h: rowH - 5 }));
   const back: R = { x: board.x + board.w - 96, y: board.y + 10, w: 84, h: 38 };
-  return { wide, DW, DH, k, ox: sf.l + (aw - DW * k) / 2, oy: sf.t + (ah - DH * k) / 2, close: { x: DW - 84, y: 8, w: 76, h: 76 }, chips, tabs: tabRects, top, ids, cells, detail, map, board, rows, back };
+  const go: R = { x: board.x + 16, y: board.y + board.h - 66, w: board.w - 32, h: 52 };
+  return { wide, DW, DH, k, ox: sf.l + (aw - DW * k) / 2, oy: sf.t + (ah - DH * k) / 2, close: { x: DW - 84, y: 8, w: 76, h: 76 }, chips, tabs: tabRects, top, ids, cells, detail, map, board, rows, back, go };
 }
 type BL = ReturnType<typeof bookLayout>;
 /** 필드 지도 px → 지도 그림 위 (디자인 좌표) */
@@ -206,11 +210,14 @@ export function mapPoints(w: number, h: number) {
     places: Object.fromEntries(MAP_TABS[0].ids.map((id) => [id, css(...onMap(L.map, PLACE[id].at[0], PLACE[id].at[1]))])),
     rows: L.rows.map((r) => css(r.x + r.w / 2, r.y + r.h / 2)),
     back: css(L.back.x + L.back.w / 2, L.back.y + L.back.h / 2),
+    go: css(L.go.x + L.go.w / 2, L.go.y + L.go.h / 2),
   };
 }
+/** 지도 설명의 "이동" 버튼이 보이는가 (열린 장소 · 갈 수 있는 장면) */
+const canGo = (d: BookData, id: string | null) => !!(d.travel && id && PLACE[id]?.open && PLACE[id].to);
 
-/** 도감을 눌렀다 — 'close' 면 닫는다 */
-export function bookTap(w: number, h: number, x: number, y: number): 'close' | null {
+/** 도감을 눌렀다 — 'close' 면 닫는다, 'travel' 이면 bookView.go 의 장소로 간다 (main 이 travel 을 부른다) */
+export function bookTap(w: number, h: number, x: number, y: number, d?: BookData): 'close' | 'travel' | null {
   const L = bookLayout(w, h);
   const px = (x - L.ox) / L.k;
   const py = (y - L.oy) / L.k;
@@ -229,6 +236,10 @@ export function bookTap(w: number, h: number, x: number, y: number): 'close' | n
     if (hit) bookView.pick = hit;
     else if (bookView.pick) {
       if (inR(L.back, px, py)) bookView.pick = null;
+      else if (d && canGo(d, bookView.pick) && inR(L.go, px, py)) {
+        bookView.go = bookView.pick;
+        return 'travel';
+      }
     } else {
       const i = L.rows.findIndex((r) => inR(r, px, py));
       if (i >= 0 && bookView.tab.map === 'all') bookView.tab.map = SITE[i].tab ?? 'all';
@@ -242,25 +253,6 @@ export function bookTap(w: number, h: number, x: number, y: number): 'close' | n
   }
   return null;
 }
-
-// ── 얻는 곳 (아이템) — 한 번만 모은다 ──
-const SOURCES: Record<string, { monsters: string[]; all: boolean; spots: string[]; shop: boolean; boxes: string[]; start: boolean; cook: boolean; fish: boolean; forest: boolean; gift: string[] }> = {};
-for (const id of Object.keys(ITEMS)) SOURCES[id] = { monsters: [], all: false, spots: [], shop: false, boxes: [], start: false, cook: false, fish: false, forest: false, gift: [] };
-for (const r of villageData.recipes) SOURCES[r.id].cook = true;
-SOURCES.cook_fish.fish = true;
-for (const [id] of [...fieldData.forest.finds, ...fieldData.forest.rustle.finds]) SOURCES[id as string].forest = true;
-for (const fr of villageData.friends)
-  for (const r of Object.values(fr.rewards) as { item?: string; items?: (string | number)[][] }[])
-    for (const id of [r.item, ...(r.items ?? []).map(([i]) => i as string)]) if (id && !SOURCES[id].gift.includes(fr.name)) SOURCES[id].gift.push(fr.name);
-for (const k of Object.keys(ENEMY_DEFS)) for (const [id] of dropTable(k)) SOURCES[id].monsters.push(k);
-for (const [id] of (drops as unknown as Record<string, [string, number][]>)._all) SOURCES[id].all = true;
-for (const [sid, s] of Object.entries(SPOTS)) for (const [id] of s.salvage ?? []) SOURCES[id].spots.push(sid);
-for (const id of shop.stock) SOURCES[id].shop = true;
-for (const [bid, d] of Object.entries(ITEMS)) for (const id of d.use?.open ?? []) SOURCES[id].boxes.push(bid);
-for (const id of ['equipment_01', 'equipment_25']) SOURCES[id].start = true;
-/** 몬스터가 나오는 방 이름 */
-const ROOMS_OF: Record<string, string[]> = {};
-for (const r of Object.values(ROOMS)) for (const [k] of r.spawns) if (!(ROOMS_OF[k as string] ??= []).includes(r.name)) ROOMS_OF[k as string].push(r.name);
 
 // ── 그리기 ──
 export function drawBook(ctx: CanvasRenderingContext2D, w: number, h: number, d: BookData, t: number) {
@@ -453,7 +445,7 @@ function detail(ctx: CanvasRenderingContext2D, L: ReturnType<typeof bookLayout>,
     }
   };
   if (isMon) {
-    const where = ROOMS_OF[id];
+    const where = ROOMS_OF[id]?.map((rid) => ROOMS[rid].name);
     para(`나오는 곳: ${where ? where.join(', ') : '아직 없어요 (가을 던전 준비 중)'}`, '#7a6656');
     para('떨어뜨리는 것', '#9a7b62', 15, 'bold ');
     const list = dropTable(id).map(([v]) => v);
@@ -489,6 +481,7 @@ function detail(ctx: CanvasRenderingContext2D, L: ReturnType<typeof bookLayout>,
       ...(s.cook ? ['고양이마을 요리 가판대'] : []),
       ...(s.fish ? ['낚시 (물고기를 낚으면)'] : []),
       ...(s.forest ? ['숲 도끼질 · 부스럭 수풀'] : []),
+      ...(s.chase ? ['다람쥐 잡기'] : []),
       ...(s.gift.length ? [`마을 친구 선물: ${s.gift.join(', ')}`] : []),
       ...(s.boxes.length ? [s.boxes.map((v) => (d.found[v] ? ITEMS[v].name : '???')).join(', ')] : []),
     ];
@@ -529,8 +522,12 @@ function drawMap(ctx: CanvasRenderingContext2D, L: BL, d: BookData, t: number) {
   ctx.roundRect(M.x, M.y, M.w, M.h, 16);
   ctx.stroke();
   for (const p of PLACES) {
-    if (!p.open || p.kind !== 'none') continue;
+    if (!p.open || (p.kind !== 'none' && p.kind !== 'cave')) continue;
     const [x, y] = onMap(M, p.at[0], p.at[1]);
+    if (p.kind === 'cave') {
+      marker(ctx, p, x, y, 0.55, false, t);
+      continue;
+    }
     ctx.beginPath();
     ctx.arc(x, y, 4, 0, Math.PI * 2);
     ctx.fillStyle = 'rgba(235,235,235,0.75)';
@@ -635,16 +632,16 @@ function mapBoard(ctx: CanvasRenderingContext2D, L: BL, d: BookData, t: number) 
       ctx.textAlign = 'left';
       ctx.fillStyle = '#000';
       ctx.font = '19px "Segoe UI Emoji", system-ui, sans-serif';
-      ctx.fillText(row.icon, r.x + 9, r.y + 28);
+      ctx.fillText(row.icon, r.x + 9, r.y + r.h / 2 + 7);
       ctx.fillStyle = '#5b4a3f';
-      fitText(ctx, row.title(), r.x + 40, r.y + 18, r.w - 66, 16, 'bold ');
+      fitText(ctx, row.title(), r.x + 40, r.y + 17, r.w - 66, 16, 'bold ');
       ctx.fillStyle = '#9a7b62';
-      fitText(ctx, row.line(d), r.x + 40, r.y + 35, r.w - 66, 13);
+      fitText(ctx, row.line(d), r.x + 40, r.y + r.h - 6, r.w - 66, 13);
       if (row.tab) {
         ctx.fillStyle = '#c9a98a';
         ctx.font = 'bold 22px system-ui, sans-serif';
         ctx.textAlign = 'right';
-        ctx.fillText('›', r.x + r.w - 10, r.y + 28);
+        ctx.fillText('›', r.x + r.w - 10, r.y + r.h / 2 + 8);
       }
     });
     return;
@@ -685,11 +682,13 @@ function placeDetail(ctx: CanvasRenderingContext2D, L: BL, p: Place, d: BookData
   let y = B.y + 92;
   const bx = B.x + 16;
   const bw = B.w - 32;
+  const go = canGo(d, p.id);
+  const bottom = B.y + B.h - (go ? 78 : 8); // 이동 버튼 위에서 멈춘다
   const para = (text: string, color: string, px = 15, bold = '') => {
     ctx.fillStyle = color;
     ctx.font = `${bold}${px}px system-ui, sans-serif`;
     for (const l of wrapText(ctx, text, bw)) {
-      if (y > B.y + B.h - 8) return;
+      if (y > bottom) return;
       ctx.fillText(l, bx, y);
       y += px + 6;
     }
@@ -724,16 +723,26 @@ function placeDetail(ctx: CanvasRenderingContext2D, L: BL, p: Place, d: BookData
     para(v == null ? '최고 기록: 아직 없어요' : `최고 기록: ${info.best(v)}`, v == null ? '#b09a85' : '#3e9a45', 16, 'bold ');
     if (p.to === 'maze' && d.records.whale != null) para(`고래 배 속 미로: ${d.records.whale}초`, '#3f7fbf', 15, 'bold ');
   } else if (p.kind === 'village') {
-    para('요리 가판대에서 요리하고, 친구 다섯에게 먹여 주며 친해져요. 가끔 먹고 싶은 요리를 부탁해요', '#7a6656');
+    para(`요리 가판대에서 요리하고, 친구 ${FRIENDS.length}에게 먹여 주거나 놀아 주며 친해져요. 가끔 먹고 싶은 요리를 부탁해요`, '#7a6656');
     para(`친해진 친구 ${friendsMade(d.village)}/${FRIENDS.length} · 요리법 ${knownRecipes(d.village).length}/${RECIPES.length}`, '#3e9a45', 16, 'bold ');
-    for (const fr of FRIENDS) {
-      const n = hearts(d.village.friends[fr.id].pts);
-      para(`${fr.name} ${'♥'.repeat(n)}${'♡'.repeat(5 - n)}`, '#ef6b5e', 15, 'bold ');
+    // 친구 하트 — 두 마리씩 한 줄
+    ctx.fillStyle = '#ef6b5e';
+    ctx.font = 'bold 14px system-ui, sans-serif';
+    for (let i = 0; i < FRIENDS.length && y <= bottom; i += 2) {
+      [0, 1].forEach((k) => {
+        const fr = FRIENDS[i + k];
+        if (!fr) return;
+        const n = hearts(d.village.friends[fr.id].pts);
+        fitText(ctx, `${fr.name} ${'♥'.repeat(n)}${'♡'.repeat(5 - n)}`, bx + k * (bw / 2), y, bw / 2 - 8, 14, 'bold ');
+      });
+      y += 21;
     }
   } else if (p.kind === 'shop') {
     para(`강아지마을의 ${shop.name} · 물건 ${shop.stock.length}가지 · 팔 땐 절반 값`, '#7a6656');
     para('요리 재료(우유 · 밀가루 · 달걀 · 쌀 · 나뭇가지 묶음)도 팔아요', '#3f7fbf', 15, 'bold ');
   }
+  // 바로 가기 (2026-10-08 사용자 요청) — 필드 · 마을 · 낚시터에서만, 열린 장소만
+  if (go) button(ctx, L.go, `📍 ${p.label}(으)로 이동`, 'main');
 }
 
 /** 지역이 없는 몬스터 (도감에 안 나온다) — verify 가 본다 */

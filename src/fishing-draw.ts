@@ -257,23 +257,43 @@ function uiShift(s: FishingState) {
 }
 
 /**
- * 그림이 화면에 놓이는 자리. 그림 전체가 들어가게 맞추되(데스크톱은 그대로), 작은 화면(휴대폰 · 세로)에선 그림 1px 이 FOCUS_MIN CSS px 이 될 때까지
- * 놀이 영역(고양이 자리 ~ 물)을 맞춰 키운다 — 넘치는 쪽은 놀이 영역 가운데로, 그림 밖이 보이지 않게 (2026-10-07)
+ * 그림이 화면에 놓이는 자리 (2026-10-08 넓어진 배경 — 사용자: 화면 비율이 달라도 여백이 덜 생기게). 그림이 화면을 **덮도록**(cover) 키우되
+ * 놀이 영역(고양이 자리 ~ 던지는 곳 둘레)은 다 보이게 — 놀이 영역이 안 들어가면 그만큼만 줄인다(그때만 가장자리에 물빛 여백).
+ * 작은 화면(휴대폰 · 세로)에선 그림 1px 이 FOCUS_MIN CSS px 이 될 때까지 더 키운다. 넘치는 쪽은 놀이 영역 가운데로, 그림 밖이 보이지 않게
  */
 const FOCUS_MIN = 0.6;
 function fitSpot(cw: number, ch: number, s: FishingState) {
   const spot = s.spot;
   const [W, H] = spot.size;
-  const xs = spot.water.map((p) => p[0]);
-  const ys = spot.water.map((p) => p[1]);
-  const x0 = Math.max(0, Math.min(spot.seat[0] - 230, Math.min(...xs) - 40));
-  const x1 = Math.min(W, Math.max(...xs) + 40);
-  const y0 = Math.max(0, Math.min(spot.seat[1] - 280, Math.min(...ys) - 30));
-  const y1 = Math.min(H, Math.max(...ys) + 40);
+  const [sx, sy] = spot.seat;
+  const [cx, cy] = spot.defaultCast;
+  const x0 = Math.max(0, sx - 230);
+  const x1 = Math.min(W, cx + 330);
+  const y0 = Math.max(0, Math.min(sy, cy) - 280);
+  const y1 = Math.min(H, cy + 300);
   const dpr = Math.min(devicePixelRatio, 2);
-  const sc = Math.max(Math.min(cw / W, ch / H), Math.min(cw / (x1 - x0), ch / (y1 - y0), FOCUS_MIN * dpr));
+  const cover = Math.max(cw / W, ch / H);
+  const play = Math.min(cw / (x1 - x0), ch / (y1 - y0));
+  const sc = Math.min(play, Math.max(cover, FOCUS_MIN * dpr));
   const place = (view: number, size: number, at: number) => (size <= view ? (view - size) / 2 : Math.max(view - size, Math.min(0, view / 2 - at)));
   return { sc, ox: place(cw, W * sc, ((x0 + x1) / 2) * sc), oy: place(ch, H * sc, ((y0 + y1) / 2) * sc) };
+}
+
+/** 세로 화면의 남는 띠에 까는 흐린 배경 (화면 크기 · 낚시터마다 한 번) */
+let backdropCache: { key: string; cv: HTMLCanvasElement } | null = null;
+function backdrop(img: string, cw: number, ch: number) {
+  const key = `${img}|${cw}x${ch}`;
+  if (backdropCache?.key === key) return backdropCache.cv;
+  const cv = document.createElement('canvas');
+  cv.width = cw;
+  cv.height = ch;
+  const g = cv.getContext('2d')!;
+  const im = image(img).img;
+  const k = Math.max(cw / im.naturalWidth, ch / im.naturalHeight) * 1.1;
+  g.filter = 'blur(14px) brightness(0.75)';
+  g.drawImage(im, (cw - im.naturalWidth * k) / 2, (ch - im.naturalHeight * k) / 2, im.naturalWidth * k, im.naturalHeight * k);
+  backdropCache = { key, cv };
+  return cv;
 }
 
 // ── 그리기 ──
@@ -300,6 +320,8 @@ export function drawFishing(ctx: CanvasRenderingContext2D, cw: number, ch: numbe
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.fillStyle = '#58b6dd'; // 화면 비율이 달라 남는 곳은 물빛으로
   ctx.fillRect(0, 0, cw, ch);
+  // 그림이 화면을 다 못 덮으면(세로 화면) 남는 곳에 같은 그림을 흐리게 깔아 띠가 덜 보이게 (한 번 만들어 둔다)
+  if (W * sc < cw - 1 || H * sc < ch - 1) ctx.drawImage(backdrop(spot.image, cw, ch), 0, 0);
   ctx.setTransform(sc, 0, 0, sc, ox, oy);
   ctx.drawImage(image(spot.image).img, 0, 0, W, H);
 

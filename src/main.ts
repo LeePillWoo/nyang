@@ -83,7 +83,7 @@ import { makeSandboard, SAND, updateSandboard, type SandEvent, type SandState } 
 import { loadSheet, type Sheet } from './sheet.ts';
 import { drawTimber, timberFx } from './timber-draw.ts';
 import { chaseFx, chaseView, drawChase } from './chase-draw.ts';
-import { burn, drawVillage, drawVillagePanel, friendSheet, openVillagePanel, resetVillageView, villageKey, villagePoints, villageReady, villageTap, villageView, type VillageAct } from './village-draw.ts';
+import { burn, drawVillage, drawVillagePanel, openVillagePanel, resetVillageView, villageKey, villagePoints, villageReady, villageTap, villageView, type VillageAct } from './village-draw.ts';
 import { FRIENDS, fromVillageSave, hello, makeVillage, targetAtPoint, tickRequests, updateCook, updateVillage, walkTo, type VillageSave, type VillageState } from './village.ts';
 import { CHASE, makeChase, updateChase, type ChaseEvent, type ChaseState } from './chase.ts';
 import { makeTimber, TIMBER, updateTimber, type Side, type TimberEvent, type TimberState } from './timber.ts';
@@ -338,7 +338,9 @@ canvas.addEventListener('pointerdown', (e) => {
   canvas.setPointerCapture(e.pointerId);
   const p = pos(e);
   if (panel === 'dex') {
-    if (bookTap(innerWidth, innerHeight, p.x, p.y) === 'close') closePanel();
+    const r = bookTap(innerWidth, innerHeight, p.x, p.y, bookData());
+    if (r === 'close') closePanel();
+    else if (r === 'travel' && bookView.go) travelTo(bookView.go);
     return;
   }
   if (scene === 'dungeon' && dungeon.result) {
@@ -681,6 +683,7 @@ const bookData = (): BookData => ({
   records,
   village: vsave,
   here: [field.x, field.y],
+  travel: canTravel() ? travelTo : undefined,
 });
 
 // 미니게임 기록 — 미로 최단 시간(초) · 고래 배 속 최단 시간(초) · 샌드보드 최고 점수 · 장작 패기 최고 토막 · 다람쥐 잡기 최고 점수
@@ -773,6 +776,8 @@ if (trace)
       bagView,
       /** 마을 창에서 누를 곳 (CSS px) */
       villagePoints: () => villagePoints(innerWidth, innerHeight),
+      /** 포탈 id 로 바로 가기 (도감 지도 · 가판대와 같은 길) */
+      travel: (id: string) => travelTo(id),
       /** 다람쥐 잡기 공터 좌표 (x, y) 의 화면 위치 (CSS px) */
       chaseScreen: (x: number, y: number) => {
         const d = Math.min(devicePixelRatio, 2);
@@ -1211,7 +1216,6 @@ const enterVillage = () =>
   goTo(async () => {
     step('고양이마을');
     await villageReady;
-    for (const fr of FRIENDS) friendSheet(catSheet, fr);
     scene = 'village';
     roomId = 'village';
     canvas.style.cursor = '';
@@ -1292,7 +1296,7 @@ let villageNear = '';
 function stepVillage(dt: number) {
   const P = villageView.panel;
   const busy = !!P || villageView.gifts.length > 0;
-  updateVillage(village, busy ? { mx: 0, my: 0, act: false } : { ...input(), act: villageAct }, dt);
+  updateVillage(village, busy ? { mx: 0, my: 0, act: false } : { ...input(), act: villageAct }, dt, vsave, Date.now());
   villageAct = false;
   if (P?.kind === 'cook' && updateCook(P.cook, dt)) onVillageAct(burn(vsave, bag));
   tickRequests(vsave, Date.now());
@@ -1341,6 +1345,16 @@ function onVillageAct(a: VillageAct) {
     saveBag();
     saveVillage();
   } else if (a.kind === 'gift') sfxPickup();
+  else if (a.kind === 'played') {
+    if (!a.res.ok) sfxFull();
+    else {
+      sfxSnack();
+      if (a.res.up) sfxLevel();
+      say('delight', 1.4);
+      saveBag();
+      saveVillage();
+    }
+  } else if (a.kind === 'travel') return travelTo(a.id);
   if (!villageView.panel && !villageView.gifts.length) help.classList.remove('choosing');
 }
 /** 다람쥐 잡기 사건 → 소리 · 감정 · 보상 · 기록 */
@@ -1448,6 +1462,29 @@ const warpTo = (w: Warp) =>
     quiet();
     say('surprise', 1.2);
   });
+/** 바로 가기가 되는 장면 — 필드 · 마을 · 낚시터 (던전 · 미니게임은 판이 날아간다) */
+const canTravel = () => !fadeTo && (scene === 'field' || scene === 'village' || scene === 'fishing');
+/** 도감 지도의 "이동" · 가판대의 모자란 재료 바로가기 (2026-10-08 사용자 요청) — 그 포탈 앞(back)으로. 필드가 아니면 필드로 나온다 */
+const travelTo = (id: string) => {
+  const w = FIELD.warps.find((v) => v.id === id);
+  if (!w || warpLocked(w) || !canTravel()) return;
+  if (panel) closePanel();
+  villageView.panel = null;
+  villageView.gifts.length = 0;
+  help.classList.remove('choosing');
+  goTo(() => {
+    scene = 'field';
+    field = makeFieldState(w.back, terrainAt, field);
+    look = null;
+    fishKey = false;
+    fishPtr = null;
+    canvas.style.cursor = '';
+    saveBag();
+    quiet();
+    say('surprise', 1.2);
+    sayHelp();
+  });
+};
 /** 던전 다시 도전 — 방을 처음부터 (웨이브 · 기술 · 기록 모두) */
 const retryRoom = () =>
   goTo(() => {
@@ -1551,7 +1588,7 @@ function frame(now: number) {
   if (scene === 'field') drawFieldScene();
   else if (scene === 'fishing') drawFishing(ctx, canvas.width, canvas.height, fishing, { t: last / 1000, dt: lastDt, hover: fishHover, touch: touchOn });
   else if (scene === 'maze') drawMaze(ctx, canvas.width, canvas.height, maze, catSheet, { t: last / 1000, dt: lastDt, touch: touchOn, hover: miniHover, best: records[maze.theme === 'whale' ? 'whale' : 'maze'] });
-  else if (scene === 'village') drawVillage(ctx, canvas.width, canvas.height, village, vsave, catSheet, { t: last / 1000, dt: lastDt, touch: touchOn, hover: miniHover });
+  else if (scene === 'village') drawVillage(ctx, canvas.width, canvas.height, village, vsave, catSheet, { t: last / 1000, dt: lastDt, touch: touchOn, hover: miniHover, debug });
   else if (scene === 'chase') drawChase(ctx, canvas.width, canvas.height, chase, { cat: catSheet, squirrel: sheets.acorn_squirrel }, { t: last / 1000, dt: lastDt, touch: touchOn, hover: miniHover, best: records.chase });
   else if (scene === 'timber') drawTimber(ctx, canvas.width, canvas.height, timber, { axe: axeSheet, cat: catSheet }, { t: last / 1000, dt: lastDt, touch: touchOn, hover: miniHover, best: records.timber });
   else if (scene === 'sandboard')
@@ -1673,7 +1710,6 @@ const step = (t: string) => {
   if (scene === 'village') {
     step('고양이마을');
     await villageReady;
-    for (const fr of FRIENDS) friendSheet(catSheet, fr);
     tickRequests(vsave, Date.now());
   }
   if (scene === 'fishing') {

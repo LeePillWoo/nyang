@@ -4,7 +4,7 @@
 // 좌표는 CSS 픽셀 (캔버스 실제 픽셀이 아니라) — 마우스 좌표와 바로 맞댄다.
 import { image } from './assets.ts';
 import { FIELD, openEdges, tileOpen, warpLocked, type FieldState, type Warp } from './field.ts';
-import { SPOTS } from './fishing.ts';
+import { PLACE_COLOR, placeKind } from './places.ts';
 import { safe, ui } from './touch.ts';
 
 const MAP = image('world/minimap');
@@ -14,13 +14,6 @@ const MARGIN = 14;
 const PICK = 9;
 
 export type Rect = { x: number; y: number; w: number; h: number };
-
-/** 포탈이 가는 곳의 종류 — 미니맵 점 색 · 도감 지도가 같이 쓴다 */
-export type PlaceKind = 'village' | 'shop' | 'dungeon' | 'fish' | 'mini' | 'none';
-const MINI = ['maze', 'sandboard', 'timber', 'chase'];
-export const placeKind = (to: string): PlaceKind =>
-  !to ? 'none' : SPOTS[to] ? 'fish' : to === 'shop' ? 'shop' : to === 'village' ? 'village' : MINI.includes(to) ? 'mini' : 'dungeon';
-export const PLACE_COLOR: Record<PlaceKind, string> = { village: '#7fdc8c', shop: '#ff8fc8', dungeon: '#ffd84a', fish: '#6fd3ff', mini: '#b48cff', none: 'rgba(225,225,225,0.9)' };
 
 /** cssW, cssH = 화면 크기 (CSS px). 좁은 화면에선 폭의 30% 까지만, 휴대폰에선 HUD 배율만큼 작게, 노치는 비켜서 */
 export function minimapRect(cssW: number, cssH: number): Rect {
@@ -104,7 +97,7 @@ export function drawMinimap(ctx: CanvasRenderingContext2D, r: Rect, s: FieldStat
     const locked = warpLocked(w);
     ctx.beginPath();
     ctx.arc(mx, my, big ? 5 : w.to && !locked ? 3.2 : 2.4, 0, Math.PI * 2);
-    ctx.fillStyle = locked ? 'rgba(150,150,160,0.8)' : PLACE_COLOR[placeKind(w.to)];
+    ctx.fillStyle = locked ? 'rgba(150,150,160,0.8)' : PLACE_COLOR[placeKind(w.to, w.id)];
     ctx.fill();
     ctx.lineWidth = 1.2;
     ctx.strokeStyle = 'rgba(70,52,42,0.9)';

@@ -1,4 +1,5 @@
 import { image } from './assets.ts';
+import { PLACE_COLOR, PLACE_ICON, placeKind } from './places.ts';
 import { drawCoin, drawIcon } from './bag-draw.ts';
 import { ITEMS } from './bag.ts';
 import { AXE_FPS, AXE_ROW, BOAT_FPS, BOAT_ROW, CAT_FPS, CAT_ROW, SNOW_FPS, SNOW_ROW } from './cat.ts';
@@ -831,16 +832,25 @@ export function drawField(
   if (ride === null) drawEmote(ctx, s.x, s.y - body * (afloat ? 1.5 : 1.2), body * 0.8);
 }
 
+/** 포탈 종류 색 → rgba (알파를 바꿔 쓴다) */
+function rgba(hex: string, a: number) {
+  if (!hex.startsWith('#')) return hex;
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+  return `rgba(${r}, ${g}, ${b}, ${a})`;
+}
 /**
  * 포탈 — 바닥에 숨 쉬는 빛 원 + 빛 기둥 + 이름표 (이펙트 시트의 포탈 그림은 너무 강해서 이 단순한 그림을 쓴다).
- * 머무는 동안 바깥 링이 채워진다.
- * 아직 던전이 연결되지 않은 포탈은 흐리게 그린다. 이름표는 포탈 아래 (위쪽엔 이정표 그림이 있다).
+ * 색은 미니맵과 같다 (places.ts — 던전 금색 · 낚시터 하늘색 · 미니게임 보라 · 상점 분홍 · 마을 초록 · 동굴 갈색, 2026-10-08 사용자 요청) 그리고
+ * 원 가운데에 종류 아이콘이 떠서 숨 쉰다 (전투인지 다른 콘텐츠인지 한눈에). 머무는 동안 바깥 링이 채워진다.
+ * 아직 연결되지 않은 포탈은 흐리게 그린다. 이름표는 포탈 아래 (위쪽엔 이정표 그림이 있다).
  */
 function drawWarp(ctx: CanvasRenderingContext2D, w: Warp, t: number, progress: number) {
   const [x, y] = w.at;
   const rx = w.r;
   const ry = w.r * FIELD.vertical;
   const pulse = 0.5 + 0.5 * Math.sin(t * 3);
+  const kind = placeKind(w.to, w.id);
+  const col = PLACE_COLOR[kind];
   const ellipse = (k: number) => {
     ctx.beginPath();
     ctx.ellipse(x, y, rx * k, ry * k, 0, 0, Math.PI * 2);
@@ -853,22 +863,34 @@ function drawWarp(ctx: CanvasRenderingContext2D, w: Warp, t: number, progress: n
   else if (!w.to) ctx.globalAlpha = 0.45;
   if (!locked) {
     const beam = ctx.createLinearGradient(x, y, x, y - 46);
-    beam.addColorStop(0, `rgba(190, 240, 255, ${0.35 + 0.2 * pulse})`);
-    beam.addColorStop(1, 'rgba(190, 240, 255, 0)');
+    beam.addColorStop(0, rgba(col, 0.35 + 0.2 * pulse));
+    beam.addColorStop(1, rgba(col, 0));
     ctx.fillStyle = beam;
     ctx.fillRect(x - rx * 0.8, y - 46, rx * 1.6, 46);
   }
 
-  ctx.fillStyle = `rgba(160, 230, 255, ${0.3 + 0.15 * pulse})`;
+  ctx.fillStyle = rgba(col, 0.32 + 0.15 * pulse);
   ellipse(1);
   ctx.fill();
   ctx.lineWidth = 1.5;
   ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
   ctx.stroke();
   ctx.lineWidth = 1;
-  ctx.strokeStyle = 'rgba(110, 200, 255, 0.9)';
+  ctx.strokeStyle = rgba(col, 0.9);
   ellipse(0.55 + 0.15 * pulse);
   ctx.stroke();
+  // 종류 아이콘 — 원 가운데에서 살짝 떠올랐다 내려앉으며 빛난다 (연결 전은 없음)
+  if (w.to || kind === 'cave') {
+    const lift = 3 + 2 * pulse;
+    ctx.font = `${Math.round(rx * 0.62)}px "Segoe UI Emoji", system-ui, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.globalAlpha *= 0.8 + 0.2 * pulse;
+    ctx.fillStyle = '#000';
+    ctx.fillText(PLACE_ICON[kind], x, y - lift);
+    ctx.globalAlpha = locked ? 0.5 : w.to ? 1 : 0.45;
+    ctx.textBaseline = 'alphabetic';
+  }
 
   if (progress > 0) {
     ctx.lineWidth = 3;

@@ -20,6 +20,7 @@ const WAVE_DATA = readJson('../src/data/waves.json');
 const PLAYER_DATA = readJson('../src/data/player.json');
 const SKILL_DATA = readJson('../src/data/skills.json');
 const SHOP_DATA = readJson('../src/data/shop.json');
+const SPOTS_JSON = readJson('../src/data/fishing.json');
 const { OBS: SAND_OBS, SAND: SAND_CFG, coast: sandCoast, center: sandCenter, width: sandWidth } = await import('../src/sandboard.ts');
 /** 개방 구역(field.json open) 안의 워프 — 잠긴 구역 밖 워프는 갈 수 없는 게 맞다 */
 const inOpen = (x, y) => {
@@ -422,7 +423,9 @@ try {
         const s = __game.fishing;
         const [dx, dy] = s.spot.defaultCast;
         const f = s.fishes.filter((v) => v.mode === 'swim' && v.alpha >= 1).sort((a, b) => Math.hypot(a.x - dx, a.y - dy) - Math.hypot(b.x - dx, b.y - dy))[0];
-        const [x0, y0, x1, y1] = [1000, 250, 1520, 715];
+        const xs = s.spot.water.map((p) => p[0]);
+        const ys = s.spot.water.map((p) => p[1]);
+        const [x0, y0, x1, y1] = [Math.min(...xs) + 80, Math.min(...ys) + 80, Math.max(...xs) - 80, Math.max(...ys) - 80];
         const x = f ? Math.min(x1, Math.max(x0, f.x + f.hx * (f.def.scare * f.size + 45))) : dx;
         const y = f ? Math.min(y1, Math.max(y0, f.y + f.hy * (f.def.scare * f.size + 45))) : dy;
         return { x, y, at: __game.fishScreen(x, y) };
@@ -1546,6 +1549,9 @@ try {
   //  Esc 로 포탈 앞 → 새로 고쳐도 친구 기록이 남는다. 가방 96칸 = 4쪽: ▶ 버튼 · ← → 키 · 둘째 쪽 칸 고르기 · 휴대폰 밀어 넘기기.
   //  휴대폰: 친구를 눌러 걸어가 창 → 칸 → 먹여 주기 버튼 → ✕ → 가판대 창. 화면 village-*.png · touch-village*.png · screen-village-portrait*.png · bag-page2.png
   console.log('\n[고양이마을 · 요리 · 친구 · 가방 쪽]');
+  const VILLAGE = readJson('../src/data/village.json');
+  const VF = VILLAGE.friends;
+  const prefOf = (fr, dish) => (fr.love.includes(dish) ? 'love' : fr.like.includes(dish) ? 'like' : fr.dislike.includes(dish) ? 'dislike' : 'normal');
   {
     const { page, errors } = await open('field');
     await page.evaluate(() => localStorage.removeItem('nyang.village.v1'));
@@ -1558,16 +1564,16 @@ try {
     const inVillage = await page.waitForFunction(() => __game.scene === 'village', { timeout: 8000 }).then(() => true, () => false);
     check(inVillage, `${w.label} 포탈에 서 있으면 고양이마을`);
     await sleep(800);
-    const hi = await page.evaluate(() => ({ met: __game.villageSave.met, say: __game.village.townies[0].say }));
-    check(hi.met && hi.say.includes('요리'), '처음 오면 코코 할머니가 인사');
+    const hi = await page.evaluate(() => ({ met: __game.villageSave.met, say: __game.village.townies[0].say, n: __game.village.townies.length }));
+    check(hi.met && hi.say.includes('요리') && hi.n === VF.length, `처음 오면 ${VF[0].name} 할머니가 인사 · 친구 ${hi.n}`);
     await page.screenshot({ path: fsPath(new URL('village-start.png', OUT)) });
     const countOf = (id) => page.evaluate((id) => __game.bag.slots.reduce((t, v) => t + (v?.id === id ? v.n : 0), 0), id);
     await page.evaluate(() => {
       const b = __game.bag;
       for (const [id, n] of [['cook_fish', 4], ['materials_02', 4], ['materials_06', 2], ['cook_milk', 2]]) b.slots[b.slots.findIndex((s) => !s)] = { id, n };
     });
-    // 요리 가판대를 누르면 걸어가서 창
-    await click2(page, await page.evaluate(() => __game.villageScreen(2128, 1528)));
+    // 요리 가판대(요리집 앞 간판)를 누르면 걸어가서 창
+    await click2(page, await page.evaluate((k) => __game.villageScreen(k[0], k[1] + 10), VILLAGE.kitchenSign));
     const atKitchen = await page.waitForFunction(() => __game.villageView.panel?.kind === 'kitchen', { timeout: 8000 }).then(() => true, () => false);
     check(atKitchen, '요리 가판대를 누르면 걸어가서 가판대 창');
     await sleep(200);
@@ -1594,41 +1600,60 @@ try {
     await page.keyboard.press('Escape'); // 결과 → 가판대
     await page.keyboard.press('Escape'); // 가판대 닫기
     check((await page.evaluate(() => __game.villageView.panel)) === null, 'Esc 로 창을 닫는다 (마을은 그대로)');
-    // 우유: 하트 하나 바로 앞 → 누르면 걸어가 친구 창 → Enter 로 먹여 주기 → 하트 하나 · 선물 카드(새 요리법)
-    await page.evaluate(() => (__game.villageSave.friends.milk.pts = 19));
+    // 친구 1: 하트 하나 바로 앞 → 누르면 걸어가 친구 창 → Enter 로 먹여 주기(생선 꼬치) → 입맛만큼 점수 · 하트 하나 → 선물 카드
+    const f1 = VF[1];
+    const pref1 = prefOf(f1, 'dish_01');
+    const gain1 = VILLAGE.points[pref1];
+    await page.evaluate((id, pts) => (__game.villageSave.friends[id].pts = pts), f1.id, VILLAGE.heart - 1);
     await click2(page, await page.evaluate(() => ((t) => __game.villageScreen(t.x, t.y - 8))(__game.village.townies[1])));
-    const atMilk = await page.waitForFunction(() => __game.villageView.panel?.kind === 'friend' && __game.villageView.panel.i === 1, { timeout: 8000 }).then(() => true, () => false);
-    check(atMilk, '우유를 누르면 걸어가서 친구 창');
+    const atF1 = await page.waitForFunction(() => __game.villageView.panel?.kind === 'friend' && __game.villageView.panel.i === 1, { timeout: 8000 }).then(() => true, () => false);
+    check(atF1, `${f1.name}를 누르면 걸어가서 친구 창`);
     await sleep(200);
     await page.keyboard.press('Enter');
     await sleep(300);
-    const fed = await page.evaluate(() => ({ milk: __game.villageSave.friends.milk, gifts: __game.villageView.gifts.length, recipes: __game.villageSave.recipes, line: __game.villageView.line }));
-    check(fed.milk.pts === 20 && fed.milk.seen.dish_01 === 'dislike' && fed.milk.meals.length === 1 && fed.gifts === 1 && fed.recipes.includes('dish_05'), `Enter 로 생선 꼬치를 먹여 주면 하트 하나 → 선물 카드 · 새 요리법 치즈 오믈렛 ("${fed.line}")`);
+    const fed = await page.evaluate((id) => ({ f: __game.villageSave.friends[id], gifts: __game.villageView.gifts.length, recipes: __game.villageSave.recipes, line: __game.villageView.line, anim: __game.village.townies[1].anim, bag: __game.bag.slots.filter(Boolean).map((v) => v.id) }), f1.id);
+    const r1 = f1.rewards['1'];
+    const gotGift = r1.recipe ? fed.recipes.includes(r1.recipe) : r1.item ? fed.bag.includes(r1.item) : r1.items ? fed.bag.includes(r1.items[0][0]) : true;
+    const want1 = pref1 === 'dislike' ? 'sulk' : pref1 === 'normal' ? 'idle' : 'affection';
+    check(fed.f.pts === VILLAGE.heart - 1 + gain1 && fed.f.seen.dish_01 === pref1 && fed.f.meals.length === 1 && fed.gifts === 1 && gotGift && fed.anim === want1, `Enter 로 생선 꼬치를 먹여 주면 ${pref1} +${gain1} → 하트 하나 · 선물 카드(${r1.recipe ? '요리법' : '물건'}) · 동작 ${fed.anim} ("${fed.line}")`);
     await page.screenshot({ path: fsPath(new URL('village-gift.png', OUT)) });
     await page.keyboard.press('Enter');
     await sleep(200);
     check((await page.evaluate(() => __game.villageView.gifts.length)) === 0, '선물 카드는 Enter 로 닫는다');
     await page.screenshot({ path: fsPath(new URL('village-friend.png', OUT)) });
+    // P 로 놀아 주기 — 장난감 놀이 동작 · 점수, 바로 또는 안 된다
+    const pts0 = await page.evaluate((id) => __game.villageSave.friends[id].pts, f1.id);
+    await page.keyboard.press('KeyP');
+    await sleep(300);
+    const played = await page.evaluate((id) => ({ pts: __game.villageSave.friends[id].pts, anim: __game.village.townies[1].anim, line: __game.villageView.line }), f1.id);
+    await page.screenshot({ path: fsPath(new URL('village-play.png', OUT)) });
+    await page.keyboard.press('KeyP');
+    await sleep(100);
+    const again = await page.evaluate((id) => __game.villageSave.friends[id].pts, f1.id);
+    check(played.pts === pts0 + VILLAGE.points.play && played.anim === 'solo_play' && played.line === f1.play && again === played.pts, `P 로 놀아 주면 +${VILLAGE.points.play} · 장난감 놀이 · 바로 또는 안 됨`);
     await page.keyboard.press('Escape');
-    // 코코의 부탁: 곁에 서서 E → 부탁한 요리가 먼저 골라져 있다 → 먹여 주면 냥코인 · 점수 5 + 부탁 10
-    await page.evaluate(() => {
-      __game.villageSave.friends.coco.ask = 'dish_01';
+    // 친구 0 의 부탁: 곁에 서서 E → 부탁한 요리가 먼저 골라져 있다 → 먹여 주면 냥코인 · 점수 입맛 + 부탁 10
+    const f0 = VF[0];
+    await page.evaluate((id) => {
+      __game.villageSave.friends[id].ask = 'dish_01';
       const t = __game.village.townies[0];
-      Object.assign(__game.village.cat, { x: t.x + 12, y: t.y + 6 });
-    });
+      Object.assign(__game.village.cat, { x: t.x + 30, y: t.y + 12 });
+    }, f0.id);
     await page.waitForFunction(() => __game.village.near?.kind === 'friend' && __game.village.near.i === 0, { timeout: 3000 }).catch(() => {});
     await sleep(300);
+    const hungry = await page.evaluate(() => __game.village.townies[0].anim);
     await page.screenshot({ path: fsPath(new URL('village-ask.png', OUT)) });
     await page.keyboard.press('KeyE');
-    const atCoco = await page.waitForFunction(() => __game.villageView.panel?.kind === 'friend' && __game.villageView.panel.i === 0, { timeout: 3000 }).then(() => true, () => false);
+    const atF0 = await page.waitForFunction(() => __game.villageView.panel?.kind === 'friend' && __game.villageView.panel.i === 0, { timeout: 3000 }).then(() => true, () => false);
     const pick = await page.evaluate(() => __game.villageView.pick);
-    check(atCoco && pick === 'dish_01', `코코 곁에서 E → 친구 창 · 부탁한 요리(${pick})가 먼저 골라져 있다`);
+    check(atF0 && pick === 'dish_01' && hungry === 'hungry', `${f0.name} 곁에서 E → 친구 창 · 부탁한 요리(${pick})가 먼저 골라져 있다 · 부탁 중엔 배고픔 동작`);
     const coins0 = await page.evaluate(() => __game.bag.coins);
     await page.keyboard.press('Enter');
     await sleep(200);
-    const req = await page.evaluate(() => ({ coins: __game.bag.coins, coco: __game.villageSave.friends.coco }));
+    const req = await page.evaluate((id) => ({ coins: __game.bag.coins, f: __game.villageSave.friends[id] }), f0.id);
     const got = req.coins - coins0;
-    check(req.coco.ask === null && got >= 25 && got <= 45 && req.coco.pts === 15 && req.coco.askAt > Date.now() + 80000, `부탁을 들어주면 냥코인 +${got} · 점수 ${req.coco.pts} · 다음 부탁은 나중에`);
+    const gain0 = VILLAGE.points[prefOf(f0, 'dish_01')] + VILLAGE.points.request;
+    check(req.f.ask === null && got >= VILLAGE.request.coins[0] && got <= VILLAGE.request.coins[1] && req.f.pts === gain0 && req.f.askAt > Date.now() + 80000, `부탁을 들어주면 냥코인 +${got} · 점수 ${req.f.pts} · 다음 부탁은 나중에`);
     await page.screenshot({ path: fsPath(new URL('village-request.png', OUT)) });
     await page.keyboard.press('Escape');
     await sleep(100);
@@ -1639,7 +1664,7 @@ try {
     await page.reload({ waitUntil: 'load' });
     await page.waitForFunction(() => window.__sheets, { timeout: 60000 });
     const kept = await page.evaluate(() => ({ s: __game.villageSave, dish: __game.bag.slots.reduce((t, v) => t + (v?.id === 'dish_01' ? v.n : 0), 0) }));
-    check(kept.s.friends.milk.pts === 20 && kept.s.friends.coco.pts === 15 && kept.s.recipes.includes('dish_05') && kept.s.met && kept.s.fed === 2 && kept.dish === dishes - 2, '새로 고쳐도 친구 · 요리법 · 요리가 남아 있다');
+    check(kept.s.friends[f1.id].pts === played.pts && kept.s.friends[f0.id].pts === gain0 && kept.s.met && kept.s.fed === 2 && kept.dish === dishes - 2, '새로 고쳐도 친구 · 요리 · 놀아 준 기록이 남아 있다');
     // 가방 96칸 = 4쪽 — ▶ 버튼 · ← → 키 · 둘째 쪽 칸 고르기
     await page.evaluate(() => {
       const b = __game.bag;
@@ -1667,47 +1692,54 @@ try {
     await page.close();
   }
   {
-    // 휴대폰 가로: 친구를 눌러 걸어가 창 → 칸 → 먹여 주기 버튼 → ✕ → 가판대를 눌러 창 · 가방은 밀어서 넘긴다
+    // 휴대폰 가로: 친구를 눌러 걸어가 창 → 칸 → 먹여 주기 버튼 → 놀아 주기 버튼 → ✕ → 가판대를 눌러 창 · 곁에서 누르기 · 가방은 밀어서 넘긴다 · 세로 화면 · 모자란 재료 바로가기
     const PH = { width: 844, height: 390, deviceScaleFactor: 2, isMobile: true, hasTouch: true, isLandscape: true };
     const tap = async (page, p) => (await page.touchscreen.touchStart(p.x, p.y)).end();
     const { page, errors } = await open('village', '', PH, '&touch');
     await sleep(800);
     await page.screenshot({ path: fsPath(new URL('touch-village.png', OUT)) });
-    await page.evaluate(() => {
+    const f4 = VF[4];
+    const liked = f4.love[0];
+    await page.evaluate((id) => {
       const b = __game.bag;
-      b.slots.fill(null); // 앞 검사의 가방(생선 꼬치 — 크림이 싫어한다)이 남아 있다
-      b.slots[0] = { id: 'dish_03', n: 2 };
-    });
-    const before = await page.evaluate(() => __game.villageSave.friends.cream.pts);
+      b.slots.fill(null); // 앞 검사의 가방이 남아 있다
+      b.slots[0] = { id, n: 2 };
+    }, liked);
+    const before = await page.evaluate((id) => __game.villageSave.friends[id].pts, f4.id);
     await tap(page, await page.evaluate(() => ((t) => __game.villageScreen(t.x, t.y - 8))(__game.village.townies[4])));
-    const atCream = await page.waitForFunction(() => __game.villageView.panel?.kind === 'friend' && __game.villageView.panel.i === 4, { timeout: 8000 }).then(() => true, () => false);
+    const atF4 = await page.waitForFunction(() => __game.villageView.panel?.kind === 'friend' && __game.villageView.panel.i === 4, { timeout: 8000 }).then(() => true, () => false);
     await sleep(200);
     const P = await page.evaluate(() => __game.villagePoints());
     await tap(page, P.cells[0]);
     await tap(page, P.feed);
     await sleep(250);
     await page.screenshot({ path: fsPath(new URL('touch-village-friend.png', OUT)) });
-    const after = await page.evaluate(() => __game.villageSave.friends.cream);
-    check(atCream && after.pts > before && after.seen.dish_03, `크림을 눌러 걸어가 창 → 칸 → 먹여 주기 버튼 (점수 ${before} → ${after.pts})`);
+    const after = await page.evaluate((id) => __game.villageSave.friends[id], f4.id);
+    check(atF4 && after.pts === before + VILLAGE.points.love && after.seen[liked] === 'love', `${f4.name}를 눌러 걸어가 창 → 칸 → 먹여 주기 버튼 (아주 좋아하는 ${liked} · 점수 ${before} → ${after.pts})`);
+    await tap(page, P.play);
+    await sleep(300);
+    const played = await page.evaluate((id) => ({ pts: __game.villageSave.friends[id].pts, anim: __game.village.townies[4].anim }), f4.id);
+    check(played.pts === after.pts + VILLAGE.points.play && played.anim === 'solo_play', '놀아 주기 버튼 → 장난감 놀이 · 점수');
+    await page.screenshot({ path: fsPath(new URL('touch-village-play.png', OUT)) });
     await tap(page, P.close);
     const closed = (await page.evaluate(() => __game.villageView.panel)) === null;
-    await tap(page, await page.evaluate(() => __game.villageScreen(2128, 1528)));
+    await tap(page, await page.evaluate((k) => __game.villageScreen(k[0], k[1] + 10), VILLAGE.kitchenSign));
     const atKitchen = await page.waitForFunction(() => __game.villageView.panel?.kind === 'kitchen', { timeout: 8000 }).then(() => true, () => false);
     await sleep(200);
     await page.screenshot({ path: fsPath(new URL('touch-village-kitchen.png', OUT)) });
     check(closed && atKitchen, '✕ 로 닫고 · 가판대를 누르면 걸어가서 가판대 창');
     await tap(page, P.close);
     // 곁에 서서 누르기 (2026-10-08 사용자 — 곁에서 누르면 안 됐다: 누른 때 연 것을 다음 프레임이 지웠다). 안내 말풍선은 없앴다
-    for (const [label, dy] of [['몸을', -8], ['이름표를', -30]]) {
+    for (const [label, dy] of [['몸을', -8], ['이름표를', -34]]) {
       await page.evaluate(() => {
         const t = __game.village.townies[2];
-        Object.assign(__game.village.cat, { x: t.x - 12, y: t.y + 8 });
+        Object.assign(__game.village.cat, { x: t.x - 36, y: t.y + 14 });
       });
       await page.waitForFunction(() => __game.village.near?.kind === 'friend' && __game.village.near.i === 2, { timeout: 3000 }).catch(() => {});
       await tap(page, await page.evaluate((dy) => ((t) => __game.villageScreen(t.x, t.y + dy))(__game.village.townies[2]), dy));
       const ok = await page.waitForFunction(() => __game.villageView.panel?.kind === 'friend' && __game.villageView.panel.i === 2, { timeout: 2000 }).then(() => true, () => false);
       if (label === '몸을') await page.screenshot({ path: fsPath(new URL('touch-village-near.png', OUT)) });
-      check(ok, `먹물 곁에 서서 ${label} 누르면 바로 말을 건다`);
+      check(ok, `${VF[2].name} 곁에 서서 ${label} 누르면 바로 말을 건다`);
       await tap(page, P.close);
     }
     // 가방 버튼 → 밀어서 넘기기
@@ -1727,18 +1759,27 @@ try {
     await page.screenshot({ path: fsPath(new URL('screen-village-portrait.png', OUT)) });
     await page.evaluate(() => {
       const t = __game.village.townies[2];
-      Object.assign(__game.village.cat, { x: t.x - 12, y: t.y + 8 });
+      Object.assign(__game.village.cat, { x: t.x - 36, y: t.y + 14 });
     });
     await page.waitForFunction(() => __game.village.near?.kind === 'friend', { timeout: 3000 }).catch(() => {});
     await page.keyboard.press('KeyE');
     await sleep(400);
     await page.screenshot({ path: fsPath(new URL('screen-village-portrait-friend.png', OUT)) });
     await page.keyboard.press('Escape');
-    await page.evaluate(() => Object.assign(__game.village.cat, { x: 2092, y: 1556 }));
+    await page.evaluate((k) => Object.assign(__game.village.cat, { x: k[0], y: k[1] + 4 }), VILLAGE.kitchen);
     await sleep(200);
     await page.keyboard.press('KeyE');
     await sleep(400);
     await page.screenshot({ path: fsPath(new URL('screen-village-portrait-kitchen.png', OUT)) });
+    // 모자란 재료 바로가기 (2026-10-08 사용자 요청): 가방이 비어 생선 꼬치의 생선이 모자라다 → 첫 칩을 누르면 그 포탈 앞(필드)으로
+    const gos = await page.evaluate(() => __game.villagePoints().gos);
+    await tap(page, gos[0]);
+    const went = await page.waitForFunction(() => __game.scene === 'field', { timeout: 5000 }).then(() => true, () => false);
+    await sleep(500);
+    const at = await page.evaluate(() => [__game.field.x, __game.field.y]);
+    const dest = FIELD.warps.find((v) => Math.hypot(v.back[0] - at[0], v.back[1] - at[1]) < 5);
+    check(went && dest && SPOTS_JSON.spots[dest.to], `가판대의 모자란 재료(생선) 바로가기 → ${dest?.label ?? '?'} 포탈 앞 (낚시터)`);
+    await page.screenshot({ path: fsPath(new URL('screen-village-shortcut.png', OUT)) });
     check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
     await page.close();
   }
@@ -1775,6 +1816,16 @@ try {
     const back = await page.evaluate(() => __game.book.pick);
     const dungeonFirst = FIELD.warps.find((w) => w.id === first);
     check(tab === 'dungeon' && dungeonFirst && ROOMS[dungeonFirst.to] && village === 'cat_village' && back === null, `${name}: 던전 줄 → 던전 탭 → 첫 줄 ${dungeonFirst?.label} → 지도의 고양이마을 점 → 목록으로`);
+    // 설명의 "이동" 버튼 (2026-10-08 사용자 요청) → 도감이 닫히고 그 포탈 앞으로
+    await press((await page.evaluate(() => __game.mapPoints())).places.cat_village);
+    await sleep(150);
+    if (!touch) await page.screenshot({ path: fsPath(new URL('book-map-go.png', OUT)) });
+    await press((await page.evaluate(() => __game.mapPoints())).go);
+    const moved = await page.waitForFunction(() => !__game.dexOpen && __game.scene === 'field', { timeout: 4000 }).then(() => true, () => false);
+    await sleep(500);
+    const vw = FIELD.warps.find((v) => v.id === 'cat_village');
+    const here = await page.evaluate(() => [__game.field.x, __game.field.y]);
+    check(moved && Math.hypot(here[0] - vw.back[0], here[1] - vw.back[1]) < 5, `${name}: 설명의 이동 버튼 → 도감이 닫히고 고양이마을 포탈 앞으로`);
     check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
     await page.close();
   }
