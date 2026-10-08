@@ -68,7 +68,7 @@ async function open(where = 'dungeon', room = '', view = null, extra = '') {
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
   const q =
-    where === 'dungeon' ? '&dungeon' + (room ? '=' + room : '') : where === 'fishing' ? '&fishing' + (room ? '=' + room : '') : where === 'maze' || where === 'sandboard' || where === 'timber' ? '&' + where : '';
+    where === 'dungeon' ? '&dungeon' + (room ? '=' + room : '') : where === 'fishing' ? '&fishing' + (room ? '=' + room : '') : where === 'maze' || where === 'sandboard' || where === 'timber' || where === 'chase' ? '&' + where : '';
   await page.goto(base + '?trace' + q + extra, { waitUntil: 'load' });
   await page.waitForFunction(() => window.__sheets, { timeout: 60000 });
   return { page, errors };
@@ -1019,11 +1019,11 @@ try {
   console.log('\n[미개방 구역 · 미니게임]');
   {
     const { page, errors } = await open('field');
-    // 열린 조각 왼쪽이 닫힌 줄 (지금은 r4 — 왼쪽 가을 지역)
-    const r = FIELD.open.findIndex((row) => [...row].some((ch, c) => ch === 'o' && c > 0 && row[c - 1] !== 'o'));
+    // 시작점 줄에서 열린 조각 왼쪽이 닫힌 곳
+    const y = FIELD.start[1];
+    const r = Math.floor((y * FIELD.grid[1]) / FIELD.size[1]);
     const c = [...FIELD.open[r]].findIndex((ch, c) => ch === 'o' && c > 0 && FIELD.open[r][c - 1] !== 'o');
     const x0 = Math.floor((c * FIELD.size[0]) / FIELD.grid[0]);
-    const y = Math.floor(((r + 0.5) * FIELD.size[1]) / FIELD.grid[1]);
     // 가장자리 안쪽에서 걸을 수 있는 자리를 찾아 선다
     const sx = await page.evaluate(
       ([x0, y]) => {
@@ -1281,10 +1281,11 @@ try {
     await page.close();
   }
 
-  // 3-10) 숲 (실제 키·마우스·터치, 2026-10-07): 숲 지역(r2~3 × c0~1)이 열렸다.
-  //  벌목 쉼터 포탈 → 장작 패기: 가지가 없는 쪽 A/D 로 40토막 → 일부러 한쪽만 패다 가지에 콩 → 카드(냥코인 · 통나무 · 기록) → 다시 패기 → Esc → 포탈 앞.
-  //  곰의 꿀 쉼터 포탈 → 나무숲 던전. 숲에서 부스럭 수풀로 걸어 들어가면 도끼질에 열려 가방에 · 수풀에서 튀어나온 다람쥐를 키로 쫓아가 잡는다.
-  //  휴대폰: ◀ ▶ 버튼 · 화면 반쪽 누르기. 화면 timber-*.png · forest-*.png · touch-timber.png
+  // 3-10) 숲 (실제 키·마우스·터치, 2026-10-07 · 10-08): 숲 미니게임장 두 곳은 열린 구역 숲 속 임의 워프 (강아지마을 위 · 해바라기밭 아래).
+  //  장작 패기 공터 → 장작 패기: 가지가 없는 쪽 A/D 로 40토막 → 일부러 한쪽만 패다 가지에 콩 → 카드(냥코인 · 통나무 · 기록) → 다시 패기 → Esc → 포탈 앞.
+  //  다람쥐 잡기 숲 → 다람쥐 잡기: 키로 쫓아가 잡기 → 시간 끝 → 카드(냥코인 · 도토리 · 기록) → 다시 잡기 → Esc → 포탈 앞.
+  //  숲에서 부스럭 수풀로 걸어 들어가면 도끼질에 열려 가방에 · 수풀에서 튀어나온 다람쥐를 키로 쫓아가 잡는다.
+  //  휴대폰: 장작 패기 ◀ ▶ 버튼 · 화면 반쪽, 다람쥐 잡기 조이스틱. 화면 timber-*.png · chase-*.png · forest-*.png · touch-timber.png · touch-chase.png
   console.log('\n[숲 · 장작 패기]');
   {
     const { page, errors } = await open('field');
@@ -1333,12 +1334,6 @@ try {
     const out = await page.waitForFunction(() => __game.scene === 'field', { timeout: 4000 }).then(() => true, () => false);
     const pos = await page.evaluate(() => [__game.field.x, __game.field.y]);
     check(out && Math.hypot(pos[0] - w.back[0], pos[1] - w.back[1]) < 5, `Esc → ${w.label} 포탈 앞`);
-    // 나무숲 던전은 곰의 꿀 쉼터로 옮겼다
-    const bear = FIELD.warps.find((v) => v.id === 'bear_glade');
-    await sleep(500);
-    await page.evaluate((at) => Object.assign(__game.field, { x: at[0], y: at[1], camX: at[0], camY: at[1], armed: true, mode: 'walk' }), bear.at);
-    const inForest = await page.waitForFunction(() => __game.scene === 'dungeon' && __game.dungeon.room.id === 'forest', { timeout: 10000 }).then(() => true, () => false);
-    check(inForest, `${bear.label} 포탈 → 나무숲 던전`);
     check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
     await page.close();
   }
@@ -1346,14 +1341,14 @@ try {
     const { page, errors } = await open('field');
     await page.evaluate(() => __game.bag.slots.fill(null));
     const C = FIELD.catBody;
-    // 숲 지역 한가운데의 숲 (둘레도 숲)
+    // 강아지마을 북쪽 숲 한가운데 (둘레도 숲)
     const spot = await page.evaluate(() => {
-      for (let y = 1560; y < 1720; y += 6)
-        for (let x = 860; x < 1360; x += 6)
+      for (let y = 1790; y < 1950; y += 6)
+        for (let x = 2280; x < 2900; x += 6)
           if ([[0, 0], [40, 0], [-40, 0], [80, 0], [0, 25], [0, -25], [40, 25]].every(([dx, dy]) => __game.terrain(x + dx, y + dy) === 1)) return [x, y];
       return null;
     });
-    check(!!spot, `숲 지역에 숲이 있다 (${spot})`);
+    check(!!spot, `강아지마을 북쪽에 숲이 있다 (${spot})`);
     await page.waitForFunction(() => !!__game.sheets.acorn_squirrel, { timeout: 8000 }).catch(() => {});
     // 1) 부스럭 수풀 — 고양이 오른쪽 2.5칸. 걸어 들어가면 도끼질에 열려 무언가 나와 가방에 (다람쥐는 쿨다운으로 막아 둔다)
     const R = [spot[0] + C * 2.5, spot[1]];
@@ -1433,6 +1428,84 @@ try {
     check(caught, `튀어나온 다람쥐를 키로 쫓아가 잡는다 (${tries}번째)`);
     check(land, '다람쥐는 물 · 막힌 곳으로 안 간다');
     check(ran, '쫓는 동안 숲에서도 도끼질로 멈추지 않고 달린다');
+    check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
+    await page.close();
+  }
+  {
+    const { page, errors } = await open('field');
+    await page.evaluate(() => __game.bag.slots.fill(null));
+    const w = FIELD.warps.find((v) => v.to === 'chase');
+    check(inOpen(w.at[0], w.at[1]), `${w.label} 포탈이 열린 구역에`);
+    await page.evaluate((at) => Object.assign(__game.field, { x: at[0], y: at[1], camX: at[0], camY: at[1], armed: true, mode: 'axe' }), w.at);
+    const inChase = await page.waitForFunction(() => __game.scene === 'chase', { timeout: 8000 }).then(() => true, () => false);
+    check(inChase, `${w.label} 포탈에 서 있으면 다람쥐 잡기`);
+    await sleep(700);
+    await page.screenshot({ path: fsPath(new URL('chase-ready.png', OUT)) });
+    check((await page.evaluate(() => __game.chase.phase)) === 'ready', '움직이기 전엔 시간이 안 간다');
+    const coins0 = await page.evaluate(() => __game.bag.coins);
+    // 가장 가까운 다람쥐 쪽으로 WASD (25ms 마다)
+    let held = [];
+    let shot = false;
+    const t0 = Date.now();
+    while (Date.now() - t0 < 16000) {
+      const st = await page.evaluate(() => {
+        const c = __game.chase;
+        return { x: c.cat.x, y: c.cat.y, caught: c.caught, live: c.runners.filter((r) => ['throw', 'run', 'rest'].includes(r.q.phase)).map((r) => [r.q.x, r.q.y]) };
+      });
+      if (st.caught >= 2 && Date.now() - t0 > 8000) break;
+      let want = held.length ? held : ['KeyD'];
+      if (st.live.length) {
+        const [tx, ty] = st.live.sort((a, b) => Math.hypot(a[0] - st.x, a[1] - st.y) - Math.hypot(b[0] - st.x, b[1] - st.y))[0];
+        const dx = tx - st.x;
+        const dy = (ty - st.y) / FIELD.vertical;
+        want = [...(dx > 3 ? ['KeyD'] : dx < -3 ? ['KeyA'] : []), ...(dy > 3 ? ['KeyS'] : dy < -3 ? ['KeyW'] : [])];
+      }
+      for (const k of held) if (!want.includes(k)) await page.keyboard.up(k);
+      for (const k of want) if (!held.includes(k)) await page.keyboard.down(k);
+      held = want;
+      if (!shot && st.live.length && Date.now() - t0 > 3000) {
+        shot = true;
+        await page.screenshot({ path: fsPath(new URL('chase-play.png', OUT)) });
+      }
+      await sleep(25);
+    }
+    for (const k of held) await page.keyboard.up(k);
+    const mid = await page.evaluate(() => ({ caught: __game.chase.caught, points: __game.chase.points, t: __game.chase.t }));
+    check(mid.caught >= 1, `키로 쫓아가 다람쥐를 잡는다 (${mid.t.toFixed(1)}초에 ${mid.caught}마리 · ${mid.points}점)`);
+    await page.evaluate(() => (__game.chase.t = 59.6)); // 시간 끝으로
+    const done = await page.waitForFunction(() => __game.chase.phase === 'done' && __game.chase.doneT > 0.9, { timeout: 4000 }).then(() => true, () => false);
+    const end = await page.evaluate(() => ({ points: __game.chase.points, caught: __game.chase.caught, coins: __game.chase.coins, acorns: __game.chase.acorns, bag: __game.bag.coins, best: __game.records.chase, acornBag: __game.bag.slots.reduce((t, v) => t + (v?.id === 'materials_05' ? v.n : 0), 0) }));
+    await page.screenshot({ path: fsPath(new URL('chase-done.png', OUT)) });
+    check(done && end.coins === end.points * 2 && end.bag === coins0 + end.coins && end.acornBag === end.acorns && end.acorns === Math.min(20, end.caught), `시간 끝 → 냥코인 ${end.coins} · 도토리 ${end.acorns} 가 가방에`);
+    check(end.best !== null && end.best >= end.points, `최고 기록 저장 (${end.best}점)`);
+    await click2(page, (await page.evaluate(() => __game.miniScreen())).again);
+    const again = await page.waitForFunction(() => __game.chase.phase === 'ready' && __game.chase.points === 0, { timeout: 4000 }).then(() => true, () => false);
+    check(again, '다시 잡기');
+    await sleep(700);
+    await page.keyboard.press('Escape');
+    const out = await page.waitForFunction(() => __game.scene === 'field', { timeout: 4000 }).then(() => true, () => false);
+    const pos = await page.evaluate(() => [__game.field.x, __game.field.y]);
+    check(out && Math.hypot(pos[0] - w.back[0], pos[1] - w.back[1]) < 5, `Esc → ${w.label} 포탈 앞`);
+    await sleep(500);
+    await page.screenshot({ path: fsPath(new URL('forest-venues.png', OUT)) });
+    check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
+    await page.close();
+  }
+  {
+    // 휴대폰 가로 다람쥐 잡기: 떠다니는 조이스틱으로 움직이면 시작 · 공터를 고양이 따라 크게
+    const PH = { width: 844, height: 390, deviceScaleFactor: 2, isMobile: true, hasTouch: true, isLandscape: true };
+    const { page, errors } = await open('chase', '', PH, '&touch');
+    await sleep(600);
+    const c = await page.evaluate(() => __game.controls);
+    check(!!c.stick, '다람쥐 잡기엔 조이스틱');
+    const x0 = await page.evaluate(() => __game.chase.cat.x);
+    const fr = await page.touchscreen.touchStart(c.stick.x, c.stick.y);
+    await page.touchscreen.touchMove(c.stick.x + 50, c.stick.y);
+    await sleep(600);
+    const st = await page.evaluate(() => ({ phase: __game.chase.phase, x: __game.chase.cat.x }));
+    await fr.end();
+    check(st.phase === 'play' && st.x > x0 + 10, `조이스틱을 밀면 시작하고 그쪽으로 (${(st.x - x0).toFixed(0)}px)`);
+    await page.screenshot({ path: fsPath(new URL('touch-chase.png', OUT)) });
     check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
     await page.close();
   }

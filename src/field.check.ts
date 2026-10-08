@@ -13,7 +13,6 @@ import {
   makeFieldState,
   openEdges,
   spawnSquirrel,
-  SQ_T,
   tileOpen,
   RISE,
   SPIT,
@@ -27,6 +26,7 @@ import {
   type Mode,
   type TerrainAt,
 } from './field.ts';
+import { SQ_T } from './squirrel.ts';
 
 const warp = FIELD.warps.find((w) => w.to)!; // 연결된 첫 포탈 (던전이든 낚시터든)
 const [wx, wy] = warp.at;
@@ -113,11 +113,14 @@ const standOnWarp = () => {
   [p.x, p.y] = lockedWarp.at;
   assert.equal(run(p, 0, 0, lockedWarp.dwell * 2), null, `${lockedWarp.id} 는 잠겨서 안 간다`);
   assert.ok(FIELD.warps.some((w) => w.to && !warpLocked(w)), '열린 포탈도 있다');
-  // 숲 지역(r2~3 × c0~1)을 열었다 (2026-10-07): 벌목 쉼터 = 장작 패기, 나무숲 던전은 곰의 꿀 쉼터로. 가을 · 눈 지역은 아직 잠김
-  assert.ok(tileOpen(2, 0) && tileOpen(3, 1) && !tileOpen(4, 0) && !tileOpen(1, 1), '숲 지역만 더 열렸다');
+  // 숲 지역(r2~3 × c0~1)은 다시 잠갔다 (2026-10-08 사용자 요청) — 숲 미니게임장 두 곳은 열린 구역 숲 속 임의 워프 (이정표 없음, sign = at)
+  assert.ok(!tileOpen(2, 0) && !tileOpen(3, 1) && tileOpen(2, 2) && tileOpen(5, 5), '열린 곳은 오른쪽 아래 4×4');
   const to = (id: string) => FIELD.warps.find((w) => w.id === id)!;
-  assert.ok(to('woodcutter_hollow').to === 'timber' && !warpLocked(to('woodcutter_hollow')), '벌목 쉼터 → 장작 패기');
-  assert.ok(to('bear_glade').to === 'forest' && !warpLocked(to('bear_glade')) && backFrom('forest')[0] === to('bear_glade').back[0], '나무숲 던전은 곰의 꿀 쉼터로');
+  for (const [id, game] of [['forest_timber', 'timber'], ['forest_chase', 'chase']]) {
+    const w = to(id);
+    assert.ok(w.to === game && !warpLocked(w) && w.sign[0] === w.at[0] && w.sign[1] === w.at[1] && backFrom(game)[0] === w.back[0], `${w.label} → ${game} (열린 구역 · 이정표 없음)`);
+  }
+  assert.ok(to('woodcutter_hollow').to === 'forest' && warpLocked(to('woodcutter_hollow')), '나무숲 던전은 원래 자리(벌목 쉼터, 잠김)로');
   // 테두리는 열린 조각과 닫힌 조각 사이에만 (지도 가장자리 빼고)
   const edges = openEdges();
   assert.ok(edges.length > 0);

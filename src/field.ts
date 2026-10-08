@@ -14,6 +14,7 @@
  * 그림을 불러오지 않는 순수 로직이라 node 에서 체크할 수 있다 (그리기는 field-draw.ts).
  */
 import data from './data/field.json' with { type: 'json' };
+import { active, makeSquirrel, spawn, SQ, step as stepSquirrelAI, type Squirrel, type SquirrelWhat, type World } from './squirrel.ts';
 
 export const FIELD = data;
 export type Warp = (typeof data.warps)[number];
@@ -80,7 +81,6 @@ export type FieldEvent =
   /** 다람쥐를 쫓으며 숲을 헤치고 달린다 (나뭇잎만) */
   | { type: 'brush'; x: number; y: number; flip: number };
 export type WhaleWhat = 'near' | 'gone' | 'rise' | 'breach' | 'gulp' | 'in' | 'spit' | 'dive';
-export type SquirrelWhat = 'appear' | 'throw' | 'bonk' | 'dodge' | 'caught' | 'escape';
 /** 잡힌 다람쥐가 내놓는 것 */
 export type Stash = { items: string[]; coins: number };
 
@@ -119,35 +119,6 @@ export type Whale = {
 };
 
 export const FOREST_DATA = data.forest;
-const SQ = data.forest.squirrel;
-/**
- * 다람쥐 순서 (초 — 그리기도 같은 시계): 폴짝(뛰다가 turn 에 돌아서서 hopThrow 에 도토리를 던진다) → 달리기 ⇄ 쉬기 (쉴 때 가끔 던지기: 겨눔 aim → 던짐 release → 마무리 throw)
- * · 잡힘(어질어질 → 펑) · 숨음(펑). fly = 도토리가 날아가는 시간. 처음 던지기를 폴짝 안에 넣었다 — 멈춰 서서 던지면 바로 잡혀서 쫓을 틈이 없었다
- */
-export const SQ_T = { hop: 0.45, turn: 0.2, hopThrow: 0.28, aim: 0.25, release: 0.32, throw: 0.55, fly: 0.35, caught: 1, gone: 0.5 };
-export type Squirrel = {
-  /** none 없음 · hop 튀어나와 폴짝 · throw 도토리 던지기 · run 달아남 · rest 멈춰서 돌아봄 · caught 잡힘 · gone 숨음 */
-  phase: 'none' | 'hop' | 'throw' | 'run' | 'rest' | 'caught' | 'gone';
-  /** 지금 단계에 들어온 뒤 · 나온 뒤 (give 초를 넘으면 숨는다) · 이번 달리기/쉬기 길이 */
-  t: number;
-  age: number;
-  dur: number;
-  x: number;
-  y: number;
-  /** 폴짝 뛰는 출발 · 도착 자리 */
-  fx: number;
-  fy: number;
-  tx: number;
-  ty: number;
-  /** 달리는 방향 (화면 기준 — 세로는 비스듬한 시점만큼 눌러서 움직인다) */
-  ux: number;
-  uy: number;
-  flip: number;
-  /** 마지막으로 홱 피한 뒤 */
-  dodgeT: number;
-  /** 날아가는 도토리 (출발 → 던질 때 고양이 자리) */
-  acorn: { x0: number; y0: number; x1: number; y1: number; t: number } | null;
-};
 /** 숲에서 오래 기억하는 것 — 필드를 새로 만들어도(던전에서 나와도) 이어 간다: 숲 시계 · 칸마다 다시 나올 때 · 다람쥐 쿨다운 */
 export type Woods = { t: number; rest: Map<number, number>; cool: number };
 /** 부스럭거리는 수풀 */
@@ -238,7 +209,7 @@ export function makeFieldState([x, y]: number[], terrainAt0: TerrainAt = everywh
     woods: keep?.woods ?? { t: 0, rest: new Map(), cool: 0 },
     rustles: [],
     rustleT: 2,
-    squirrel: { phase: 'none', t: 0, age: 0, dur: 0, x, y, fx: x, fy: y, tx: x, ty: y, ux: 1, uy: 0, flip: 1, dodgeT: 9, acorn: null },
+    squirrel: makeSquirrel(x, y),
     brushT: 0,
   };
 }
@@ -434,24 +405,19 @@ const landAt = (x: number, y: number, at: TerrainAt) => {
   const t = at(x, y);
   return t === WALK || t === FOREST || t === BRIDGE;
 };
-/** (x, y) 에서 a 쪽으로 d px 가는 길(가운데 · 끝)이 뭍인가 */
-const clear = (x: number, y: number, a: number, d: number, at: TerrainAt) =>
-  [0.5, 1].every((k) => landAt(x + Math.cos(a) * d * k, y + Math.sin(a) * d * k * data.vertical, at));
 /** 수풀이 생길 숲 안쪽 — 둘레도 숲 (숲 가장자리에 걸치지 않게) */
 const deepWoods = (x: number, y: number, at: TerrainAt) =>
   [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]].every(([dx, dy]) => at(x + dx * 0.8 * data.catBody, y + dy * 0.6 * data.catBody) === FOREST);
 
+/** 다람쥐가 사는 필드: 열린 뭍(걷기 · 숲 · 다리)에 서고 숲을 좋아한다 (숲에선 고양이가 느리다) */
+const fieldWorld = (at: TerrainAt): World => ({ land: (x, y) => landAt(x, y, at), woods: (x, y) => at(x, y) === FOREST, unit: data.catBody, vertical: data.vertical });
+
 /** 다람쥐가 나와 있다 — 고양이는 숲에서도 멈춰 도끼질하지 않고 달린다 */
-export const chasing = (s: FieldState) => ['hop', 'throw', 'run', 'rest'].includes(s.squirrel.phase);
+export const chasing = (s: FieldState) => active(s.squirrel);
 
 /** (x, y) 수풀에서 다람쥐가 튀어나와 고양이 반대쪽 뭍으로 폴짝 (폴짝 뛰는 동안은 못 잡는다) */
 export function spawnSquirrel(s: FieldState, x: number, y: number, at0: TerrainAt, rng: () => number) {
-  const at = gated(at0);
-  const d = SQ.hop * data.catBody;
-  const away = Math.atan2((y - s.y) / data.vertical, x - s.x);
-  const a = [0, 0.5, -0.5, 1, -1, 1.6, -1.6].map((k) => away + k + (rng() - 0.5) * 0.4).find((a) => clear(x, y, a, d, at));
-  const [tx, ty] = a === undefined ? [x, y] : [x + Math.cos(a) * d, y + Math.sin(a) * d * data.vertical];
-  Object.assign(s.squirrel, { phase: 'hop', t: 0, age: 0, dur: 0, x, y, fx: x, fy: y, tx, ty, flip: tx >= x ? 1 : -1, dodgeT: 9, acorn: null });
+  spawn(s.squirrel, s, x, y, fieldWorld(gated(at0)), rng);
   s.chopping = 0; // 휘두르다 말고 쫓아간다
   s.events.push({ type: 'squirrel', what: 'appear', x, y });
 }
@@ -495,100 +461,15 @@ function stepRustles(s: FieldState, dt: number, at: TerrainAt, rng: () => number
   }
 }
 
-/** 달아날 방향: 고양이 반대쪽 ±63° 중 뚫린 쪽, 숲이 많은 쪽을 좋아한다 (숲에선 고양이가 느리다). 못 찾으면 null */
-function runDir(s: FieldState, at: TerrainAt, rng: () => number) {
-  const q = s.squirrel;
-  const away = Math.atan2((q.y - s.y) / data.vertical, q.x - s.x);
-  const d = SQ.dash * data.catBody * 0.6;
-  let best: number | null = null;
-  let score = -1;
-  for (let i = 0; i < 9; i++) {
-    const a = away + (rng() - 0.5) * 2.2;
-    if (!clear(q.x, q.y, a, d, at)) continue;
-    const woods = [0.33, 0.66, 1].filter((k) => at(q.x + Math.cos(a) * d * k, q.y + Math.sin(a) * d * k * data.vertical) === FOREST).length;
-    const v = woods + rng() * 1.5;
-    if (v > score) [best, score] = [a, v];
-  }
-  return best;
-}
-function startRun(s: FieldState, at: TerrainAt, rng: () => number) {
-  const q = s.squirrel;
-  const a = runDir(s, at, rng);
-  if (a === null) return Object.assign(q, { phase: 'rest', t: 0, dur: between(SQ.rest, rng) });
-  Object.assign(q, { phase: 'run', t: 0, dur: between(SQ.dashT, rng), ux: Math.cos(a), uy: Math.sin(a), flip: Math.cos(a) >= 0 ? 1 : -1 });
-}
-
-/** 다람쥐 한 프레임 — 폴짝 · 던지기 · 달리기 ⇄ 쉬기, 다가오면 홱 피하고, 붙잡히면 숨겨 둔 걸 내놓고, 오래되거나 멀어지면 숨는다 */
+/** 다람쥐 한 프레임 (squirrel.ts) — 잡히면 숨겨 둔 것(stash)을 내놓고, 잡힘 · 숨음 연출이 끝나면 cooldown 초 동안 안 나온다 */
 function stepSquirrel(s: FieldState, dt: number, at: TerrainAt, rng: () => number) {
-  const q = s.squirrel;
-  const C = data.catBody;
-  const V = data.vertical;
-  const emit = (what: SquirrelWhat, stash?: Stash) => s.events.push({ type: 'squirrel', what, x: q.x, y: q.y, stash });
-  // 날아가는 도토리 — 떨어질 때 고양이가 그 자리에 있으면 콩
-  if (q.acorn && (q.acorn.t += dt) >= SQ_T.fly) {
-    if (Math.hypot(s.x - q.acorn.x1, (s.y - q.acorn.y1) / V) < 1.2 * C) s.events.push({ type: 'squirrel', what: 'bonk', x: s.x, y: s.y });
-    q.acorn = null;
-  }
-  if (q.phase === 'none') return;
-  q.t += dt;
-  if (q.phase === 'caught' || q.phase === 'gone') {
-    if (q.t >= SQ_T[q.phase]) {
-      q.phase = 'none';
-      s.woods.cool = SQ.cooldown;
-    }
-    return;
-  }
-  q.age += dt;
-  q.dodgeT += dt;
-  const d = gap(s, q.x, q.y);
-  if (q.phase !== 'hop' && d < SQ.catch) {
+  const end = stepSquirrelAI(s.squirrel, s, dt, fieldWorld(at), rng, (what, x, y) => {
+    if (what !== 'caught') return void s.events.push({ type: 'squirrel', what, x, y });
     const S = SQ.stash;
     const items = [...Array(int(S.acorns, rng)).fill('materials_05'), ...S.bonus.filter(([, p]) => rng() < (p as number)).map(([id]) => id as string)];
-    Object.assign(q, { phase: 'caught', t: 0 });
-    return emit('caught', { items, coins: int(S.coins, rng) });
-  }
-  if (q.age > SQ.give || d > SQ.far) {
-    Object.assign(q, { phase: 'gone', t: 0 });
-    return emit('escape');
-  }
-  const face = () => (q.flip = s.x >= q.x ? 1 : -1);
-  const release = () => {
-    q.acorn = { x0: q.x + q.flip * 0.3 * C, y0: q.y - 0.55 * C, x1: s.x, y1: s.y, t: 0 };
-    emit('throw');
-  };
-  if (q.phase === 'hop') {
-    const k = Math.min(1, q.t / SQ_T.hop);
-    q.x = q.fx + (q.tx - q.fx) * k;
-    q.y = q.fy + (q.ty - q.fy) * k;
-    if (q.t >= SQ_T.turn) face(); // 뛰다가 돌아서서
-    if (q.t - dt < SQ_T.hopThrow && q.t >= SQ_T.hopThrow) release(); // 던지고
-    if (k >= 1) startRun(s, at, rng); // 내려앉자마자 달아난다
-  } else if (q.phase === 'throw') {
-    face();
-    if (q.t - dt < SQ_T.release && q.t >= SQ_T.release) release();
-    if (q.t >= SQ_T.throw) startRun(s, at, rng);
-  } else if (q.phase === 'run') {
-    const step = SQ.dash * C * dt;
-    const nx = q.x + q.ux * step;
-    const ny = q.y + q.uy * step * V;
-    if (landAt(nx, ny, at)) [q.x, q.y] = [nx, ny];
-    else startRun(s, at, rng); // 물·막힌 곳 앞에서 방향을 바꾼다 (갈 데가 없으면 멈춰 선다)
-    // 다 달리면 멈춰 돌아본다 — 가끔은 멈추자마자 또 던진다
-    if (q.phase === 'run' && q.t >= q.dur) Object.assign(q, rng() < SQ.throw ? { phase: 'throw', t: 0 } : { phase: 'rest', t: 0, dur: between(SQ.rest, rng) });
-  } else if (q.phase === 'rest') {
-    face();
-    if (q.t >= q.dur) startRun(s, at, rng);
-  }
-  // 고양이가 바짝 다가오면 옆으로 홱 (1초에 한 번)
-  if ((q.phase === 'run' || q.phase === 'rest') && d < SQ.dodge && q.dodgeT > 1) {
-    const away = Math.atan2((q.y - s.y) / V, q.x - s.x);
-    const sg = rng() < 0.5 ? 1 : -1;
-    const a = [away + sg * 1.3, away - sg * 1.3, away].find((a) => clear(q.x, q.y, a, SQ.dash * C * 0.4, at));
-    if (a !== undefined) {
-      Object.assign(q, { phase: 'run', t: 0, dur: 0.4, ux: Math.cos(a), uy: Math.sin(a), flip: Math.cos(a) >= 0 ? 1 : -1, dodgeT: 0 });
-      emit('dodge');
-    }
-  }
+    s.events.push({ type: 'squirrel', what, x, y, stash: { items, coins: int(S.coins, rng) } });
+  });
+  if (end) s.woods.cool = SQ.cooldown;
 }
 
 /** 한 프레임 진행. 워프에 충분히 머물렀으면 그 워프를 돌려준다. mx, my 는 화면 기준 -1..1 */

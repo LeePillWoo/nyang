@@ -16,7 +16,6 @@ import {
   openEdges,
   RISE,
   SPIT,
-  SQ_T,
   WALK,
   warpLocked,
   WATER,
@@ -24,12 +23,12 @@ import {
   type FieldEvent,
   type FieldState,
   type Rustle,
-  type Squirrel,
   type Terrain,
   type Warp,
   type Whale,
 } from './field.ts';
 import { drawFrame, type Sheet } from './sheet.ts';
+import { SQ_T, type Squirrel } from './squirrel.ts';
 
 /** squirrel = 숲 다람쥐 (던전 몬스터 시트 — 처음엔 안 불러와져 있을 수 있다) */
 export type FieldSheets = { cat: Sheet; axe: Sheet; boat: Sheet; snow: Sheet; squirrel?: Sheet };
@@ -566,7 +565,7 @@ function drawRustles(ctx: CanvasRenderingContext2D, rs: Rustle[], t: number, dt:
 }
 
 /** 다람쥐 (던전 몬스터 시트: 대기 · 이동 · 예고 · 던지기 · 움찔/어질/펑) — 폴짝 뛸 땐 포물선, 달릴 땐 통통 */
-function drawSquirrel(ctx: CanvasRenderingContext2D, q: Squirrel, sheet: Sheet | undefined, t: number) {
+export function drawSquirrel(ctx: CanvasRenderingContext2D, q: Squirrel, sheet: Sheet | undefined, t: number) {
   if (q.phase === 'none' || !sheet) return;
   const C = FIELD.catBody;
   const body = FOREST_DATA.squirrel.size * C;
@@ -593,7 +592,7 @@ function drawSquirrel(ctx: CanvasRenderingContext2D, q: Squirrel, sheet: Sheet |
 }
 
 /** 날아가는 도토리 — 다람쥐 손에서 고양이 머리 쪽으로 포물선, 빙글빙글 */
-function drawAcorn(ctx: CanvasRenderingContext2D, q: Squirrel) {
+export function drawAcorn(ctx: CanvasRenderingContext2D, q: Squirrel) {
   const a = q.acorn;
   if (!a) return;
   const C = FIELD.catBody;

@@ -60,7 +60,7 @@ export type Button = { id: ButtonId; x: number; y: number; r: number; label: str
 export type Stick = { x: number; y: number; r: number; zone: { x0: number; y0: number; x1: number; y1: number } };
 /** k = HUD 배율 (그리기용) */
 export type Controls = { stick: Stick | null; buttons: Button[]; k: number };
-export type Scene = 'field' | 'dungeon' | 'fishing' | 'maze' | 'sandboard' | 'timber';
+export type Scene = 'field' | 'dungeon' | 'fishing' | 'maze' | 'sandboard' | 'timber' | 'chase';
 
 /** 도감 버튼 (알약) 크기 — Button.r 은 폭의 절반 */
 const DEX = { w: 84, h: 36 };
