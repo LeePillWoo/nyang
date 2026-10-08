@@ -430,8 +430,8 @@ export function targetAtPoint(s: VillageState, x: number, y: number): Target | n
     if (dx < best && y < p.y + C * 0.6 && y > p.y - C * 3.2) [i, best] = [k, dx];
   });
   if (i >= 0) return { kind: 'friend', i };
-  const [kx, ky] = data.kitchen;
-  if (Math.hypot(x - kx, (y - ky + C * 0.8) / 0.7) < C * 2.4) return { kind: 'kitchen' };
+  const [kx0, ky0, kx1, ky1] = data.kitchenArea;
+  if (x >= kx0 && x <= kx1 && y >= ky0 && y <= ky1) return { kind: 'kitchen' };
   if (s.near && Math.hypot(x - s.cat.x, (y - s.cat.y + C * 0.5) / V) < C * 1.5) return s.near;
   return null;
 }

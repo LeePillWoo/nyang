@@ -172,24 +172,21 @@ export function drawVillage(ctx: CanvasRenderingContext2D, cw: number, ch: numbe
   const w = cw / dpr;
   const h = ch / dpr;
   const [W, H] = VILLAGE.size;
-  // 마을이 다 들어오면 그대로, 작은 화면은 그림 1px = zoomMin CSS px 아래로는 안 줄인다 (휴대폰은 조금 더 크게) — 넘치는 쪽은 고양이를 따라간다
-  const zoomMin = Math.min(w, h) < 500 ? 1.15 : 0.95;
-  const sc = Math.min(1.4, Math.max(zoomMin, Math.min(w / W, h / H)));
+  // 화면에서 고양이 키(CSS px) — 그림을 확대하기 전 크기 그대로 (휴대폰 · 짧은 변 < 500 은 조금 크게, 아주 큰 화면은 조금 더 크게)
+  // 2026-10-08 밤 사용자: "마을이 꽉 차 보이게 그림을 확대해서 크롭, 캐릭터는 지금 크기" — 그림 1px 이 catCss ÷ C 배로 보인다 (unit 이 작을수록 그림이 크다)
+  const catCss = VILLAGE.catCss * Math.min(1.4, Math.max(Math.min(w, h) < 500 ? 1.15 : 0.95, Math.min(w / W, h / H)));
+  const sc = catCss / C;
   const vw = w / sc;
   const vh = h / sc;
-  // 마을 가운데를 보다가 고양이가 화면 가장자리에 가까워지면 따라간다
-  const clamp = (n: number, a: number, b: number) => Math.max(a, Math.min(b, n));
-  const mx = Math.max(0, vw / 2 - C * 2.5);
-  const my = Math.max(0, vh / 2 - C * 2);
-  const fx = clamp(VILLAGE.center[0], s.cat.x - mx, s.cat.x + mx);
-  const fy = clamp(VILLAGE.center[1], s.cat.y - C * 0.5 - my, s.cat.y - C * 0.5 + my);
-  const want = { x: vw >= W ? W / 2 : clamp(fx, vw / 2, W - vw / 2), y: vh >= H ? H / 2 : clamp(fy, vh / 2, H - vh / 2) };
-  const cam = (villageView.cam ??= { ...want });
-  const k = 1 - Math.exp(-6 * v.dt);
-  cam.x += (want.x - cam.x) * k;
-  cam.y += (want.y - cam.y) * k;
-  const ox = w / 2 - cam.x * sc;
-  const oy = h / 2 - cam.y * sc;
+  // 카메라: 필드처럼 고양이를 부드럽게 따라가고(CAM_EASE 8) 그림 밖은 안 보이게 — 넘치는 곳은 걸어가면 보인다
+  const cam = (villageView.cam ??= { x: s.cat.x, y: s.cat.y - C * 0.5 });
+  const k = 1 - Math.exp(-8 * v.dt);
+  cam.x += (s.cat.x - cam.x) * k;
+  cam.y += (s.cat.y - C * 0.5 - cam.y) * k;
+  const cx = vw >= W ? W / 2 : Math.min(W - vw / 2, Math.max(vw / 2, cam.x));
+  const cy = vh >= H ? H / 2 : Math.min(H - vh / 2, Math.max(vh / 2, cam.y));
+  const ox = w / 2 - cx * sc;
+  const oy = h / 2 - cy * sc;
   Object.assign(villageView, { sc: sc * dpr, ox: ox * dpr, oy: oy * dpr });
   // 화면에 보이는 곳 (지도 px) — 이름표 · 말풍선 · 표지가 화면 밖으로 잘리지 않게 안으로 당긴다
   const seen: View = { x0: -ox / sc, y0: -oy / sc, x1: (w - ox) / sc, y1: (h - oy) / sc };
@@ -235,38 +232,29 @@ export function drawVillage(ctx: CanvasRenderingContext2D, cw: number, ch: numbe
   const things: Thing[] = s.townies.map((p, i) => ({
     y: p.y,
     draw: () => {
-      if (p.x < seen.x0 - C * 1.2 || p.x > seen.x1 + C * 1.2) return; // 화면 밖 친구는 이름표도 끌어오지 않는다
+      if (p.x < seen.x0 - C * 1.2 || p.x > seen.x1 + C * 1.2) return; // 화면 밖 친구는 그리지 않는다
       const f = FRIENDS[i];
       const top = drawVillager(ctx, f, p, p.x, p.y);
       const fs = save.friends[f.id];
-      // 이름표 · 하트
-      ctx.font = `bold ${C * 0.42}px system-ui, sans-serif`;
-      const tag = `${f.name} ${heartText(hearts(fs.pts))}`;
-      const tw = ctx.measureText(tag).width + C * 0.45;
-      const tx = fitX(seen, p.x, tw / 2, pad);
-      ctx.fillStyle = 'rgba(70, 52, 42, 0.78)';
-      ctx.beginPath();
-      ctx.roundRect(tx - tw / 2, top - C * 0.82, tw, C * 0.62, C * 0.31);
-      ctx.fill();
-      ctx.fillStyle = '#fff6d8';
-      ctx.textAlign = 'center';
-      ctx.fillText(tag, tx, top - C * 0.37);
-      // 부탁 (먹고 싶은 요리) · 대사
-      if (p.sayT > 0) bubble(ctx, seen, p.x, top - C * 0.9, p.y + C * 0.2, p.say, C * 6.5, C * 0.46, Math.min(1, p.sayT / 0.3));
+      // 이름 · 하트는 장면에 안 띄운다 (2026-10-08 밤 사용자 — 정보가 너무 많다, 친구 창에서 본다)
+      // 대사 · 부탁 (먹고 싶은 요리 — 작은 말풍선을 머리 옆에, 시트의 생선 생각풍선과 반대쪽)
+      if (p.sayT > 0) bubble(ctx, seen, p.x, top + C * 0.1, p.y + C * 0.2, p.say, C * 5.2, C * 0.34, Math.min(1, p.sayT / 0.3)); // 글자 작게 (2026-10-08 밤)
       else if (fs.ask) {
-        const bob = Math.sin(v.t * 4 + i) * C * 0.07;
-        const bx = fitX(seen, p.x, C * 0.65, pad);
+        const bob = Math.sin(v.t * 4 + i) * C * 0.05;
+        const bx = fitX(seen, p.x - p.flip * C * 0.42, C * 0.42, pad);
+        const by = top + C * 0.22 + bob;
         ctx.fillStyle = 'rgba(255, 252, 244, 0.97)';
         ctx.strokeStyle = '#ef6b5e';
-        ctx.lineWidth = C * 0.05;
+        ctx.lineWidth = C * 0.04;
         ctx.beginPath();
-        ctx.roundRect(bx - C * 0.65, top - C * 1.78 + bob, C * 1.3, C * 0.82, C * 0.35);
+        ctx.roundRect(bx - C * 0.42, by - C * 0.27, C * 0.84, C * 0.54, C * 0.22);
         ctx.fill();
         ctx.stroke();
-        drawIcon(ctx, fs.ask, bx - C * 0.19, top - C * 1.37 + bob, C * 0.62);
+        drawIcon(ctx, fs.ask, bx - C * 0.13, by, C * 0.42);
         ctx.fillStyle = '#ef6b5e';
-        ctx.font = `bold ${C * 0.54}px system-ui, sans-serif`;
-        ctx.fillText('!', bx + C * 0.36, top - C * 1.18 + bob);
+        ctx.font = `bold ${C * 0.36}px system-ui, sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.fillText('!', bx + C * 0.24, by + C * 0.13);
       }
     },
   }));

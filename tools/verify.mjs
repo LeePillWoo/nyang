@@ -1572,6 +1572,14 @@ try {
       const b = __game.bag;
       for (const [id, n] of [['cook_fish', 4], ['materials_02', 4], ['materials_06', 2], ['cook_milk', 2]]) b.slots[b.slots.findIndex((s) => !s)] = { id, n };
     });
+    // 확대 (2026-10-08 밤 사용자 — 그림은 확대해서 꽉 차게, 캐릭터는 그대로): 그림 1px 이 catCss ÷ C 배, 카메라는 고양이를 따라간다
+    const cam0 = await page.evaluate(() => ({ sc: __game.villageView.sc / Math.min(devicePixelRatio, 2), cat: __game.villageScreen(__game.village.cat.x, __game.village.cat.y) }));
+    const wantSc = (VILLAGE.catCss * 0.95) / (FIELD.catBody * VILLAGE.unit);
+    check(Math.abs(cam0.sc - wantSc) < 0.01 && Math.abs(cam0.cat.x - VIEW.width / 2) < 40, `마을 그림 ${cam0.sc.toFixed(2)}배 확대 · 카메라가 고양이를 따라간다 (화면 x ${cam0.cat.x | 0})`);
+    await page.evaluate(() => Object.assign(__game.village.cat, { x: 620, y: 470 }));
+    await sleep(800);
+    const camMoved = await page.evaluate(() => __game.villageScreen(__game.village.cat.x, __game.village.cat.y));
+    check(Math.abs(camMoved.x - VIEW.width / 2) < 40 && Math.abs(camMoved.y - VIEW.height / 2) < 120, `고양이가 옮겨 가면 카메라도 따라간다 (화면 ${camMoved.x | 0}, ${camMoved.y | 0})`);
     // 요리 가판대(요리집 앞 간판)를 누르면 걸어가서 창
     await click2(page, await page.evaluate((k) => __game.villageScreen(k[0], k[1] + 10), VILLAGE.kitchenSign));
     const atKitchen = await page.waitForFunction(() => __game.villageView.panel?.kind === 'kitchen', { timeout: 8000 }).then(() => true, () => false);
@@ -1706,6 +1714,8 @@ try {
       b.slots[0] = { id, n: 2 };
     }, liked);
     const before = await page.evaluate((id) => __game.villageSave.friends[id].pts, f4.id);
+    await page.evaluate(() => Object.assign(__game.village.cat, { x: 560, y: 520 })); // 확대해서 시작 자리에선 이 친구가 안 보인다 — 먼저 다가간다
+    await sleep(800);
     await tap(page, await page.evaluate(() => ((t) => __game.villageScreen(t.x, t.y - 8))(__game.village.townies[4])));
     const atF4 = await page.waitForFunction(() => __game.villageView.panel?.kind === 'friend' && __game.villageView.panel.i === 4, { timeout: 8000 }).then(() => true, () => false);
     await sleep(200);
@@ -1723,19 +1733,22 @@ try {
     await page.screenshot({ path: fsPath(new URL('touch-village-play.png', OUT)) });
     await tap(page, P.close);
     const closed = (await page.evaluate(() => __game.villageView.panel)) === null;
-    await tap(page, await page.evaluate((k) => __game.villageScreen(k[0], k[1] + 10), VILLAGE.kitchenSign));
+    await page.evaluate(() => Object.assign(__game.village.cat, { x: 620, y: 470 }));
+    await sleep(800);
+    await tap(page, await page.evaluate((a) => __game.villageScreen(a[0] + 130, a[3] - 12), VILLAGE.kitchenArea));
     const atKitchen = await page.waitForFunction(() => __game.villageView.panel?.kind === 'kitchen', { timeout: 8000 }).then(() => true, () => false);
     await sleep(200);
     await page.screenshot({ path: fsPath(new URL('touch-village-kitchen.png', OUT)) });
     check(closed && atKitchen, '✕ 로 닫고 · 가판대를 누르면 걸어가서 가판대 창');
     await tap(page, P.close);
     // 곁에 서서 누르기 (2026-10-08 사용자 — 곁에서 누르면 안 됐다: 누른 때 연 것을 다음 프레임이 지웠다). 안내 말풍선은 없앴다
-    for (const [label, dy] of [['몸을', -8], ['이름표를', -34]]) {
+    for (const [label, dy] of [['몸을', -8], ['머리 위를', -50]]) {
       await page.evaluate(() => {
         const t = __game.village.townies[2];
         Object.assign(__game.village.cat, { x: t.x - 36, y: t.y + 14 });
       });
       await page.waitForFunction(() => __game.village.near?.kind === 'friend' && __game.village.near.i === 2, { timeout: 3000 }).catch(() => {});
+      await sleep(700); // 카메라가 따라올 때까지 (확대해서 멀리 있으면 화면 밖이다)
       await tap(page, await page.evaluate((dy) => ((t) => __game.villageScreen(t.x, t.y + dy))(__game.village.townies[2]), dy));
       const ok = await page.waitForFunction(() => __game.villageView.panel?.kind === 'friend' && __game.villageView.panel.i === 2, { timeout: 2000 }).then(() => true, () => false);
       if (label === '몸을') await page.screenshot({ path: fsPath(new URL('touch-village-near.png', OUT)) });

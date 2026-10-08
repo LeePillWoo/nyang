@@ -303,8 +303,8 @@ const T0 = 1_000_000_000_000;
   [e.cat.x, e.cat.y] = [VILLAGE.kitchen[0], VILLAGE.kitchen[1] + 2];
   updateVillage(e, { mx: 0, my: 0, act: true }, 1 / 60);
   assert.deepEqual(e.open, { kind: 'kitchen' }, '가판대 앞에서 E');
-  // 곁에 서서 누르기 — 친구 몸 · 이름표 · 머리 위 말풍선 자리 · 곁에 있을 땐 고양이를 눌러도 연다, 멀리 맨땅은 아무것도 아니다
-  for (const [label, dy] of [['몸', -C * 0.5], ['이름표', -C * 1.8], ['말풍선', -C * 2.8]] as const) {
+  // 곁에 서서 누르기 — 친구 몸 · 머리 · 머리 위 말풍선 자리 · 곁에 있을 땐 고양이를 눌러도 연다, 멀리 맨땅은 아무것도 아니다
+  for (const [label, dy] of [['몸', -C * 0.5], ['머리', -C * 1.8], ['머리 위 말풍선', -C * 2.8]] as const) {
     const n = makeVillage(seeded(14));
     const p = n.townies[1];
     [n.cat.x, n.cat.y] = [p.x + C * 0.7, p.y + C * 0.3];
