@@ -21,6 +21,7 @@ import {
   startCook,
   stopCook,
   targetAt,
+  targetAtPoint,
   teacher,
   tickRequests,
   updateCook,
@@ -241,6 +242,24 @@ const T0 = 1_000_000;
   [e.cat.x, e.cat.y] = [VILLAGE.kitchen[0], VILLAGE.kitchen[1] - 2];
   updateVillage(e, { mx: 0, my: 0, act: true }, 1 / 60);
   assert.deepEqual(e.open, { kind: 'kitchen' }, '가판대 앞에서 E');
+  // 곁에 서서 누르기 (2026-10-08 휴대폰 — 곁에서 누르면 안 열렸다: 누른 때 연 것을 다음 프레임 처음에 지웠다).
+  // 친구 몸 · 이름표 · 머리 위 말풍선 자리 · 곁에 있을 땐 고양이를 눌러도 연다, 멀리 맨땅은 아무것도 아니다
+  for (const [label, dy] of [['몸', -C * 0.5], ['이름표', -C * 1.8], ['말풍선', -C * 2.8]] as const) {
+    const n = makeVillage(seeded(10));
+    const p = n.townies[1];
+    [n.cat.x, n.cat.y] = [p.x + 12, p.y + 6];
+    updateVillage(n, { mx: 0, my: 0, act: false }, 1 / 60);
+    const t = targetAtPoint(n, p.x + C * 0.3, p.y + dy);
+    assert.deepEqual(t, { kind: 'friend', i: 1 }, `우유의 ${label}를 누르면 우유`);
+    walkTo(n, p.x, p.y, t);
+    updateVillage(n, { mx: 0, my: 0, act: false }, 1 / 60);
+    assert.deepEqual(n.open, { kind: 'friend', i: 1 }, `곁에서 우유의 ${label}를 누르면 바로 말을 건다`);
+  }
+  const m = makeVillage(seeded(11));
+  [m.cat.x, m.cat.y] = [VILLAGE.kitchen[0], VILLAGE.kitchen[1] - 2];
+  updateVillage(m, { mx: 0, my: 0, act: false }, 1 / 60);
+  assert.deepEqual(targetAtPoint(m, m.cat.x, m.cat.y - C * 0.5), { kind: 'kitchen' }, '가판대 곁에선 고양이를 눌러도 가판대');
+  assert.equal(targetAtPoint(m, 2030, 1540), null, '먼 맨땅(분수 아래)은 아무것도 아니다');
 }
 
 console.log('village.check: ok');

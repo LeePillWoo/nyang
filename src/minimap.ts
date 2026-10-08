@@ -15,6 +15,13 @@ const PICK = 9;
 
 export type Rect = { x: number; y: number; w: number; h: number };
 
+/** 포탈이 가는 곳의 종류 — 미니맵 점 색 · 도감 지도가 같이 쓴다 */
+export type PlaceKind = 'village' | 'shop' | 'dungeon' | 'fish' | 'mini' | 'none';
+const MINI = ['maze', 'sandboard', 'timber', 'chase'];
+export const placeKind = (to: string): PlaceKind =>
+  !to ? 'none' : SPOTS[to] ? 'fish' : to === 'shop' ? 'shop' : to === 'village' ? 'village' : MINI.includes(to) ? 'mini' : 'dungeon';
+export const PLACE_COLOR: Record<PlaceKind, string> = { village: '#7fdc8c', shop: '#ff8fc8', dungeon: '#ffd84a', fish: '#6fd3ff', mini: '#b48cff', none: 'rgba(225,225,225,0.9)' };
+
 /** cssW, cssH = 화면 크기 (CSS px). 좁은 화면에선 폭의 30% 까지만, 휴대폰에선 HUD 배율만큼 작게, 노치는 비켜서 */
 export function minimapRect(cssW: number, cssH: number): Rect {
   const k = ui(cssW, cssH);
@@ -47,7 +54,7 @@ export function minimapPick(r: Rect, px: number, py: number): Warp | null {
 
 /**
  * ctx 는 CSS px 좌표계로 맞춘 상태로 넘긴다. view = 지금 화면에 보이는 월드 범위.
- * 던전 포탈은 금색, 낚시터는 하늘색, 상점은 분홍, 아직 연결 전은 회색. 고양이는 주황 점.
+ * 던전 포탈은 금색, 낚시터는 하늘색, 상점은 분홍, 미니게임은 보라, 마을은 초록, 아직 연결 전은 회색. 고양이는 주황 점.
  */
 export function drawMinimap(ctx: CanvasRenderingContext2D, r: Rect, s: FieldState, view: Rect, hover: Warp | null, t: number) {
   ctx.save();
@@ -97,7 +104,7 @@ export function drawMinimap(ctx: CanvasRenderingContext2D, r: Rect, s: FieldStat
     const locked = warpLocked(w);
     ctx.beginPath();
     ctx.arc(mx, my, big ? 5 : w.to && !locked ? 3.2 : 2.4, 0, Math.PI * 2);
-    ctx.fillStyle = locked ? 'rgba(150,150,160,0.8)' : SPOTS[w.to] ? '#6fd3ff' : w.to === 'shop' ? '#ff8fc8' : ['maze', 'sandboard', 'timber'].includes(w.to) ? '#b48cff' : w.to ? '#ffd84a' : 'rgba(225,225,225,0.9)';
+    ctx.fillStyle = locked ? 'rgba(150,150,160,0.8)' : PLACE_COLOR[placeKind(w.to)];
     ctx.fill();
     ctx.lineWidth = 1.2;
     ctx.strokeStyle = 'rgba(70,52,42,0.9)';

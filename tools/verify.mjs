@@ -1697,6 +1697,19 @@ try {
     await page.screenshot({ path: fsPath(new URL('touch-village-kitchen.png', OUT)) });
     check(closed && atKitchen, '✕ 로 닫고 · 가판대를 누르면 걸어가서 가판대 창');
     await tap(page, P.close);
+    // 곁에 서서 누르기 (2026-10-08 사용자 — 곁에서 누르면 안 됐다: 누른 때 연 것을 다음 프레임이 지웠다). 안내 말풍선은 없앴다
+    for (const [label, dy] of [['몸을', -8], ['이름표를', -30]]) {
+      await page.evaluate(() => {
+        const t = __game.village.townies[2];
+        Object.assign(__game.village.cat, { x: t.x - 12, y: t.y + 8 });
+      });
+      await page.waitForFunction(() => __game.village.near?.kind === 'friend' && __game.village.near.i === 2, { timeout: 3000 }).catch(() => {});
+      await tap(page, await page.evaluate((dy) => ((t) => __game.villageScreen(t.x, t.y + dy))(__game.village.townies[2]), dy));
+      const ok = await page.waitForFunction(() => __game.villageView.panel?.kind === 'friend' && __game.villageView.panel.i === 2, { timeout: 2000 }).then(() => true, () => false);
+      if (label === '몸을') await page.screenshot({ path: fsPath(new URL('touch-village-near.png', OUT)) });
+      check(ok, `먹물 곁에 서서 ${label} 누르면 바로 말을 건다`);
+      await tap(page, P.close);
+    }
     // 가방 버튼 → 밀어서 넘기기
     await tap(page, (await page.evaluate(() => __game.controls)).buttons.find((b) => b.id === 'bag'));
     const opened = await page.evaluate(() => __game.bagOpen);
@@ -1726,6 +1739,42 @@ try {
     await page.keyboard.press('KeyE');
     await sleep(400);
     await page.screenshot({ path: fsPath(new URL('screen-village-portrait-kitchen.png', OUT)) });
+    check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
+    await page.close();
+  }
+  // 도감 지도 (2026-10-08 사용자 — "마을 던전 컨텐츠 등등 한눈에 알아볼 수 있는 사이트맵"): 지도 갈래 → 사이트맵 → 던전 줄 → 던전 탭 →
+  //  첫 줄 → 설명 → 지도의 고양이마을 점 → 설명 → 목록으로. 휴대폰 세로도. 화면 book-map-*.png · screen-book-map-portrait.png
+  for (const [name, view] of [
+    ['desk', null],
+    ['portrait', { width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true }],
+  ]) {
+    const touch = !!view;
+    const { page, errors } = await open('field', '', view, touch ? '&touch' : '');
+    const press = async (p) => (touch ? (await page.touchscreen.touchStart(p.x, p.y)).end() : click2(page, p));
+    await sleep(500);
+    await page.keyboard.press('KeyB');
+    await press((await page.evaluate(() => __game.dexScreen())).chips[3]);
+    await sleep(250);
+    const site = await page.evaluate(() => ({ cat: __game.book.cat, tab: __game.book.tab.map, places: Object.keys(__game.mapPoints().places) }));
+    const want = OPEN_WARPS.filter((w) => w.to).map((w) => w.id).sort();
+    check(site.cat === 'map' && site.tab === 'all' && JSON.stringify([...site.places].sort()) === JSON.stringify(want), `${name}: 도감 지도 — 열린 구역의 연결된 장소 ${site.places.length}곳이 지도에`);
+    await page.screenshot({ path: fsPath(new URL(touch ? 'screen-book-map-portrait.png' : 'book-map-all.png', OUT)) });
+    await press((await page.evaluate(() => __game.mapPoints())).rows[2]); // 사이트맵의 던전 줄
+    await sleep(150);
+    const tab = await page.evaluate(() => __game.book.tab.map);
+    await press((await page.evaluate(() => __game.mapPoints())).rows[0]);
+    await sleep(150);
+    const first = await page.evaluate(() => __game.book.pick);
+    if (!touch) await page.screenshot({ path: fsPath(new URL('book-map-dungeon.png', OUT)) });
+    await press((await page.evaluate(() => __game.mapPoints())).places.cat_village);
+    await sleep(150);
+    const village = await page.evaluate(() => __game.book.pick);
+    if (!touch) await page.screenshot({ path: fsPath(new URL('book-map-village.png', OUT)) });
+    await press((await page.evaluate(() => __game.mapPoints())).back);
+    await sleep(150);
+    const back = await page.evaluate(() => __game.book.pick);
+    const dungeonFirst = FIELD.warps.find((w) => w.id === first);
+    check(tab === 'dungeon' && dungeonFirst && ROOMS[dungeonFirst.to] && village === 'cat_village' && back === null, `${name}: 던전 줄 → 던전 탭 → 첫 줄 ${dungeonFirst?.label} → 지도의 고양이마을 점 → 목록으로`);
     check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
     await page.close();
   }

@@ -1,6 +1,6 @@
 // 고양이마을 그리기 — 필드 그림의 마을 광장(조각 r2_c2 · r3_c2)을 크게 보여 주고 고양이를 따라간다.
 // 주민 친구는 고양이 시트를 털빛만 바꾸고(fur 세 색 — 밝기 따라) 꾸밈(요리사 모자 · 꽃 · 모자 · 턱받이 · 리본)을 단다.
-// 이름표 · 하트 · 부탁 말풍선 · 대사 말풍선 · 말 걸 수 있으면 "E 말 걸기" · 요리 가판대 표지 · HUD.
+// 이름표 · 하트 · 부탁 말풍선 · 대사 말풍선 · 요리 가판대 표지 · HUD. (곁에 가서 누르면 말을 건다 — 안내 말풍선은 없다)
 // 창: 친구(먹여 주기 · 이야기) · 요리 가판대(요리법) · 요리(바늘 타이밍) · 하트 선물 카드. 창은 가방처럼 디자인 좌표
 // (가로 1000×560 · 세로 540×1040)로 그리고 화면에 맞춰 줄인다. 로직은 village.ts.
 import { image } from './assets.ts';
@@ -26,7 +26,6 @@ import {
   serve,
   startCook,
   stopCook,
-  targetAt,
   teacher,
   VILLAGE,
   type Cook,
@@ -337,21 +336,6 @@ export function drawVillage(ctx: CanvasRenderingContext2D, cw: number, ch: numbe
     ctx.beginPath();
     ctx.ellipse(s.goal.x, s.goal.y, C * 0.4, C * 0.4 * V, 0, 0, Math.PI * 2);
     ctx.stroke();
-  }
-  // 말 걸 수 있는 것: E 말 걸기 · E 요리하기
-  if (s.near && !villageView.panel) {
-    const [nx, ny] = targetAt(s, s.near);
-    const text = `${v.touch ? '눌러서' : 'E'} ${s.near.kind === 'kitchen' ? '요리하기' : '말 걸기'}`;
-    ctx.font = `bold ${C * 0.55}px system-ui, sans-serif`;
-    const pw = ctx.measureText(text).width + C * 0.6;
-    const qx = fitX(seen, nx, pw / 2, pad);
-    const py = (s.near.kind === 'kitchen' ? ny - C * 0.4 : ny + C * 0.85) + Math.sin(v.t * 5) * C * 0.05;
-    ctx.fillStyle = '#f08a3c';
-    ctx.beginPath();
-    ctx.roundRect(qx - pw / 2, py, pw, C * 0.78, C * 0.39);
-    ctx.fill();
-    ctx.fillStyle = '#fff';
-    ctx.fillText(text, qx, py + C * 0.56);
   }
 
   // HUD

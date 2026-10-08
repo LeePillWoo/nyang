@@ -3,7 +3,7 @@
 import { assetUrl, image } from './assets.ts';
 import { bagLayout, bagTap, bagView, coinReady, drawBag, drawShop, flipPage, itemIconsReady, resetBagView, resetShopView, shopLayout, shopTap, shopView } from './bag-draw.ts';
 import { count, fromSave, ITEMS, obtain, PAGE, stats, tickBuffs, type Bag } from './bag.ts';
-import { bookLayout, bookTap, bookView, drawBook, groupOf, openBook, ungrouped, type BookData } from './book-draw.ts';
+import { bookLayout, bookTap, bookView, drawBook, groupOf, mapPoints, openBook, ungrouped, type BookData } from './book-draw.ts';
 import shopData from './data/shop.json' with { type: 'json' };
 import {
   sfxBite,
@@ -678,6 +678,9 @@ const bookData = (): BookData => ({
   found: bag.found,
   held: (id) => count(bag, id) + (Object.values(bag.equip).includes(id) ? 1 : 0),
   sheet: (k) => sheets[k] ?? (enemySheet(k), null),
+  records,
+  village: vsave,
+  here: [field.x, field.y],
 });
 
 // 미니게임 기록 — 미로 최단 시간(초) · 고래 배 속 최단 시간(초) · 샌드보드 최고 점수 · 장작 패기 최고 토막 · 다람쥐 잡기 최고 점수
@@ -812,6 +815,8 @@ if (trace)
         const mid = (r: { x: number; y: number; w: number; h: number }) => ({ x: L.ox + (r.x + r.w / 2) * L.k, y: L.oy + (r.y + r.h / 2) * L.k });
         return { chips: L.chips.map(mid), tabs: L.tabs.map(mid), cells: L.cells.map(mid), close: mid(L.close) };
       },
+      /** 도감 지도 갈래의 장소 점 · 판의 줄 · 목록으로 버튼 (CSS px) */
+      mapPoints: () => mapPoints(innerWidth, innerHeight),
       /** 상점 화면의 사기/팔기 · 칸 · 버튼 · 닫기 가운데 (CSS px) */
       shopScreen: () => {
         const L = shopLayout(innerWidth, innerHeight, shopView.mode === 'buy' ? SHOP.stock.length : bag.slots.slice(bagView.page * PAGE, (bagView.page + 1) * PAGE).length);

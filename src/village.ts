@@ -273,6 +273,11 @@ export function updateVillage(s: VillageState, input: { mx: number; my: number; 
   s.open = null;
   const c = s.cat;
   c.animT += dt;
+  // 누른 친구 · 가판대에 닿았으면 연다 — 이미 곁이면 바로 (누른 때 열면 이 프레임 처음에 지워졌다)
+  if (s.goal?.then && gap(s, ...targetAt(s, s.goal.then)) < data.reach) {
+    s.open = s.goal.then;
+    s.goal = null;
+  }
   const len = Math.hypot(input.mx, input.my);
   if (len > 0) s.goal = null;
   c.moving = false;
@@ -282,11 +287,8 @@ export function updateVillage(s: VillageState, input: { mx: number; my: number; 
     const [tx, ty] = g.then ? targetAt(s, g.then) : [g.x, g.y];
     const dx = tx - c.x;
     const dy = (ty - c.y) / V;
-    const arrive = g.then ? Math.hypot(dx, dy) < data.reach * C * 0.8 : Math.hypot(dx, dy) < 2;
-    if (arrive) {
-      if (g.then) s.open = g.then;
-      s.goal = null;
-    } else {
+    if (!g.then && Math.hypot(dx, dy) < 2) s.goal = null;
+    else {
       c.moving = stepToward(s, dx, dy, dt);
       g.stuck = c.moving ? 0 : g.stuck + dt;
       if (g.stuck > 0.6) {
@@ -328,19 +330,21 @@ export function updateVillage(s: VillageState, input: { mx: number; my: number; 
   if (input.act && s.near) s.open = s.near;
 }
 
-/** 누른 곳(지도 px)으로 걸어간다. 대상(친구 · 가판대) 위면 닿았을 때 연다 — 이미 가까우면 바로 */
+/** 누른 곳(지도 px)으로 걸어간다. 대상(친구 · 가판대) 위면 닿았을 때 연다 — 이미 곁이면 다음 프레임에 바로 */
 export function walkTo(s: VillageState, x: number, y: number, then: Target | null) {
-  if (then && gap(s, ...targetAt(s, then)) < data.reach) {
-    s.open = then;
-    s.goal = null;
-    return;
-  }
   s.goal = { x, y, then, stuck: 0 };
 }
-/** 화면 지도 좌표 (x, y) 에 있는 대상 (친구 몸 · 가판대 둘레) */
+/** 누른 곳(지도 px)의 대상 — 친구(몸 · 이름표 · 머리 위 말풍선 둘레, 겹치면 가로로 가장 가까운 친구) · 가판대 둘레.
+ *  곁에 있는 것(near)은 고양이를 눌러도 그것 — 근처에 가서 누르면 말을 건다 */
 export function targetAtPoint(s: VillageState, x: number, y: number): Target | null {
-  const i = s.townies.findIndex((p) => Math.abs(x - p.x) < C * 0.7 && y < p.y + C * 0.3 && y > p.y - C * 1.5);
+  let i = -1;
+  let best = C * 1.2;
+  s.townies.forEach((p, k) => {
+    const dx = Math.abs(x - p.x);
+    if (dx < best && y < p.y + C * 0.6 && y > p.y - C * 3.2) [i, best] = [k, dx];
+  });
   if (i >= 0) return { kind: 'friend', i };
   if (Math.hypot(x - 2128, (y - 1520) / 0.7) < C * 3) return { kind: 'kitchen' };
+  if (s.near && Math.hypot(x - s.cat.x, (y - s.cat.y + C * 0.5) / V) < C * 1.5) return s.near;
   return null;
 }
