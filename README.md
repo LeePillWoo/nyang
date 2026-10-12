@@ -78,6 +78,8 @@ npm run dev       # 개발 서버 (http://localhost:5173)
 npm run check     # 로직 자체 체크 — 전투 · 지형 · 낚시 밸런스 · 가방 · 데이터 짝
 npm run verify    # 빌드 후 Chrome 으로 실제로 플레이해 검사 (터치 · 화면 크기 · 시트 자르기 포함, 화면은 tools/out/)
 npm run build     # 배포용 빌드 → dist/
+npm run check -- 숲 마을   # 관련 체크만 (이름: 필드 던전 낚시 가방 미로 샌드보드 장작 다람쥐 마을 기술 …)
+npm run verify -- 숲       # 그 구간만 — 숲 미니게임장 + 필드 도끼질 (구간 이름 목록은 node tools/verify.mjs 모름)
 ```
 
 주소 뒤에 붙이는 옵션: `?dungeon` (`=방 id`) 던전에서 시작 · `?fishing` (`=낚시터 id`) 낚시터에서 시작 · `?touch` 터치 UI ·

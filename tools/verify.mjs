@@ -1,4 +1,4 @@
-// npm run verify — 실제 브라우저로 게임을 돌려 "그려진 결과"를 검사한다.
+// npm run verify [구간…] — 실제 브라우저로 게임을 돌려 "그려진 결과"를 검사한다. 구간 이름(숲 · 마을 · 던전 …)을 주면 그 구간만 (아래 TAGS).
 //
 // 헤드리스 스크린샷은 게임 루프가 첫 프레임에서 멈춰서 움직임 버그(순간이동·깜빡임)를
 // 못 잡는다. 여기서는 Chrome 을 직접 띄워 루프를 실제로 돌리고, 게임의 ?trace 훅이
@@ -51,6 +51,47 @@ const fails = [];
 const check = (ok, msg) => {
   console.log(`${ok ? '  ok ' : ' FAIL'}  ${msg}`);
   if (!ok) fails.push(msg);
+};
+
+// ── 구간 고르기 (2026-10-12 사용자 — 작은 수정엔 관련 구간만 돌린다): node tools/verify.mjs 숲 마을 · npm run verify -- 숲. 인자가 없으면 전부 ──
+const TAGS = {
+  던전: '시트 칸 수 · 루프 · 골목에서 맞아 보기 · 몬스터 시트 · 방 13개 · 웨이브 · 기술 · 왕복 · 연속 촬영',
+  시트: '몬스터 시트 65종 칸 수',
+  방: '방 13개 들어가 보기',
+  미니맵: '미니맵 · 둘러보기 · 포탈 워프',
+  낚시: '낚시 한 판 · 낚시터 7곳',
+  터치: '휴대폰 터치 UI · 도감 · 화면 크기별 촬영',
+  도감: '도감 (터치 · 상점 · 지도 구간)',
+  가방: '드롭 · 줍기 · 장착 · 먹기 · 휴대폰 가방 버튼',
+  상점: '고등어 상점 · 건지기 · 도감 갈래',
+  미니게임: '미개방 구역 · 미로 · 샌드보드 · 고래',
+  미개방: '개방 구역 가장자리 · 잠긴 포탈',
+  고래: '바다 고래 · 배 속 미로',
+  미로: '피라미드 미로 (샌드보드와 같은 구간)',
+  샌드보드: '샌드보드 완주 · 미끄러짐 촬영 · 결승 앞 프레임 비용',
+  숲: '장작 패기 · 다람쥐 잡기 · 부스럭 수풀 · 다람쥐 · 필드 지형(도끼)',
+  장작: '장작 패기 (키 · 휴대폰)',
+  다람쥐: '다람쥐 잡기 (키 · 휴대폰)',
+  마을: '고양이마을 요리 · 친구 · 놀이 · 가방 쪽 · 휴대폰 · 도감 지도',
+  지도: '도감 지도 (사이트맵)',
+  기술: '웨이브 · 기술 카드 · 빨간 점 · 나가는 칸',
+  필드: '미니맵 · 미개방 구역 · 고래 · 왕복 · 지형(배 · 도끼 · 다리 · 워프)',
+  촬영: '공격 · 피격 연속 촬영',
+};
+const ONLY = process.argv.slice(2);
+const unknown = ONLY.filter((t) => !(t in TAGS));
+if (unknown.length) {
+  console.error(`모르는 구간: ${unknown.join(', ')}\n고를 수 있는 구간:\n` + Object.entries(TAGS).map(([k, v]) => `  ${k.padEnd(5)} ${v}`).join('\n'));
+  process.exit(2);
+}
+if (ONLY.length) console.log(`구간: ${ONLY.join(' · ')} (나머지는 건너뛴다 — 공용 코드를 고쳤으면 전부 돌릴 것)`);
+/** 이 구간을 돌리나 — 고른 구간이 없으면 전부. 구간이 속한 이름(tags) 중 하나라도 골랐으면 */
+const want = (...tags) => !ONLY.length || tags.some((t) => ONLY.includes(t));
+/** 구간 머리말: 돌리면 제목을 찍고 true, 건너뛰면 false */
+const sec = (title, ...tags) => {
+  const on = want(...tags);
+  if (on) console.log(`\n[${title}]`);
+  return on;
 };
 
 const server = await preview({ preview: { port: 4179 }, logLevel: 'silent' });
@@ -281,40 +322,43 @@ function motionCheck(tr, who, prefix = '') {
 }
 
 try {
-  // 1) 시트 슬라이스: 모든 행이 6칸이어야 한다 (모자라면 프레임이 합쳐졌거나 사라진 것)
-  const { page, errors } = await open('dungeon');
-  console.log('\n[시트]');
-  const sheets = await page.evaluate(() =>
-    Object.fromEntries(Object.entries(window.__sheets).map(([k, s]) => [k, s.frames.map((r) => r.length)])),
-  );
-  for (const [k, rows] of Object.entries(sheets))
-    check(rows.length === (SHEET_ROWS[k] ?? 5) && rows.every((n) => n === 6), `${k}: 행별 칸 수 ${rows.join('/')}`);
+  const S_DUNGEON = sec('시트 · 런타임 · 골목에서 맞아 보기', '던전');
+  if (S_DUNGEON) {
+    // 1) 시트 슬라이스: 모든 행이 6칸이어야 한다 (모자라면 프레임이 합쳐졌거나 사라진 것)
+    const { page, errors } = await open('dungeon');
+    console.log('\n[시트]');
+    const sheets = await page.evaluate(() =>
+      Object.fromEntries(Object.entries(window.__sheets).map(([k, s]) => [k, s.frames.map((r) => r.length)])),
+    );
+    for (const [k, rows] of Object.entries(sheets))
+      check(rows.length === (SHEET_ROWS[k] ?? 5) && rows.every((n) => n === 6), `${k}: 행별 칸 수 ${rows.join('/')}`);
 
-  // 2) 루프가 실제로 도는지
-  const raf = await page.evaluate(
-    () =>
-      new Promise((r) => {
-        let n = 0;
-        const t0 = performance.now();
-        const f = () => (n++, performance.now() - t0 < 1000 ? requestAnimationFrame(f) : r(n));
-        requestAnimationFrame(f);
-      }),
-  );
-  console.log('\n[런타임]');
-  check(raf >= 30, `rAF ${raf}회/초`);
+    // 2) 루프가 실제로 도는지
+    const raf = await page.evaluate(
+      () =>
+        new Promise((r) => {
+          let n = 0;
+          const t0 = performance.now();
+          const f = () => (n++, performance.now() - t0 < 1000 ? requestAnimationFrame(f) : r(n));
+          requestAnimationFrame(f);
+        }),
+    );
+    console.log('\n[런타임]');
+    check(raf >= 30, `rAF ${raf}회/초`);
 
-  // 3) 가만히 서서 맞아 본다 — 쥐들이 다가와 여러 번 공격한다
-  await new Promise((r) => setTimeout(r, RUN_SECONDS * 1000));
-  const tr = await page.evaluate(() => window.__trace);
-  check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
+    // 3) 가만히 서서 맞아 본다 — 쥐들이 다가와 여러 번 공격한다
+    await new Promise((r) => setTimeout(r, RUN_SECONDS * 1000));
+    const tr = await page.evaluate(() => window.__trace);
+    check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
 
-  for (const who of ['cat', 'sword', 'bow', 'fat']) motionCheck(tr, who);
-  await page.close();
+    for (const who of ['cat', 'sword', 'bow', 'fat']) motionCheck(tr, who);
+    await page.close();
+  }
   fs.mkdirSync(OUT, { recursive: true });
 
   // 3-1) 몬스터 시트 전부 (방에 들어갈 때만 불러오니 여기서 한꺼번에 불러 본다)
-  console.log('\n[몬스터 시트]');
-  {
+  const S_SHEETS = sec('몬스터 시트', '던전', '시트');
+  if (S_SHEETS) {
     const { page } = await open('dungeon');
     const all = await page.evaluate(() => window.__allEnemySheets());
     const bad = Object.entries(all).filter(([, s]) => s.rows.length !== 5 || s.rows.some((n) => n !== 6));
@@ -332,8 +376,8 @@ try {
   }
 
   // 3-2) 방마다: 들어가서 잠깐 맞아 본다 — 그림 튐·빠진 칸·에러. 화면은 tools/out/room-<id>.png
-  console.log('\n[방]');
-  for (const id of Object.keys(ROOMS).filter((k) => k !== 'alley')) {
+  const S_ROOMS = sec('방', '던전', '방');
+  if (S_ROOMS) for (const id of Object.keys(ROOMS).filter((k) => k !== 'alley')) {
     const { page, errors } = await open('dungeon', id);
     await sleep(4000);
     const tr = await page.evaluate(() => window.__trace);
@@ -346,8 +390,8 @@ try {
   // 3-3) 미니맵·둘러보기 (실제 마우스·키로):
   //  미니맵을 누르면 카메라만 그쪽으로 간다(고양이는 그대로) → 큰 화면에서 포탈을 누르면 고양이가 워프 →
   //  큰 화면을 끌면 지도가 밀린다(워프 아님) → 방향키를 누르면 카메라가 고양이에게 돌아온다
-  console.log('\n[미니맵 · 둘러보기]');
-  {
+  const S_MAP = sec('미니맵 · 둘러보기', '미니맵', '필드');
+  if (S_MAP) {
     const { page, errors } = await open('field');
     const click = async (p) => {
       await page.mouse.move(p.x, p.y);
@@ -404,8 +448,8 @@ try {
   // 3-4) 낚시 (실제 마우스로, 미리 정해 둔 입질 없이):
   //  가까운 물고기 앞쪽을 겨눠 링이 작을 때 던진다 → 저절로 오는 입질을 기다려 챈다 → 날뛸 땐 놓고 아니면 감는다 →
   //  낚음 팝업 · 도감 → Space 로 다시 낚시 → Esc 로 필드 (호수섬 포탈 앞). 그리고 필드의 호수섬 포탈로 들어가면 낚시터
-  console.log('\n[낚시]');
-  {
+  const S_FISH = sec('낚시', '낚시');
+  if (S_FISH) {
     const { page, errors } = await open('fishing');
     const st = () => page.evaluate(() => ({ phase: __game.fishing.phase, run: __game.fishing.run > 0, fail: __game.fishing.fail }));
     check((await page.evaluate(() => __game.scene)) === 'fishing', '?fishing 으로 낚시터에서 시작');
@@ -493,8 +537,8 @@ try {
 
   // 3-5) 낚시터마다: 열린다 · 실제 마우스로 던진 찌가 그곳 물 안에 떨어진다 · 물고기가 물 밖(얼음 위)으로 안 나간다 · 에러 없음.
   //  화면은 tools/out/fishing-<낚시터>.png
-  console.log('\n[낚시터]');
-  for (const id of Object.keys(readJson('../src/data/fishing.json').spots)) {
+  const S_SPOTS = sec('낚시터', '낚시');
+  if (S_SPOTS) for (const id of Object.keys(readJson('../src/data/fishing.json').spots)) {
     const { page, errors } = await open('fishing', id);
     await page.waitForFunction((id) => __game.scene === 'fishing' && __game.fishing.spotId === id, { timeout: 8000 }, id);
     const spot = await page.evaluate(() => __game.fishing.spot);
@@ -534,7 +578,7 @@ try {
   // 3-6) 터치 (휴대폰 가로 844×390, 실제 터치 입력): 손가락을 대면 터치 UI 가 켜진다 · 조이스틱으로 필드 고양이가 움직인다 ·
   //  도감 버튼 → 탭 바꾸기 → 바깥 눌러 닫기 · 던전에서 조이스틱 + 냥펀치를 두 손가락으로 같이 · 구르기 버튼 · 낮잠은 화면을 눌러 깨기 ·
   //  낚시: 누르고 있다 떼면 던진다 · 도감 판 → 그 낚시터 탭 → ✕ · 돌아가기 버튼. 화면은 tools/out/touch-*.png
-  console.log('\n[터치 · 도감]');
+  const S_TOUCH = sec('터치 · 도감', '터치', '도감');
   const PHONE = { width: 844, height: 390, deviceScaleFactor: 2, isMobile: true, hasTouch: true, isLandscape: true };
   const SPOT_IDS = Object.keys(readJson('../src/data/fishing.json').spots);
   /** 손가락 하나로 (x, y) 를 누르고 to 로 끌어 ms 동안 있다가 뗀다 */
@@ -545,7 +589,7 @@ try {
     return t;
   };
   const tap = async (page, p) => (await page.touchscreen.touchStart(p.x, p.y)).end();
-  {
+  if (S_TOUCH) {
     const { page, errors } = await open('field', '', PHONE);
     check(!(await page.evaluate(() => __game.touch)), '처음엔 터치 UI 가 아니다');
     // 미니맵을 눌러 켠다 (큰 화면을 누르면 그 밑 포탈로 워프할 수 있어서). 카메라만 그쪽으로 갔다가 조이스틱을 밀면 돌아온다
@@ -607,7 +651,7 @@ try {
     check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
     await page.close();
   }
-  {
+  if (S_TOUCH) {
     const { page, errors } = await open('dungeon', '', PHONE);
     await autoPick(page); // 자동 냥펀치로 쓰러뜨리면 레벨 업 카드가 뜬다 — 이 검사는 조작만 본다
     await tap(page, { x: 422, y: 60 }); // 터치 UI 켜기 (던전에서 화면 누르기는 아무것도 안 한다 — 냥펀치는 자동)
@@ -648,7 +692,7 @@ try {
     check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
     await page.close();
   }
-  {
+  if (S_TOUCH) {
     const { page, errors } = await open('fishing', '', PHONE);
     await page.waitForFunction(() => __game.fishing.phase === 'ready', { timeout: 8000 });
     const cast = await page.evaluate(() => __game.fishScreen(...__game.fishing.spot.defaultCast));
@@ -681,7 +725,7 @@ try {
     await page.close();
   }
   // 키보드: B 로 도감, Esc 는 도감만 닫는다 (낚시터를 나가지 않는다)
-  {
+  if (S_TOUCH) {
     const { page, errors } = await open('fishing');
     await page.waitForFunction(() => __game.fishing.phase === 'ready', { timeout: 8000 });
     await page.keyboard.press('KeyB');
@@ -693,7 +737,7 @@ try {
     check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
     await page.close();
   }
-  {
+  if (S_TOUCH) {
     // 샌드보드 (휴대폰 가로): ◀ · 점프 · ▶ 가 한 줄로 (왼쪽 · 가운데 · 오른쪽), 구석에서 안쪽
     const { page, errors } = await open('sandboard', '', PHONE, '&touch');
     await sleep(600);
@@ -711,7 +755,7 @@ try {
     check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
     await page.close();
   }
-  {
+  if (S_TOUCH) {
     // 세로 휴대폰 던전: 방이 너무 작아지지 않게 확대하고(고양이 키 약 70px), 고양이를 따라 방이 움직여 고양이가 화면 밖으로 안 나간다
     const PORTRAIT = { width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true };
     const { page, errors } = await open('dungeon', '', PORTRAIT, '&touch');
@@ -738,7 +782,7 @@ try {
     await page.close();
   }
   // 화면 크기별 모습 (눈으로 보는 용): 휴대폰 세로 · 태블릿 가로/세로 — tools/out/screen-*.png
-  for (const [name, view] of [
+  if (S_TOUCH) for (const [name, view] of [
     ['phone-portrait', { width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true }],
     ['tablet', { width: 1024, height: 768, deviceScaleFactor: 2, isMobile: true, hasTouch: true, isLandscape: true }],
     ['tablet-portrait', { width: 768, height: 1024, deviceScaleFactor: 2, isMobile: true, hasTouch: true }],
@@ -762,8 +806,8 @@ try {
   // 3-7) 가방 · 드롭 (실제 키·마우스): 실제 냥펀치로 쓰러뜨리면 냥코인·아이템이 떨어지고, 방을 깨면 날아와 가방에 →
   //  다가가면 줍는다(알림) → I 로 가방 → 칸 누르고 장착(끼던 건 가방으로) · 벗기 · 다쳤을 때 회복약 · 버리기는 두 번 →
   //  장비 공격력이 냥펀치에 → 새로 고쳐도 남는다 → 휴대폰: 필드 가방 버튼. 화면은 tools/out/bag-*.png
-  console.log('\n[가방 · 드롭]');
-  {
+  const S_BAG = sec('가방 · 드롭', '가방');
+  if (S_BAG) {
     const { page, errors } = await open('dungeon');
     await page.evaluate(() => localStorage.removeItem('nyang.bag.v1'));
     await page.reload({ waitUntil: 'load' });
@@ -887,7 +931,7 @@ try {
     check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
     await page.close();
   }
-  for (const [name, view] of [
+  if (S_BAG) for (const [name, view] of [
     ['phone', PHONE],
     ['phone-portrait', { width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true }],
   ]) {
@@ -906,8 +950,8 @@ try {
   // 3-8) 상점 · 건지기 · 도감: 강아지마을 포탈에 서면 고등어 상점 → 사기 1개 · 5개 · 팔기(모두) · 닫으면 그 자리에서 다시 안 열린다 →
   //  낚시: 가라앉은 물건을 물리고 감으면 건져서 가방에 (물고기 도감엔 안 센다) → 던전에서 쓰러뜨리면 몬스터 도감 → B 로 도감
   //  (던전에선 몬스터 갈래) · 갈래·탭·칸 누르기 · 휴대폰 세로. 화면은 tools/out/shop-*.png · book-*.png · fishing-salvage.png
-  console.log('\n[상점 · 건지기 · 도감]');
-  {
+  const S_SHOP = sec('상점 · 건지기 · 도감', '상점', '도감');
+  if (S_SHOP) {
     const { page, errors } = await open('field');
     await page.evaluate(() => ['nyang.bag.v1', 'nyang.monsters.v1'].forEach((k) => localStorage.removeItem(k)));
     await page.reload({ waitUntil: 'load' });
@@ -944,7 +988,7 @@ try {
     check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
     await page.close();
   }
-  {
+  if (S_SHOP) {
     const { page, errors } = await open('fishing');
     await page.waitForFunction(() => __game.fishing.phase === 'ready', { timeout: 8000 });
     const id = 'curios_19'; // 쪽지 든 병
@@ -960,7 +1004,7 @@ try {
     check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
     await page.close();
   }
-  {
+  if (S_SHOP) {
     const { page, errors } = await open('dungeon');
     await page.evaluate(() => localStorage.removeItem('nyang.monsters.v1'));
     await page.reload({ waitUntil: 'load' });
@@ -1000,7 +1044,7 @@ try {
     check(!(await page.evaluate(() => __game.dexOpen)) && errors.length === 0, `✕ 로 닫기 · 페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
     await page.close();
   }
-  for (const [name, view] of [['phone-portrait', { width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true }], ['phone', PHONE]]) {
+  if (S_SHOP) for (const [name, view] of [['phone-portrait', { width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true }], ['phone', PHONE]]) {
     const { page, errors } = await open('field', '', view, '&touch');
     await page.keyboard.press('KeyB');
     await tap(page, (await page.evaluate(() => __game.dexScreen())).chips[1]);
@@ -1022,8 +1066,8 @@ try {
   //  개방 구역 가장자리에서 밖으로 밀어도 못 넘어간다 · 잠긴 포탈은 눌러도 워프하지 않는다 (화면 field-locked.png) →
   //  피라미드 포탈 → 미로: 길을 BFS 로 풀어 모퉁이마다 WASD 로 걸어 출구까지, 보너스 냥코인·기록, 돌아가기 →
   //  모래 미끄럼틀 포탈 → 샌드보드: 빈 레인으로 A/D, 바위 앞에서 Space, 완주·점수·기록, 다시 타기, Esc
-  console.log('\n[미개방 구역 · 미니게임]');
-  {
+  sec('미개방 구역 · 미니게임', '미니게임', '필드', '미개방', '고래', '미로', '샌드보드');
+  if (want('미니게임', '필드', '미개방')) {
     const { page, errors } = await open('field');
     // 시작점 줄에서 열린 조각 왼쪽이 닫힌 곳
     const y = FIELD.start[1];
@@ -1064,7 +1108,7 @@ try {
     check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
     await page.close();
   }
-  {
+  if (want('미니게임', '미로')) {
     const { page, errors } = await open('field');
     const w = FIELD.warps.find((v) => v.to === 'maze');
     await page.evaluate((at) => Object.assign(__game.field, { x: at[0], y: at[1], camX: at[0], camY: at[1], armed: true, mode: 'walk' }), w.at);
@@ -1088,7 +1132,7 @@ try {
     await page.close();
   }
   // 고래 — 앞바다: 고양이 항구 앞바다에서도 그림자가 나오고, 낚시 물고기처럼 물 위에서만 배 둘레를 헤엄쳐 다닌다 (화면 whale-harbor.png)
-  {
+  if (want('미니게임', '필드', '고래')) {
     const { page, errors } = await open('field');
     const HARBOR = [3250, 1720];
     await page.evaluate(([x, y]) => Object.assign(__game.field, { x, y, camX: x, camY: y, mode: 'boat', armed: true }), HARBOR);
@@ -1114,7 +1158,7 @@ try {
   // 고래 (실제 키): 바다 한가운데 배를 세워 두면 3초 뒤 그림자가 맴돌고, 움직이면 흐려져 사라진다 → 다시 세워 두면 3~8초 뒤 솟구쳐 삼킨다
   // (솟구치는 동안 키를 눌러도 안 움직인다) → 고래 배 속 미로를 BFS 로 풀어 숨구멍으로 탈출 · 기록 · R 로 다시 안 됨 →
   // 가운데 '바다로' 버튼 → 삼켰던 자리에서 배째 뱉어 낸다 → 나온 뒤 10초 동안은 가만히 있어도 안 나온다 (화면 whale-*.png)
-  {
+  if (want('미니게임', '필드', '고래')) {
     const { page, errors } = await open('field');
     const SEA = [3700, 1600];
     const phase = () => page.evaluate(() => __game.field.whale.phase);
@@ -1170,7 +1214,7 @@ try {
     check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
     await page.close();
   }
-  {
+  if (want('미니게임', '샌드보드')) {
     const { page, errors } = await open('field');
     const w = FIELD.warps.find((v) => v.to === 'sandboard');
     // 들어간 직후 멈칫(처음 렉) 재기: 프레임마다 게임 콜백 시간 · 프레임 간격 (2026-10-07 — 첫 프레임 318ms + 0.3초 멈춤이었다:
@@ -1292,8 +1336,8 @@ try {
   //  다람쥐 잡기 숲 → 다람쥐 잡기: 키로 쫓아가 잡기 → 시간 끝 → 카드(냥코인 · 도토리 · 기록) → 다시 잡기 → Esc → 포탈 앞.
   //  숲에서 부스럭 수풀로 걸어 들어가면 도끼질에 열려 가방에 · 수풀에서 튀어나온 다람쥐를 키로 쫓아가 잡는다.
   //  휴대폰: 장작 패기 ◀ ▶ 버튼 · 화면 반쪽, 다람쥐 잡기 조이스틱. 화면 timber-*.png · chase-*.png · forest-*.png · touch-timber.png · touch-chase.png
-  console.log('\n[숲 · 장작 패기]');
-  {
+  sec('숲 · 장작 패기 · 다람쥐 잡기', '숲', '장작', '다람쥐');
+  if (want('숲', '장작')) {
     const { page, errors } = await open('field');
     await page.evaluate(() => __game.bag.slots.fill(null)); // 앞 검사가 가방을 채워 뒀을 수 있다
     const w = FIELD.warps.find((v) => v.to === 'timber');
@@ -1343,7 +1387,7 @@ try {
     check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
     await page.close();
   }
-  {
+  if (want('숲')) {
     const { page, errors } = await open('field');
     await page.evaluate(() => __game.bag.slots.fill(null));
     const C = FIELD.catBody;
@@ -1437,7 +1481,7 @@ try {
     check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
     await page.close();
   }
-  {
+  if (want('숲', '다람쥐')) {
     const { page, errors } = await open('field');
     await page.evaluate(() => __game.bag.slots.fill(null));
     const w = FIELD.warps.find((v) => v.to === 'chase');
@@ -1497,7 +1541,7 @@ try {
     check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
     await page.close();
   }
-  {
+  if (want('숲', '다람쥐')) {
     // 휴대폰 가로 다람쥐 잡기: 떠다니는 조이스틱으로 움직이면 시작 · 공터를 고양이 따라 크게
     const PH = { width: 844, height: 390, deviceScaleFactor: 2, isMobile: true, hasTouch: true, isLandscape: true };
     const { page, errors } = await open('chase', '', PH, '&touch');
@@ -1515,7 +1559,7 @@ try {
     check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
     await page.close();
   }
-  {
+  if (want('숲', '장작')) {
     // 휴대폰 가로: ◀ ▶ 버튼 (구석에서 안쪽) · 누르면 그쪽에서 팬다 · 화면 반쪽을 눌러도
     const PH = { width: 844, height: 390, deviceScaleFactor: 2, isMobile: true, hasTouch: true, isLandscape: true };
     const { page, errors } = await open('timber', '', PH, '&touch');
@@ -1550,13 +1594,13 @@ try {
   //  Esc 로 포탈 앞 → 새로 고쳐도 친구 기록이 남는다. 가방 96칸 = 4쪽: ▶ 버튼 · ← → 키 · 둘째 쪽 칸 고르기 · 휴대폰 밀어 넘기기.
   //  휴대폰: 먼 친구 · 빈 곳을 눌러도 걷지 않는다 → 조이스틱으로 다가가 눌러 창 → 칸 → 먹여 주기 버튼 → 놀아 주기 버튼 → 상자 숨바꼭질(상자를 눌러) → ✕ → 가판대 창.
   //  화면 village-*.png · touch-village*.png · screen-village-portrait*.png · bag-page2.png
-  console.log('\n[고양이마을 · 요리 · 친구 · 가방 쪽]');
+  const S_VILLAGE = sec('고양이마을 · 요리 · 친구 · 가방 쪽', '마을', '지도', '도감');
   const VILLAGE = readJson('../src/data/village.json');
   // 가판대 곁 = 요리집 앞 왼쪽 끝 화분 바로 밑, 바짝 붙은 자리 (2026-10-12 사용자 — 여기서 안 열렸다: 판정이 한 점이라 멀었다 → 요리집 앞줄 kitchen 두 점)
   const KSPOT = [VILLAGE.kitchen[0][0] + 10, VILLAGE.blocks.find((b) => b.name === '요리집 앞 화분').y1 + 2];
   const VF = VILLAGE.friends;
   const prefOf = (fr, dish) => (fr.love.includes(dish) ? 'love' : fr.like.includes(dish) ? 'like' : fr.dislike.includes(dish) ? 'dislike' : 'normal');
-  {
+  if (S_VILLAGE && want('마을')) {
     const { page, errors } = await open('field');
     await page.evaluate(() => localStorage.removeItem('nyang.village.v1'));
     await page.reload({ waitUntil: 'load' });
@@ -1777,7 +1821,7 @@ try {
     check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
     await page.close();
   }
-  {
+  if (S_VILLAGE && want('마을')) {
     // 휴대폰 가로 (2026-10-12 사용자 — 이동은 조이스틱으로만, 누르기는 곁에서 말 걸기만): 멀리서 친구를 눌러도 걷지 않는다 → 조이스틱으로 다가가 눌러 창 → 칸 →
     //  먹여 주기 버튼 → 놀아 주기 버튼 → ✕ → 멀리서 가판대를 눌러도 그대로 · 곁에서 누르면 창 · 곁에서 누르기 · 가방은 밀어서 넘긴다 · 세로 화면 · 모자란 재료 바로가기
     const PH = { width: 844, height: 390, deviceScaleFactor: 2, isMobile: true, hasTouch: true, isLandscape: true };
@@ -1922,7 +1966,7 @@ try {
   }
   // 도감 지도 (2026-10-08 사용자 — "마을 던전 컨텐츠 등등 한눈에 알아볼 수 있는 사이트맵"): 지도 갈래 → 사이트맵 → 던전 줄 → 던전 탭 →
   //  첫 줄 → 설명 → 지도의 고양이마을 점 → 설명 → 목록으로. 휴대폰 세로도. 화면 book-map-*.png · screen-book-map-portrait.png
-  for (const [name, view] of [
+  if (S_VILLAGE && want('마을', '지도', '도감')) for (const [name, view] of [
     ['desk', null],
     ['portrait', { width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true }],
   ]) {
@@ -1970,8 +2014,8 @@ try {
   // 3-8) 웨이브 · 기술 (실제 키·마우스·터치): 웨이브 1 = 방 몬스터 + 가장자리에서 더 → 쓰러뜨리면 생선뼈 → 레벨 업 카드 → 1 키로 고른다 →
   //  다시 레벨 업 → 마우스로 두 번째 카드 → 기술 여럿을 켜고 싸워도 NaN 그리기·에러 없음 → 웨이브 2 · 마지막 웨이브 정예 → 휴대폰 카드 터치.
   //  화면 dungeon-wave.png · dungeon-cards.png · dungeon-skills.png · dungeon-elite.png · dungeon-cards-phone.png
-  console.log('\n[웨이브 · 기술]');
-  {
+  const S_SKILLS = sec('웨이브 · 기술', '기술', '던전');
+  if (S_SKILLS) {
     const { page, errors } = await open('dungeon');
     await page.evaluate(() => {
       window.__badDraw = 0;
@@ -2088,7 +2132,7 @@ try {
     check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
     await page.close();
   }
-  {
+  if (S_SKILLS) {
     // 휴대폰 세로: 카드는 세로로 쌓이고, 손가락으로 누른다 (가로 휴대폰은 가로 카드를 줄여서)
     const { page, errors } = await open('dungeon', '', { width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true }, '&touch');
     await page.evaluate(() => (__game.dungeon.run.pending = 1));
@@ -2107,7 +2151,7 @@ try {
 
   // 3-8-0) 빨간 점: 평소엔 아무것도 없고, 쏠 때만 조준선(가는 점선 + 조여드는 조준경) → 레이저 빔. 화면 dungeon-laser-aim.png · dungeon-laser-fire.png
   //  기술 칸: 5가지를 배우면 카드엔 가진 기술 레벨 업만 (위에 "기술 칸 5/5"), 오른쪽 위엔 빈 칸 점선. 화면 dungeon-cards-full.png
-  {
+  if (S_SKILLS) {
     const { page, errors } = await open('dungeon');
     await page.evaluate(() => {
       setInterval(() => (__game.dungeon.P.invT = 1), 40);
@@ -2147,7 +2191,7 @@ try {
   }
 
   // 3-8-1) 나가는 칸: 밟자마자 나가지 않고 3초 서 있어야 나간다 (머리 위에 남은 시간 고리). 화면 dungeon-exit-gauge.png
-  {
+  if (S_SKILLS) {
     const { page, errors } = await open('dungeon');
     await autoPick(page);
     await page.evaluate((e) => {
@@ -2166,8 +2210,8 @@ try {
 
   // 3-9) 샌드보드 미끄러짐 연속 촬영 (sandboard-drift.png): 오른쪽으로 눌러 미끄러지기 시작 → 놓기 → 왼쪽으로 홱.
   //  보드가 먼저 꺾이고(넘쳤다 돌아옴) 몸은 늦게 따라오고, 꼬리에서 모래가 튀는지 눈으로 본다. 컷이 바뀌어도 보드가 튀지 않는지(보드 중심 위치)도 잰다
-  console.log('\n[샌드보드 미끄러짐]');
-  {
+  const S_DRIFT = sec('샌드보드 미끄러짐', '샌드보드', '미니게임');
+  if (S_DRIFT) {
     const { page, errors } = await open('sandboard');
     await page.evaluate(() => {
       const s = __game.sandboard;
@@ -2221,8 +2265,8 @@ try {
   // 3-10) 샌드보드 결승 앞 프레임 비용: 결승 앞도 평면 구간처럼 가볍게 그린다 (2026-10-07 — 예전엔 결승 앞만 원근으로 말며 바닥을 1px 줄마다
   //  따로 칠해 한 프레임이 0.7 → 3~9ms 로 늘어 고해상도 · 고주사율 화면에서 결승 앞 길이 빤짝거렸다. 지금은 결승까지 평면).
   //  큰 고해상도 화면(1920×1000 배율 2)에서 게임 rAF 콜백(갱신 + 그리기) 시간의 중간값을 평면 구간과 견준다
-  console.log('\n[샌드보드 결승 앞 프레임 비용]');
-  {
+  const S_FINISH = sec('샌드보드 결승 앞 프레임 비용', '샌드보드', '미니게임');
+  if (S_FINISH) {
     const page = await browser.newPage();
     await page.setViewport({ width: 1920, height: 1000, deviceScaleFactor: 2 });
     const errors = [];
@@ -2260,8 +2304,8 @@ try {
   }
 
   // 4) 왕복: 필드에서 시작 → 골목 던전 포탈(돌다리 — 고양이마을은 2026-10-08 마을이 됐다) 앞으로 → 포탈로 걸어가 머문다 → 던전 → 나가는 칸으로 걸어 나간다 → 필드
-  console.log('\n[필드 ↔ 던전 왕복]');
-  {
+  const S_TRIP = sec('필드 ↔ 던전 왕복', '필드', '던전');
+  if (S_TRIP) {
     const { page, errors } = await open('field');
     const game = await page.evaluate(() => ({ scene: __game.scene, x: __game.field.x, y: __game.field.y }));
     check(game.scene === 'field', `필드에서 시작 (장면 ${game.scene})`);
@@ -2316,8 +2360,8 @@ try {
   }
 
   // 5) 필드 지형: 바다로 걸어가 배를 타고, 뭍으로 돌아와 내리고, 숲에서 도끼질한다
-  console.log('\n[필드 지형: 걷기 · 배 · 도끼]');
-  {
+  const S_TERRAIN = sec('필드 지형: 걷기 · 배 · 도끼', '필드', '숲');
+  if (S_TERRAIN) {
     const { page, errors } = await open('field');
     // 매 프레임 불변식 감시: 물 위를 걷거나 땅 위에서 배를 타면 기록한다
     await page.evaluate(() => {
@@ -2508,8 +2552,8 @@ try {
   }
 
   // 6) 눈으로 볼 연속 촬영: 공격 순간과 피격 순간
-  console.log('\n[연속 촬영] tools/out/');
-  for (const [who, when, file] of [
+  const S_BURST = sec('연속 촬영 — tools/out/', '촬영', '던전');
+  if (S_BURST) for (const [who, when, file] of [
     ['fat', 'windup', 'fat-attack.png'],
     ['sword', 'windup', 'sword-attack.png'],
     ['cat', 'hurt', 'cat-hit.png'],
@@ -2522,7 +2566,7 @@ try {
   await server.close();
 }
 
-console.log(fails.length ? `\n실패 ${fails.length}건` : '\n모두 통과');
+console.log((fails.length ? `\n실패 ${fails.length}건` : '\n모두 통과') + (ONLY.length ? ` — ${ONLY.join(' · ')} 구간만 (전부는 인자 없이)` : ''));
 process.exit(fails.length ? 1 : 0);
 
 /** who 가 when 상태에 들어가는 순간부터 16컷을 찍어 한 장짜리 격자로 저장한다 */

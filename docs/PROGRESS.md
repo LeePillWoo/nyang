@@ -40,12 +40,33 @@
 - 아직 쓸 곳 없는 것: 미끼(materials_31~36) · 제작 재료 · 수집품/정체불명 물건의 쓰임.
 - 바다 고래: 배 속 미로 전용 그림(살 벽 · 갈비뼈 · 숨구멍)이 오면 maze-draw 의 고래 색·그리기만 바꾼다. 호수·강에도 원하면 field.json whale.sea 에 조각을 더한다.
 - 숲 (2026-10-07 · 08): 장작 패기 그림(기둥 토막 · 좌우 가지 · 그루터기 · 날아가는 토막 · 배경)이 오면 timber-draw 의 그리기 함수만 바꾼다 (다람쥐 잡기는 2026-10-12 에 사용자 그림으로 바꿨다). 아이디어 4(만들기 — 통나무·잎사귀로 잎사귀 모자·나뭇잎 망토·도토리 망치)는 재료가 쌓이면. 왼쪽 숲 지역은 잠김 (마스크는 미리 만들어 둠).
+- 폴더 나누기 (2026-10-12 검토, 사용자 결정 대기): import 에 순환이 없고 방향이 한쪽이라 나눌 수 있다. 제안 — `src/shared/`(assets · audio · sheet · collide · touch · emote · cat · fx · iso · places · squirrel) ·
+  `src/field/`(field · field-draw · minimap) · `src/dungeon/`(dungeon · dungeon-draw · enemy · skills · skills-draw) · `src/fishing/` · `src/village/`(village · village-draw · toys · toys-draw) ·
+  `src/mini/`(maze · sandboard · timber · chase + -draw · mini-draw) · `src/bag/`(bag · bag-draw · book-draw · sources) · `src/data/` 그대로 · main.ts 는 밖. 체크 파일은 제 폴더에.
+  비용: 파일 47개 이동 · import 228줄 경로(tsc 가 다 잡아 준다) · tools(verify · assets · terrain) 경로 · CLAUDE.md 파일 지도, 한 시간 + 전체 검증. 그 뒤 deps.check 에 "장면 폴더끼리 import 금지"(book-draw · sources 예외)를 더한다.
+  다음 단계(따로): main.ts 1748줄의 장면별 입력 · 전환을 각 폴더로.
 - 고양이마을 (2026-10-08): 주민 걷는 시트가 오면 자리에서 서성이게(지금은 동작 시트뿐이라 제자리). `angry` 줄은 아직 안 쓴다 (예: 싫어하는 걸 두 번 주면). 요리 가판대 · 냄비 그림이 오면 `drawCook`.
   돌다리 · 동굴 입구 7곳의 새 콘텐츠는 사용자 결정 대기 — 포탈은 연결 전으로 두고 도감 지도엔 동굴로 센다.
   놀아 주기 장난감 그림(깃털 · 상자 · 털실 공)이 오면 toys-draw 만 바꾼다. 놀이 수치(시간 · 섞는 수 · 힘 막대 빠르기 · 칸 폭)는 toys.ts 맨 위 상수.
   더 해 볼 만한 것 — 친구에게 물건 선물(요리 말고) · 하루 단위 이벤트(생일 · 잔치) · 친구가 마을 밖으로 따라 나오기 · 요리 대회 · 마을 꾸미기. 요리 수치(바늘 빠르기 · 칸 폭 · 점수)는 village.json 에서.
 
 ## 결정 기록
+
+### 2026-10-12 밤 · 검수는 수정 범위만큼 · check/verify 구간 고르기 · import 순환 검사 · 폴더 나누기 검토
+
+사용자: 나무 도끼질 같은 걸 고쳤다면 어디까지 검수하고 마무리하나 — 간단한 수정인 줄 알았는데 생각 많이 하면서 확인하고 오래 걸린다. 제안대로 하고,
+파일 폴더를 나눠 서로 꼬이지 않게 할 수 있는지도 체크.
+
+- 지금까지는 수정 크기와 상관없이 전체 브라우저 검증(560개 · 약 12분)을 매번 돌렸다 — 한 번 실패하면 또 12분. 가판대 판정 10줄에 검증만 24분.
+- **구간 고르기**: `npm run verify -- 숲` (이름 22개, tools/verify.mjs `TAGS` — 구간 하나가 이름 여럿에 속해 '숲' 이면 숲 미니게임장 + 필드 지형(도끼), '던전' 이면
+  골목 · 시트 · 방 · 기술 · 왕복 · 촬영). 모르는 이름을 주면 목록을 보여 주고 끝난다. 구간만 돌리면 마지막 줄에 "— 숲 구간만" 이 붙는다.
+  `npm run check -- 숲 마을` 도 (tools/check.mjs — 한글 별명 → 체크 파일, package.json 의 긴 && 줄을 대신한다).
+- **규칙**: 한 장면 안의 수정 → 관련 체크 + 그 구간 검증 → 배포. 공용 코드(main 입력 · 장면 전환, touch, bag · book · mini-draw, sheet · assets · cat · emote · fx · collide · iso, squirrel)를
+  고쳤거나 퇴근 전이면 전체. 보고에 어느 구간을 돌렸는지 적는다 (CLAUDE.md 규칙 · 메모리).
+- **폴더 나누기 검토**: src/*.ts 47개(체크 12개 제외)의 import 를 그려 보니 순환이 없고 방향이 한쪽이다 — 로직(`x.ts`) → 로직 · 데이터, 그리기(`x-draw.ts`) → 로직 + 공용 그리기,
+  main → 전부. 꼬이는 자리는 폴더가 아니라 ① main.ts 1748줄(모든 장면의 입력 · 전환 · 소리), ② book-draw · sources(도감이라 모든 장면을 끌어온다 — 성격상 어쩔 수 없음),
+  ③ chase-draw → field-draw(다람쥐 그리기를 빌려 씀). 폴더를 나누면 경계가 보이고 "장면 폴더끼리 import 금지"를 검사로 못 박을 수 있다 — 우선 `npm run check` 맨 앞에
+  import 순환 검사(deps.check)를 넣어 폴더를 안 나눠도 꼬임은 잡히게 했다. 나누는 건 사용자 결정 대기 ("다음에 할 일").
 
 ### 2026-10-12 밤 · 가판대에 바짝 붙으면 열리게
 
