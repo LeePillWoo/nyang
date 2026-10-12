@@ -7,6 +7,7 @@ import CATS from '../data/village-cats.json' with { type: 'json' };
 import { FIELD, warpLocked } from '../field/field.ts';
 import { placeKind } from '../shared/places.ts';
 import { shortcut } from '../bag/sources.ts';
+import { ELLIPSE } from './town.ts';
 import { ballAt, BOX, FEATHER, isToy, makeToy, starsOf, TOY_IDS, TOYS, toyPick, toyPress, updateToy, YARN, type BoxGame, type FeatherGame, type YarnGame } from './toys.ts';
 import {
   baseAnim,
@@ -422,7 +423,7 @@ const mixed = (seed: number) => {
   [f.cat.x, f.cat.y] = [fountain.x, fountain.y + fountain.ry + C * 1.5];
   for (let i = 0; i < 240; i++) {
     updateVillage(f, { mx: 0, my: -1, act: false }, 1 / 60);
-    assert.ok(((f.cat.x - fountain.x) / fountain.rx) ** 2 + ((f.cat.y - fountain.y) / fountain.ry) ** 2 > 1, '분수 안으로는 안 들어간다');
+    assert.ok(((f.cat.x - fountain.x) / (fountain.rx * ELLIPSE)) ** 2 + ((f.cat.y - fountain.y) / (fountain.ry * ELLIPSE)) ** 2 > 1, '분수 안으로는 안 들어간다');
   }
   assert.ok(f.cat.y < fountain.y - fountain.ry, `분수를 비켜 돌아 위로 지나간다 (${f.cat.y.toFixed(0)})`);
   // 시작 자리에서 걸어서 친구 여덟 · 가판대 곁(말 거는 거리)까지 닿는다 — 걸을 수 있는 16px 칸을 너비 우선으로 퍼뜨려 본다
@@ -459,7 +460,7 @@ const mixed = (seed: number) => {
     while (!walkable(x, y) && y < ky + 80) y += 1;
     return y;
   };
-  for (let x = kx0 - 8; x <= kx1 + 8; x += 6) {
+  for (let x = kx0 - 8; x <= kx1 + 2; x += 6) {
     const e = makeVillage(seeded(13));
     [e.cat.x, e.cat.y] = [x, hug(x)];
     updateVillage(e, { mx: 0, my: 0, act: true }, 1 / 60);

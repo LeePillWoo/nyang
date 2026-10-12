@@ -1,7 +1,8 @@
 /**
  * 마을 걷기 엔진 — 고양이마을(village.ts) · 강아지마을(dogtown.ts)이 같이 쓴다 (2026-10-12 강아지마을을 만들며 고양이마을에서 떼어 냄).
  * 좌표는 마을 그림 px. 걷는 땅 = walk 다각형 − blocks(rect · ellipse). 고양이 키 C = catBody × unit, 세로는 field.vertical 만큼 눌려 보인다.
- * 걷기는 WASD · 조이스틱으로만 — 막히면 ±30° · 60° · 90° 로 비켜 간다. node 로 체크된다.
+ * 걷기는 WASD · 조이스틱으로만 — 막히면 벽을 따라 가로 · 세로로 미끄러지고, 그래도 막히면 ±30° · 60° · 90° 로 비켜 간다.
+ * 막는 모양은 그림 테두리보다 조금 안쪽 (blockShape — 길목이 넓게). node 로 체크된다.
  */
 import field from '../data/field.json' with { type: 'json' };
 
@@ -26,7 +27,20 @@ function inPoly(x: number, y: number, poly: number[][]) {
   }
   return inside;
 }
-const blocked = (x: number, y: number, b: Block) => (b.type === 'rect' ? x >= b.x0 && x <= b.x1 && y >= b.y0 && y <= b.y1 : ((x - b.x) / b.rx) ** 2 + ((y - b.y) / b.ry) ** 2 <= 1);
+/** 실제로 막는 모양 — 그림의 건물 둘레보다 조금 안쪽만 (2026-10-13 사용자 — "막혀서 못 가는 일이 있다, 길목을 넓혀 달라"):
+ *  사각형은 둘레를 PAD px 씩(변 길이의 30% 까지), 타원은 반지름 ELLIPSE 배. G 디버그도 이 모양을 그린다 */
+const PAD = 14;
+export const ELLIPSE = 0.85;
+export function blockShape(b: Block): Block {
+  if (b.type !== 'rect') return { ...b, rx: b.rx * ELLIPSE, ry: b.ry * ELLIPSE };
+  const px = Math.min(PAD, (b.x1 - b.x0) * 0.3);
+  const py = Math.min(PAD, (b.y1 - b.y0) * 0.3);
+  return { type: 'rect', x0: b.x0 + px, y0: b.y0 + py, x1: b.x1 - px, y1: b.y1 - py };
+}
+const blocked = (x: number, y: number, raw: Block) => {
+  const b = blockShape(raw);
+  return b.type === 'rect' ? x >= b.x0 && x <= b.x1 && y >= b.y0 && y <= b.y1 : ((x - b.x) / b.rx) ** 2 + ((y - b.y) / b.ry) ** 2 <= 1;
+};
 /** 걸을 수 있는 곳: 마을 안이고 막힌 곳(집 · 분수 · 텃밭 …)이 아닌 곳 */
 export const walkableIn = (d: TownDef, x: number, y: number) => inPoly(x, y, d.walk) && !d.blocks.some((b) => blocked(x, y, b));
 export const makeTownCat = (d: TownDef): TownCat => ({ x: d.start[0], y: d.start[1], flip: 1, moving: false, animT: 0 });
@@ -34,15 +48,19 @@ export const makeTownCat = (d: TownDef): TownCat => ({ x: d.start[0], y: d.start
 export function stepCat(d: TownDef, c: TownCat, ux: number, uy: number, dt: number) {
   const step = townWalk(d) * dt;
   const base = Math.atan2(uy, ux);
-  for (const k of [0, 0.5, -0.5, 1, -1, 1.5, -1.5]) {
-    const a = base + k;
-    const nx = c.x + Math.cos(a) * step;
-    const ny = c.y + Math.sin(a) * step * V;
-    if (!walkableIn(d, nx, ny)) continue;
+  const tryMove = (mx: number, my: number) => {
+    const nx = c.x + mx * step;
+    const ny = c.y + my * step * V;
+    if (!walkableIn(d, nx, ny)) return false;
     [c.x, c.y] = [nx, ny];
-    if (Math.abs(Math.cos(a)) > 0.2) c.flip = Math.sign(Math.cos(a));
+    if (Math.abs(mx) > 0.2) c.flip = Math.sign(mx);
     return true;
-  }
+  };
+  if (tryMove(ux, uy)) return true;
+  // 벽을 따라 미끄러지기 — 누른 방향의 가로 · 세로 몫만큼 (조이스틱을 비스듬히 밀어도 벽에 붙어 서지 않게)
+  if (Math.abs(ux) > 0.15 && tryMove(Math.sign(ux) * Math.max(0.6, Math.abs(ux)), 0)) return true;
+  if (Math.abs(uy) > 0.15 && tryMove(0, Math.sign(uy) * Math.max(0.6, Math.abs(uy)))) return true;
+  for (const k of [0.5, -0.5, 1, -1, 1.5, -1.5]) if (tryMove(Math.cos(base + k), Math.sin(base + k))) return true;
   return false;
 }
 /** 고양이에게서 (x, y) 까지 (고양이 키 배, 세로는 펴서) */

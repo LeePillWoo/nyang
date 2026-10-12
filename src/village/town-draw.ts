@@ -3,7 +3,7 @@
 import { CAT_FPS, CAT_ROW } from '../shared/cat.ts';
 import { drawFrame, type Sheet } from '../shared/sheet.ts';
 import { safe, wrapText } from '../shared/touch.ts';
-import { townC, type TownCat, type TownDef } from './town.ts';
+import { blockShape, townC, type TownCat, type TownDef } from './town.ts';
 
 export type R = { x: number; y: number; w: number; h: number };
 export const inR = (r: R, x: number, y: number) => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
@@ -120,7 +120,8 @@ export function drawTownGround(
     ctx.closePath();
     ctx.stroke();
     ctx.strokeStyle = 'rgba(255,40,40,0.9)';
-    for (const b of d.blocks) {
+    for (const raw of d.blocks) {
+      const b = blockShape(raw);
       ctx.beginPath();
       if (b.type === 'rect') ctx.rect(b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0);
       else ctx.ellipse(b.x, b.y, b.rx, b.ry, 0, 0, Math.PI * 2);
