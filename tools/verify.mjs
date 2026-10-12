@@ -1552,6 +1552,8 @@ try {
   //  화면 village-*.png · touch-village*.png · screen-village-portrait*.png · bag-page2.png
   console.log('\n[고양이마을 · 요리 · 친구 · 가방 쪽]');
   const VILLAGE = readJson('../src/data/village.json');
+  // 가판대 곁 = 요리집 앞 왼쪽 끝 화분 바로 밑, 바짝 붙은 자리 (2026-10-12 사용자 — 여기서 안 열렸다: 판정이 한 점이라 멀었다 → 요리집 앞줄 kitchen 두 점)
+  const KSPOT = [VILLAGE.kitchen[0][0] + 10, VILLAGE.blocks.find((b) => b.name === '요리집 앞 화분').y1 + 2];
   const VF = VILLAGE.friends;
   const prefOf = (fr, dish) => (fr.love.includes(dish) ? 'love' : fr.like.includes(dish) ? 'like' : fr.dislike.includes(dish) ? 'dislike' : 'normal');
   {
@@ -1593,7 +1595,7 @@ try {
     const farSign = await clickStill(await signAt());
     check(emptyClick.moved < 1 && !emptyClick.panel && farSign.moved < 1 && !farSign.panel, '빈 곳 · 먼 가판대를 클릭해도 걷지 않는다');
     // 가판대 곁에서 요리 가판대(요리집 앞 간판)를 누르면 창
-    await page.evaluate((k) => Object.assign(__game.village.cat, { x: k[0], y: k[1] + 4 }), VILLAGE.kitchen);
+    await page.evaluate((k) => Object.assign(__game.village.cat, { x: k[0], y: k[1] }), KSPOT);
     await sleep(800);
     await click2(page, await signAt());
     const atKitchen = await page.waitForFunction(() => __game.villageView.panel?.kind === 'kitchen', { timeout: 3000 }).then(() => true, () => false);
@@ -1855,7 +1857,7 @@ try {
     await kitchenTap();
     await sleep(700);
     const kFar = await page.evaluate(() => ({ moved: Math.hypot(__game.village.cat.x - 620, __game.village.cat.y - 470), panel: __game.villageView.panel }));
-    await page.evaluate((k) => Object.assign(__game.village.cat, { x: k[0], y: k[1] + 4 }), VILLAGE.kitchen);
+    await page.evaluate((k) => Object.assign(__game.village.cat, { x: k[0], y: k[1] }), KSPOT);
     await sleep(800);
     await kitchenTap();
     const atKitchen = await page.waitForFunction(() => __game.villageView.panel?.kind === 'kitchen', { timeout: 3000 }).then(() => true, () => false);
@@ -1901,7 +1903,7 @@ try {
     await sleep(400);
     await page.screenshot({ path: fsPath(new URL('screen-village-portrait-friend.png', OUT)) });
     await page.keyboard.press('Escape');
-    await page.evaluate((k) => Object.assign(__game.village.cat, { x: k[0], y: k[1] + 4 }), VILLAGE.kitchen);
+    await page.evaluate((k) => Object.assign(__game.village.cat, { x: k[0], y: k[1] }), KSPOT);
     await sleep(200);
     await page.keyboard.press('KeyE');
     await sleep(400);

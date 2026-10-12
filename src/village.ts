@@ -320,8 +320,14 @@ export function setAnim(p: Townie, a: Anim) {
 }
 /** 고양이에게서 (x, y) 까지 (고양이 키 배, 세로는 펴서) */
 const gap = (s: VillageState, x: number, y: number) => Math.hypot(x - s.cat.x, (y - s.cat.y) / V) / C;
-/** 대상의 자리 */
-export const targetAt = (s: VillageState, t: Target): [number, number] => (t.kind === 'kitchen' ? [data.kitchen[0], data.kitchen[1]] : [s.townies[t.i].x, s.townies[t.i].y]);
+/** 대상의 자리 — 친구는 서 있는 곳, 가판대는 요리집 앞줄(kitchen 두 점)에서 고양이와 가장 가까운 점
+ *  (2026-10-12 사용자 — 바짝 붙었는데 안 열렸다: 한 점이라 앞이 넓은 요리집의 화분 앞 · 건물 밑 끝에선 멀었다) */
+export const targetAt = (s: VillageState, t: Target): [number, number] => {
+  if (t.kind === 'friend') return [s.townies[t.i].x, s.townies[t.i].y];
+  const [[x0, y0], [x1, y1]] = data.kitchen;
+  const k = Math.max(0, Math.min(1, ((s.cat.x - x0) * (x1 - x0) + (s.cat.y - y0) * (y1 - y0)) / ((x1 - x0) ** 2 + (y1 - y0) ** 2)));
+  return [x0 + (x1 - x0) * k, y0 + (y1 - y0) * k];
+};
 /** 걸어서 (ux, uy) 쪽으로 한 걸음 — 막히면 ±30° · 60° · 90° 로 비켜 간다. 움직였으면 true */
 function stepToward(s: VillageState, ux: number, uy: number, dt: number) {
   const c = s.cat;

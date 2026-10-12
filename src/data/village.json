@@ -58,7 +58,7 @@
     { "type": "ellipse", "x": 690, "y": 682, "rx": 30, "ry": 18, "name": "덤불" }
   ],
   "start": [628, 855],
-  "kitchen": [515, 418],
+  "kitchen": [[375, 391], [575, 391]],
   "kitchenSign": [430, 292],
   "kitchenArea": [265, 145, 600, 420],
   "center": [630, 557],

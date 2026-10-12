@@ -409,7 +409,7 @@ const mixed = (seed: number) => {
 {
   const s = makeVillage(seeded(9));
   const rng = seeded(10);
-  assert.ok(walkable(VILLAGE.start[0], VILLAGE.start[1]) && walkable(VILLAGE.kitchen[0], VILLAGE.kitchen[1]), '시작점 · 가판대 앞은 걸을 수 있다');
+  assert.ok(walkable(VILLAGE.start[0], VILLAGE.start[1]), '시작점은 걸을 수 있다');
   for (let i = 0; i < 1800; i++) {
     const a = rng() * Math.PI * 2;
     updateVillage(s, { mx: Math.cos(a), my: Math.sin(a), act: false }, 1 / 60);
@@ -442,15 +442,36 @@ const mixed = (seed: number) => {
   const targets: Target[] = [{ kind: 'kitchen' }, ...FRIENDS.map((_, i) => ({ kind: 'friend' as const, i }))];
   const v = makeVillage(seeded(12));
   for (const t of targets) {
-    const [x, y] = targetAt(v, t);
-    const d = Math.min(...reached.map(([c, r]) => Math.hypot((c + 0.5) * CELL - x, ((r + 0.5) * CELL - y) / field.vertical) / C));
+    const d = Math.min(
+      ...reached.map(([c, r]) => {
+        [v.cat.x, v.cat.y] = [(c + 0.5) * CELL, (r + 0.5) * CELL];
+        const [x, y] = targetAt(v, t); // 가판대는 그 자리에서 가장 가까운 앞줄 점
+        return Math.hypot(v.cat.x - x, (v.cat.y - y) / field.vertical) / C;
+      }),
+    );
     assert.ok(d < VILLAGE.reach * 0.8, `${t.kind === 'kitchen' ? '가판대' : FRIENDS[t.i].name} 곁까지 걸어서 닿는다 (${d.toFixed(2)}배)`);
   }
-  // 가까이 서서 E — 가장 가까운 것
-  const e = makeVillage(seeded(13));
-  [e.cat.x, e.cat.y] = [VILLAGE.kitchen[0], VILLAGE.kitchen[1] + 2];
-  updateVillage(e, { mx: 0, my: 0, act: true }, 1 / 60);
-  assert.deepEqual(e.open, { kind: 'kitchen' }, '가판대 앞에서 E');
+  // 요리집 앞에 바짝 붙어 서면 어디서든 E 로 가판대 (2026-10-12 사용자 — 가장 가까이 붙었는데 안 열렸다):
+  //  앞줄의 x 마다 요리집 · 화분 안에서 아래로 내려와 처음 걸을 수 있는 자리 (막힌 곳에 딱 붙은 자리)
+  const [[kx0, ky], [kx1]] = VILLAGE.kitchen;
+  const hug = (x: number) => {
+    let y = ky - 40;
+    while (!walkable(x, y) && y < ky + 80) y += 1;
+    return y;
+  };
+  for (let x = kx0 - 8; x <= kx1 + 8; x += 6) {
+    const e = makeVillage(seeded(13));
+    [e.cat.x, e.cat.y] = [x, hug(x)];
+    updateVillage(e, { mx: 0, my: 0, act: true }, 1 / 60);
+    assert.deepEqual(e.open, { kind: 'kitchen' }, `요리집 앞 (${x}, ${e.cat.y}) 에 바짝 붙어 E 면 가판대`);
+  }
+  // 요리집 문 옆 구름 곁(오른쪽 · 아래)에선 구름 — 가판대가 가로채지 않는다
+  for (const [dx, dy] of [[C * 0.8, C * 0.2], [C * 0.2, C * 0.7]]) {
+    const e = makeVillage(seeded(13));
+    [e.cat.x, e.cat.y] = [e.townies[0].x + dx, e.townies[0].y + dy];
+    updateVillage(e, { mx: 0, my: 0, act: true }, 1 / 60);
+    assert.deepEqual(e.open, { kind: 'friend', i: 0 }, `${FRIENDS[0].name} 곁 (+${dx.toFixed(0)}, +${dy.toFixed(0)}) 에선 ${FRIENDS[0].name}`);
+  }
   // 곁에 서서 누르기 — 친구 몸 · 머리 · 머리 위 말풍선 자리 · 곁에 있을 땐 고양이를 눌러도 연다, 멀리 맨땅은 아무것도 아니다
   for (const [label, dy] of [['몸', -C * 0.5], ['머리', -C * 1.8], ['머리 위 말풍선', -C * 2.8]] as const) {
     const n = makeVillage(seeded(14));
@@ -464,7 +485,7 @@ const mixed = (seed: number) => {
     assert.deepEqual(n.open, { kind: 'friend', i: 1 }, `곁에서 ${FRIENDS[1].name}의 ${label}를 누르면 바로 말을 건다`);
   }
   const m = makeVillage(seeded(15));
-  [m.cat.x, m.cat.y] = [VILLAGE.kitchen[0], VILLAGE.kitchen[1] + 2];
+  [m.cat.x, m.cat.y] = [(kx0 + kx1) / 2, hug((kx0 + kx1) / 2)];
   updateVillage(m, { mx: 0, my: 0, act: false }, 1 / 60);
   assert.deepEqual(targetAtPoint(m, m.cat.x, m.cat.y - C * 0.5), { kind: 'kitchen' }, '가판대 곁에선 고양이를 눌러도 가판대');
   assert.equal(targetAtPoint(m, VILLAGE.center[0] - 60, VILLAGE.center[1] + 60), null, '먼 맨땅은 아무것도 아니다');
