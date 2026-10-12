@@ -94,7 +94,7 @@ npm run verify -- 숲       # 그 구간만 — 숲 미니게임장 + 필드 도
 - 배포는 `dist/` 를 `gh-pages` 브랜치에 올립니다 (방법은 [CLAUDE.md](CLAUDE.md)).
 
 ```
-src/          게임 코드 (main.ts 가 입력 · 장면 전환, 나머지는 장면·시스템별)
+src/          게임 코드 — main.ts 가 입력 · 장면 전환, 나머지는 폴더로: shared/ 공용 · field/ 필드 · dungeon/ 던전 · fishing/ 낚시 · village/ 마을 · mini/ 미니게임 · bag/ 가방 · 도감
 src/data/     게임 데이터 JSON
 src/assets/   게임용 그림 (WebP)
 tools/        리소스 변환 · 실제 브라우저 검증

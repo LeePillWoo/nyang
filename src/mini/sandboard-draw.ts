@@ -1,0 +1,684 @@
+// 샌드보드 그리기 — art/sandboarding 시트(배경 3장 · 장애물 · 장식 · 치즈 주행/동작 · 효과)로. 치즈는 화면 아래쪽에서 위(앞)를 보고 달리고,
+// 길은 지그재그로 꺾이고 폭이 바뀐다 (sandboard.ts 의 fences). 카메라는 보이는 앞길의 가운데 평균과 치즈 사이를 부드럽게 따라간다.
+// 시점: 처음부터 결승 뒤까지 왜곡 없는 평면(위에서 내려다본 그대로 — 화면 y = y0 − ppm·앞쪽 거리). 원근은 쓰지 않는다
+//   (2026-10-07 사용자 의견 — 내내 원근이면 멀미, 결승 앞에서만 말리게 했더니 결승 쪽이 계속 이상했다: 다가가는 3초 내내 화면이 일그러지고,
+//   바닥을 줄마다 따로 칠해 프레임이 떨어져 빤짝였다).
+// 바닥: 배경 세 장(위에서 아래로 01→02→03)의 가운데 — 장식 없는 모래 — 만 잘라 좌우로 [그림 | 거울] 이어 붙인 무늬를 한 번에 칠한다 (길이 어디로 휘어도 깔린다).
+//   앞으로 갈수록(화면 위로) 무늬의 위쪽 줄 — 거꾸로 읽으면 그림이 위아래로 뒤집힌다(2026-10-06 에 그랬다).
+// 길은 밝은 모래 띠 + 양옆 밧줄 울타리 · 깃발, 바깥엔 장식(그림 그대로 — 뒤집지 않는다), 모퉁이 앞 바깥쪽엔 꺾는 쪽을 가리키는 표지판.
+// 출발점은 천막·보드 거치대, 결승선은 체크무늬 + 등불 · 스핑크스 · 피라미드 — 길은 결승 너머 RUN_OUT m 까지 이어지고, 넘으면 미끄러지다 서고 카드가 뜬다.
+// 좌표 · 피벗은 src/data/sandboard-atlas.json (tools/assets.mjs 가 art/sandboarding/sprites.json 에서 만든다). 로직은 sandboard.ts.
+import atlas from '../data/sandboard-atlas.json' with { type: 'json' };
+import { drawEmote } from '../shared/emote.ts';
+import { clock, drawCard, drawLeave, miniLayout, type MiniButton } from '../shared/mini-draw.ts';
+import { fences, FX_TIME, OBS, SAND, type SandState } from './sandboard.ts';
+
+type Frame = [string, number, number, number, number, number, number];
+const FR = atlas.frames as unknown as Record<string, Frame>;
+const BG = atlas.bg;
+/** 불러올 그림 (배경 조각 + 시트) */
+export const SAND_IMAGES = [...new Set([...BG.tiles, ...Object.values(FR).map((f) => f[0])])];
+export type SandArt = Record<string, CanvasImageSource>;
+export type SandViewOpts = { t: number; touch: boolean; hover: MiniButton; best: number | null };
+/** 캔버스 픽셀 기준: 화면 가운데 x · 길 반폭 · 치즈 y · m 당 px · 화면 가운데의 가로 자리(카메라) (검증 도구용 — 앞이 화면 위) */
+export const sandView = { cx: 0, half: 1, y0: 0, ppm: 1, cam: 0 };
+/** 가로 자리 x · 치즈보다 앞쪽 거리 dd(m) 의 화면 자리 (캔버스 px) */
+export const sandPoint = (x: number, dd: number) => ({ x: sandView.cx + (x - sandView.cam) * sandView.half, y: sandView.y0 - sandView.ppm * dd });
+
+/** 배경 px 로 1m · 그림 배율 (배경 px / 시트 px) */
+const M = 16;
+const OB_K = 0.46;
+const RIDE_K = 0.6;
+const ACT_K = 0.48;
+const DECO_K = 0.4;
+const FX_K = 0.55;
+/** 결승 너머 길(밝은 띠 · 울타리)이 이어지는 거리(m) — 넘은 뒤 미끄러지다 서는 동안 길이 화면 안에서 끊기지 않게 */
+const RUN_OUT = 90;
+/** 길 반폭 (배경 px — 배경 그림의 주행 폭) · 바닥 무늬로 쓰는 배경 가운데(장식 없는 모래)의 x · 폭 */
+const PLAY_HALF = (BG.playX[1] - BG.playX[0]) / 2;
+const SAND_X = 300;
+const SAND_W = 424;
+/**
+ * 카메라: 화면에 보이는 앞 거리의 LOOK 만큼의 길 가운데 평균을 LOOK_K 만큼(나머지는 치즈) 따라간다 — 다가오는 길이 화면 안에 들어오고,
+ * 짧은 지그재그마다 휙휙 흔들리지 않게 (평균이라 고르다). CAM_T = 따라가는 시간 상수(초), 치즈는 화면 가운데에서 화면 폭의 CAM_ROOM 안
+ */
+const LOOK = 0.8;
+const LOOK_K = 0.6;
+const CAM_T = 0.5;
+const CAM_ROOM = 0.3;
+
+/** 시트의 칸 하나를 피벗이 (x, y) 에 오게 */
+function spr(ctx: CanvasRenderingContext2D, art: SandArt, id: string, x: number, y: number, k: number, flipX = 1, flipY = 1) {
+  const f = FR[id];
+  if (!f) return;
+  const [sheet, fx, fy, fw, fh, px, py] = f;
+  ctx.save();
+  ctx.translate(x, y);
+  if (flipX < 0 || flipY < 0) ctx.scale(flipX, flipY);
+  ctx.drawImage(art[sheet], fx, fy, fw, fh, -px * k, -py * k, fw * k, fh * k);
+  ctx.restore();
+}
+/** 치즈 얼굴을 (x, y) 가운데에 지름 2r 로 (land_01 칸에서 머리는 피벗 기준 (−30, −140) 쯤, 폭 150px) */
+function face(ctx: CanvasRenderingContext2D, art: SandArt, x: number, y: number, r: number) {
+  const q = (2 * r) / 150;
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fillStyle = '#ffe2b8';
+  ctx.fill();
+  ctx.clip();
+  spr(ctx, art, 'land_01', x - 30 * q, y + 140 * q, q);
+  ctx.restore();
+}
+const two = (n: number) => `_0${n}`;
+const hash = (i: number) => {
+  const v = Math.sin(i * 127.1 + 311.7) * 43758.5453;
+  return v - Math.floor(v);
+};
+const DECOS = ['cactus_tall', 'cactus_cluster', 'flower_cactus', 'dry_shrub', 'palm_small', 'palm_large', 'rock_low', 'rock_stack', 'rock_arch', 'ruined_wall', 'pillar_short', 'pillar_cap', 'lantern_post', 'jars', 'bone_skeleton'];
+/** 바닥에 깔리는 효과 — 치즈를 덮지 않게 먼저 그린다 */
+const GROUND_FX = new Set(['carve_spray', 'land_burst', 'jump_puff']);
+/** 바닥에 깔리는 것 — 고양이·장애물보다 먼저 */
+const FLAT = new Set(['sand_pit', 'sand_bump', 'jump_ramp', 'boost_pad']);
+
+/** 바닥 무늬: 배경 세 장의 가운데를 위에서 아래로 01 → 02 → 03, 좌우로는 [그림 | 거울] — 어느 쪽으로 이어도 이음매가 없다. 한 번 만들어 둔다 */
+let ground: { art: SandArt; ctx: CanvasRenderingContext2D; pat: CanvasPattern } | null = null;
+function groundPattern(ctx: CanvasRenderingContext2D, art: SandArt) {
+  if (ground?.art === art && ground.ctx === ctx) return ground.pat;
+  const c = document.createElement('canvas');
+  c.width = SAND_W * 2;
+  c.height = BG.h * BG.tiles.length;
+  const g = c.getContext('2d')!;
+  BG.tiles.forEach((t, i) => {
+    g.drawImage(art[t], SAND_X, 0, SAND_W, BG.h, 0, i * BG.h, SAND_W, BG.h);
+    g.save();
+    g.translate(SAND_W * 2, i * BG.h);
+    g.scale(-1, 1);
+    g.drawImage(art[t], SAND_X, 0, SAND_W, BG.h, 0, 0, SAND_W, BG.h);
+    g.restore();
+  });
+  ground = { art, ctx, pat: ctx.createPattern(c, 'repeat')! };
+  return ground.pat;
+}
+/** 카메라 가로 자리 (새 판이면 그 자리에서 바로) */
+const cam = { run: null as SandState | null, x: 0, t: 0 };
+
+/**
+ * 들어가기 전에(화면이 가려진 동안) 미리 해 둔다 — 첫 프레임이 230ms 걸리고 처음 2초에 0.15~0.4초씩 멈칫하던 것 (2026-10-07 "처음에 렉"):
+ * 바닥 무늬를 만들고, 주행 · 드리프트 · 고개 돌림 컷의 보드 자리를 재고, 그림마다 한 번씩 작게 그려 그래픽 카드에 올리고 줄인 그림(밉맵)까지 만든다.
+ * 굵은 한글 · 이모지 글꼴도 미리 한 번 쓴다 — 처음 쓰는 순간 글꼴을 불러오느라 첫 프레임 213ms 중 207ms 가 글자 재기였다
+ */
+export function warmSandboard(ctx: CanvasRenderingContext2D, art: SandArt) {
+  groundPattern(ctx, art);
+  for (const row of ['ride', 'look_left', 'look_right', 'drift_left', 'drift_right']) rowAngle(art, row);
+  board(art, 'ride_01');
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.imageSmoothingQuality = 'medium';
+  ctx.globalAlpha = 0.01;
+  for (const img of Object.values(art)) ctx.drawImage(img, 0, 0, 4, 4);
+  const text = '🐾 모래 미끄럼틀 ⏱ 0:00.0 출발! 골인! 완주! 넘어졌어요 점수 냥코인 최고 기록 다시 타기 돌아가기 하트 +1 방패! 자석! 부스트! 막았다!';
+  for (const px of [15, 17, 18, 20, 26, 44]) {
+    ctx.font = `bold ${px}px system-ui, sans-serif`;
+    ctx.measureText(text);
+    ctx.fillText(text, 0, px);
+  }
+  ctx.restore();
+}
+
+export function drawSandboard(ctx: CanvasRenderingContext2D, cw: number, ch: number, s: SandState, art: SandArt, v: SandViewOpts) {
+  const dpr = Math.min(devicePixelRatio, 2);
+  // 화면 배율(배경 px → 화면 px). CSS px 로 정해 기기 픽셀로: 가로 화면은 길 폭이 화면의 45% 쯤 · 앞이 35m 쯤 보이게
+  // (휴대폰 가로처럼 낮은 화면도 치즈가 너무 작아지지 않게 0.75 까지는), 세로 화면은 길 폭이 화면 폭의 80% 쯤
+  const W = cw / dpr;
+  const H = ch / dpr;
+  const k = dpr * (W > H ? Math.max(Math.min(W / 1250, H / 720), Math.min(0.75, H / 520)) : Math.min(W / 720, H / 1100));
+  const cx = cw / 2;
+  const half = PLAY_HALF * k;
+  // 치즈 자리 — 가로 휴대폰(터치)은 아래 가운데에 점프 버튼이 있어 조금 위로
+  const y0 = ch * (v.touch && cw > ch ? 0.64 : 0.78);
+  const ppm = M * k;
+  const F = (d: number) => fences(s.course, d);
+  const C = (d: number) => F(d).c;
+  /** 거리 d 의 울타리 바깥으로 extra 만큼 (side −1 왼쪽 · 1 오른쪽) */
+  const out = (d: number, side: number, extra: number) => {
+    const f = F(d);
+    return f.c + side * (SAND.edge * f.w + extra);
+  };
+  // 카메라: 보이는 앞길(앞 거리의 LOOK 만큼)의 가운데 평균 쪽으로 부드럽게 — 지그재그를 따라 휙휙 흔들리지 않게 (치즈는 화면 가운데에서 CAM_ROOM 안)
+  let mean = 0;
+  for (let i = 1; i <= 8; i++) mean += C(s.d + ((LOOK * y0) / ppm) * (i / 8)) / 8;
+  const want = mean * LOOK_K + s.x * (1 - LOOK_K);
+  if (cam.run !== s) Object.assign(cam, { run: s, x: want, t: v.t });
+  cam.x += (want - cam.x) * (1 - Math.exp(-Math.min(0.1, Math.max(0, v.t - cam.t)) / CAM_T));
+  cam.t = v.t;
+  const room = (cw * CAM_ROOM) / half;
+  cam.x = Math.max(s.x - room, Math.min(s.x + room, cam.x));
+  Object.assign(sandView, { cx, half, y0, ppm, cam: cam.x });
+  const Y = (d: number) => y0 - ppm * (d - s.d);
+  const X = (x: number) => cx + (x - cam.x) * half;
+  // 보이는 거리: 화면 아래 끝 너머 6m(말뚝 키만큼) ~ 화면 위 끝 너머 2m. 이 밖은 그리지 않는다
+  const dMin = s.d - (ch - y0) / ppm - 6;
+  const dMax = s.d + y0 / ppm + 2;
+  const seen = (d: number) => d >= dMin && d <= dMax;
+
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  // 줄여 그리는 그림(모래 무늬 · 장식 · 물건)은 밉맵으로 걸러 그린다 — 움직일 때 잔무늬가 반짝이지 않게 (끝에서 되돌린다)
+  const quality = ctx.imageSmoothingQuality;
+  ctx.imageSmoothingQuality = 'medium';
+  // 바닥 모래: 무늬 1m = M px · 길 반폭 = PLAY_HALF px (배율 k 면 배경 그림 시절과 같은 크기). 무늬 줄 −d·M 이 거리 d 의 화면 y 에 오게 — 한 번에
+  const pat = groundPattern(ctx, art);
+  pat.setTransform(new DOMMatrix([k, 0, 0, k, cx - cam.x * PLAY_HALF * k, y0 + s.d * M * k]));
+  ctx.fillStyle = pat;
+  ctx.fillRect(0, 0, cw, ch);
+  // 길: 울타리 사이는 밝게, 바깥은 조금 어둡게 (1.5m 마다 이은 띠 — 날카로운 모퉁이도 따라가게). 결승 너머 RUN_OUT m 까지
+  ctx.beginPath();
+  const dTop = Math.min(dMax, SAND.length + RUN_OUT);
+  for (let d = dMin; d < dTop + 1.5; d += 1.5) ctx.lineTo(X(out(d, -1, 0.12)), Y(d));
+  for (let d = Math.floor(dTop / 1.5) * 1.5 + 1.5; d > dMin - 1.5; d -= 1.5) ctx.lineTo(X(out(d, 1, 0.12)), Y(d));
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(255, 247, 230, 0.2)';
+  ctx.fill();
+  ctx.rect(cw, 0, -cw, ch); // 거꾸로 돈 화면 사각형 — 띠 바깥만 칠한다
+  ctx.fillStyle = 'rgba(150, 92, 40, 0.1)';
+  ctx.fill();
+
+  // 그릴 것 모으기 (화면 아래쪽 = 가까운 것이 위에)
+  const items: { y: number; draw: () => void }[] = [];
+  const at = (d: number, draw: () => void) => {
+    if (seen(d)) items.push({ y: Y(d), draw });
+  };
+  // 양옆 밧줄 울타리: 7m 마다 말뚝, 세 번째마다 깃발. 말뚝 사이 밧줄은 1m 마다 울타리 줄을 따라 (날카로운 모퉁이도) 가운데가 살짝 처진다
+  const POST = 7;
+  const POST_H = 70;
+  for (const side of [-1, 1]) {
+    for (let i = Math.max(0, Math.floor(dMin / POST)); i * POST < Math.min(dMax, SAND.length + RUN_OUT); i++) {
+      const d = i * POST;
+      const flag = i % 3 === 0;
+      at(d, () => {
+        const px = X(out(d, side, 0.15));
+        const y = Y(d);
+        if (d + POST < SAND.length + RUN_OUT) {
+          ctx.strokeStyle = 'rgba(140, 98, 52, 0.95)';
+          ctx.lineWidth = 4 * k;
+          ctx.beginPath();
+          for (let j = 0; j <= POST; j++) {
+            const dd = d + j;
+            const lift = POST_H * k * (1 - 0.2 * Math.sin((Math.PI * j) / POST));
+            ctx.lineTo(X(out(dd, side, 0.15)), Y(dd) - lift);
+          }
+          ctx.stroke();
+        }
+        spr(ctx, art, flag ? (i % 2 ? 'flag_teal' : 'flag_red') : 'rope_post', px, y, DECO_K * k * (flag ? 0.8 : 0.7));
+      });
+    }
+  }
+  // 바깥 장식: 양옆 5m 마다 (가끔 비움), 울타리 밖 0.38 ~ 1.68 (그림 그대로 — 뒤집지 않는다)
+  for (let i = Math.max(1, Math.floor(dMin / 5)); i * 5 < Math.min(dMax, SAND.length - 10); i++)
+    for (const side of [-1, 1]) {
+      const h = hash(i * 2 + (side > 0 ? 1 : 0));
+      if (h < 0.3) continue;
+      const id = DECOS[Math.floor(hash(i * 7 + side) * DECOS.length)];
+      const d = i * 5 + hash(i * 3 + side) * 3;
+      const extra = 0.38 + hash(i * 5 + side) * 1.3;
+      at(d, () => spr(ctx, art, id, X(out(d, side, extra)), Y(d), DECO_K * k * (0.7 + h * 0.35)));
+    }
+  // 모퉁이 · 시케인 입구 6m 앞: 바깥쪽에 꺾는 쪽을 가리키는 표지판 (그림은 오른쪽을 가리켜서 왼쪽으로 꺾을 때만 좌우로 뒤집는다)
+  s.course.segs.forEach((g, i) => {
+    const turn = g.kind === 'corner' || (g.kind === 'chicane' && s.course.segs[i - 1]?.kind !== 'chicane');
+    if (!turn || Math.abs(g.s1 - g.s0) < 0.02) return;
+    const dir = Math.sign(g.s1 - g.s0);
+    const d = g.d0 - 6;
+    if (d < SAND.length - 20) at(d, () => spr(ctx, art, 'arrow_sign', X(out(d, -dir, 0.4)), Y(d), DECO_K * k * 0.85, dir));
+  });
+  // 출발: 천막 · 보드 거치대 · 항아리 / 결승: 스핑크스 · 피라미드 · 등불 (울타리 바깥으로 extra)
+  const deco = (id: string, side: number, extra: number, d: number, m = 1) => at(d, () => spr(ctx, art, id, X(out(d, side, extra)), Y(d), DECO_K * k * m));
+  deco('tent', -1, 0.48, 6);
+  deco('board_rack', 1, 0.46, 2);
+  deco('jars', -1, 0.33, -3);
+  const END = SAND.length;
+  deco('cat_sphinx', -1, 0.53, END + 10, 1.1);
+  deco('small_pyramid', 1, 0.58, END + 14, 1.2);
+  for (const side of [-1, 1]) deco('lantern_post', side, 0.08, END, 0.8);
+
+  // 결승선 (바닥, 길을 가로질러): 밝은 띠 하나 위에 어두운 칸만 — 칸끼리 맞닿은 이음매가 반짝이지 않게
+  if (seen(END)) {
+    const n = 16;
+    const quad = (d1: number, d2: number, a: number, b: number) => {
+      const f1 = F(d1);
+      const f2 = F(d2);
+      const e1 = SAND.edge * f1.w + 0.13;
+      const e2 = SAND.edge * f2.w + 0.13;
+      ctx.beginPath();
+      ctx.moveTo(X(f1.c - e1 + 2 * e1 * a), Y(d1));
+      ctx.lineTo(X(f1.c - e1 + 2 * e1 * b), Y(d1));
+      ctx.lineTo(X(f2.c - e2 + 2 * e2 * b), Y(d2));
+      ctx.lineTo(X(f2.c - e2 + 2 * e2 * a), Y(d2));
+      ctx.closePath();
+      ctx.fill();
+    };
+    ctx.fillStyle = 'rgba(255,250,240,0.92)';
+    quad(END, END + 1.2, 0, 1);
+    ctx.fillStyle = 'rgba(60,45,35,0.88)';
+    for (let j = 0; j < 2; j++) for (let i = (j + 1) % 2; i < n; i += 2) quad(END + j * 0.6, END + (j + 1) * 0.6, i / n, (i + 1) / n);
+  }
+
+  // 바닥 물건 (구덩이·둔덕·점프대·가속 발판)
+  for (const ob of s.obs) {
+    if (!FLAT.has(ob.kind) || !seen(ob.d)) continue;
+    spr(ctx, art, ob.kind, X(ob.x), Y(ob.d), OB_K * k * OBS[ob.kind].k);
+  }
+  // 서 있는 물건 · 줍는 것
+  for (const ob of s.obs) {
+    if (FLAT.has(ob.kind) || ob.got || !seen(ob.d)) continue;
+    const o = OBS[ob.kind];
+    const pickup = o.role !== 'hit' && o.role !== 'tall';
+    at(ob.d, () => {
+      const q = k;
+      const x = X(ob.x);
+      const y = Y(ob.d);
+      if (pickup) {
+        // 줍는 것: 그림자 위에서 둥실
+        ctx.fillStyle = 'rgba(90,60,30,0.22)';
+        ctx.beginPath();
+        ctx.ellipse(x, y, 32 * q * o.k, 10 * q * o.k, 0, 0, Math.PI * 2);
+        ctx.fill();
+        spr(ctx, art, ob.kind, x, y - (8 + Math.sin(v.t * 4 + ob.d) * 4) * q, OB_K * q * o.k);
+      } else {
+        ctx.globalAlpha = ob.hit ? 0.55 : 1;
+        spr(ctx, art, ob.kind, x, y, OB_K * q * o.k);
+        ctx.globalAlpha = 1;
+      }
+    });
+  }
+
+  // 바닥 효과 (촤악 모래 · 착지 파동 · 점프 먼지) — 치즈·물건 밑에
+  const fxFrame = (f: SandState['fx'][number]) => f.id + two(Math.min(6, Math.floor((f.t / FX_TIME) * 6) + 1));
+  for (const f of s.fx) if (GROUND_FX.has(f.id) && seen(f.d)) spr(ctx, art, fxFrame(f), X(f.x), Y(f.d), FX_K * k, f.flip ?? 1);
+
+  // 치즈
+  at(s.d, () => drawCat(ctx, art, s, X(s.x), y0, k, v.t, ppm));
+  items.sort((a, b) => a.y - b.y);
+  for (const it of items) it.draw();
+
+  // 위에 뜨는 효과 (충돌 별 · 줍기 반짝임) · 떠오르는 글자
+  for (const f of s.fx) if (!GROUND_FX.has(f.id) && seen(f.d)) spr(ctx, art, fxFrame(f), X(f.x), Y(f.d), FX_K * k, f.flip ?? 1);
+  ctx.textAlign = 'center';
+  ctx.lineJoin = 'round';
+  for (const p of s.pops) {
+    if (!seen(p.d)) continue;
+    const q = k;
+    const a = Math.min(1, (0.9 - p.t) / 0.3);
+    ctx.globalAlpha = Math.max(0, a);
+    ctx.font = `bold ${Math.round(26 * q)}px system-ui, sans-serif`;
+    ctx.lineWidth = 6 * q;
+    ctx.strokeStyle = 'rgba(110, 70, 30, 0.9)';
+    const y = Y(p.d) - (50 + p.t * 70) * q;
+    ctx.strokeText(p.text, X(p.x) + 30 * q, y);
+    ctx.fillStyle = '#ffd84a';
+    ctx.fillText(p.text, X(p.x) + 30 * q, y);
+  }
+  ctx.globalAlpha = 1;
+  drawHud(ctx, cw, ch, dpr, s, art, v);
+  ctx.imageSmoothingQuality = quality;
+}
+
+/**
+ * 주행 컷(ride · look · drift)의 보드: 칸 안의 보드 중심과 그려진 기울기. 그림에서 한 번 잰다 —
+ * 보드(나무색·청록 픽셀)의 무게중심과 주축. 드리프트 컷은 보드가 약 32° 꺾여 그려져 있고 기준점도 주행 컷과 달라서,
+ * 기준점 대신 보드 중심을 같은 자리에 두고 "물리 각도 − 그려진 기울기" 만큼 돌린다 (컷이 바뀌어도 보드가 튀지 않는다).
+ */
+type BoardInfo = { cx: number; cy: number; ang: number };
+const boards = new Map<string, BoardInfo>();
+function board(art: SandArt, id: string): BoardInfo {
+  const hit = boards.get(id);
+  if (hit) return hit;
+  const [sheet, fx, fy, fw, fh, px, py] = FR[id];
+  const c = document.createElement('canvas');
+  c.width = fw;
+  c.height = fh;
+  const g = c.getContext('2d', { willReadFrequently: true })!;
+  g.drawImage(art[sheet], fx, fy, fw, fh, 0, 0, fw, fh);
+  const d = g.getImageData(0, 0, fw, fh).data;
+  let n = 0;
+  let sx = 0;
+  let sy = 0;
+  let sxx = 0;
+  let syy = 0;
+  let sxy = 0;
+  for (let j = 0; j < fh; j++)
+    for (let i = 0; i < fw; i++) {
+      const o = (j * fw + i) * 4;
+      if (d[o + 3] < 128) continue;
+      const r = d[o];
+      const gg = d[o + 1];
+      const b = d[o + 2];
+      if (!((r > gg && gg > b && r < 170 && r - b > 40) || (b > r + 20 && gg > r))) continue;
+      n++;
+      sx += i;
+      sy += j;
+      sxx += i * i;
+      syy += j * j;
+      sxy += i * j;
+    }
+  let info: BoardInfo = { cx: px, cy: py - 90, ang: 0 };
+  if (n > 200) {
+    const mx = sx / n;
+    const my = sy / n;
+    let a = 0.5 * Math.atan2(2 * (sxy / n - mx * my), sxx / n - mx * mx - (syy / n - my * my)) - Math.PI / 2;
+    while (a < -Math.PI / 2) a += Math.PI;
+    while (a > Math.PI / 2) a -= Math.PI;
+    info = { cx: mx, cy: my, ang: a };
+  }
+  boards.set(id, info);
+  return info;
+}
+/** 줄(ride · drift_left …)의 평균 기울기 — 컷마다 재면 그림의 작은 흔들림까지 지워 보드가 덜덜 떤다 */
+const rowAng = new Map<string, number>();
+function rowAngle(art: SandArt, row: string) {
+  let a = rowAng.get(row);
+  if (a === undefined) {
+    a = 0;
+    for (let i = 1; i <= 6; i++) a += board(art, row + two(i)).ang / 6;
+    rowAng.set(row, a);
+  }
+  return a;
+}
+
+/** 모래 알갱이 (화면 px) — 미끄러질 때 보드 꼬리에서 바깥으로 튄다. 바닥에 떨어진 건 바닥과 함께 아래로 흘러간다 */
+let grains: { x: number; y: number; vx: number; vy: number; t: number; life: number; r: number }[] = [];
+let grainRun: SandState | null = null;
+let grainT = 0;
+let grainDebt = 0;
+/** 드리프트 컷을 쓰는 중인가 (경계에서 컷이 깜빡이지 않게 들어갈 때 21°, 나올 때 15°) */
+let drifting = false;
+
+/** 치즈: 땅에선 뒷모습 주행 — 보드가 물리 각도대로 돌고, 많이 꺾이면 드리프트 컷. 공중은 점프 · 내려오면 착지 · 부딪히면 넘어졌다 일어남 */
+function drawCat(ctx: CanvasRenderingContext2D, art: SandArt, s: SandState, x: number, y: number, k: number, t: number, ppm: number) {
+  const p = s.air > 0 ? 1 - s.air / s.airMax : 0;
+  const height = s.airMax >= SAND.rampJump ? 95 : s.airMax <= SAND.bump ? 38 : 60;
+  const lift = s.air > 0 ? Math.sin(Math.PI * p) * height * k : 0;
+  const ride = s.dizzy <= 0 && !(s.phase === 'done' && s.fell) && s.air <= 0 && s.landT >= 0.5;
+  const q = RIDE_K * k;
+  const rt = s.t + s.doneT; // 그림 시계 — 결승 뒤 미끄러지는 동안에도 흐른다
+  // 보드 중심 (바닥) — 주행 컷에서 보드 중심이 기준점보다 위에 있는 만큼
+  const bx = x;
+  const by = y - (FR.ride_01[6] - board(art, 'ride_01').cy) * q;
+  const yaw = s.yaw;
+  const sin = Math.sin(yaw);
+  const cos = Math.cos(yaw);
+  // 그림자: 주행 중엔 보드 모양으로 보드와 같이 돈다. 공중·동작 컷은 둥근 그림자
+  ctx.fillStyle = 'rgba(90,60,30,0.26)';
+  ctx.beginPath();
+  if (ride) ctx.ellipse(bx + 4 * q, by + 8 * q, 30 * q, 92 * q, yaw, 0, Math.PI * 2);
+  else ctx.ellipse(x, y - 4 * k, (34 - lift / k / 8) * k, (11 - lift / k / 20) * k, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // 모래: 꼬리 뒤로 흐르는 줄 + 미끄러짐만큼 바깥으로 튀는 모래 + 알갱이
+  const ground = s.air <= 0 && s.dizzy <= 0 && (s.phase === 'play' || (!s.fell && s.v > 2));
+  const L = 80 * q;
+  const tx = bx - sin * L;
+  const ty = by + cos * L;
+  const out = -Math.sign(yaw) || 1; // 꼬리가 밀려나는 쪽 = 모래가 튀는 쪽
+  const spray = Math.min(1, s.slip * 1.6 + Math.abs(s.lean) * 0.25);
+  if (ground) {
+    ctx.save();
+    ctx.globalAlpha = 0.85;
+    ctx.translate(tx, ty);
+    ctx.rotate(yaw);
+    // 카빙으로 빨라지는 동안엔 꼬리가 길게 늘어난다
+    const stretch = 1 + (s.carveT > 0 ? 0.7 : 0) + Math.max(0, (s.v - SAND.vMax) / 8);
+    ctx.scale(1, stretch);
+    spr(ctx, art, 'sand_trail' + two((Math.floor(rt * 8) % 6) + 1), 0, -6 * q, FX_K * k, 1, -1);
+    ctx.restore();
+    if (Math.abs(s.lean) > 0.08 || s.slip > 0.08) {
+      // 치즈를 가리지 않게: 꼬리 바깥·뒤쪽에, 조금 옅게
+      ctx.save();
+      ctx.globalAlpha = spray * 0.85;
+      ctx.translate(tx + out * 24 * q, ty + 6 * q);
+      ctx.rotate(yaw * 0.5);
+      spr(ctx, art, 'carve_spray' + two((Math.floor(rt * 10) % 6) + 1), 0, 0, FX_K * k * (0.35 + 0.45 * spray), out);
+      ctx.restore();
+    }
+  }
+  // 알갱이: 새 판이면 비우고, 미끄러짐만큼 뿌린다 (초당 최대 110알)
+  if (grainRun !== s) {
+    grainRun = s;
+    grains = [];
+    grainT = t;
+  }
+  const dt = Math.min(0.05, Math.max(0, t - grainT));
+  grainT = t;
+  if (ground) {
+    grainDebt += (s.slip * 110 + Math.abs(s.lean) * 12) * dt;
+    for (; grainDebt >= 1; grainDebt--) {
+      const sp = (110 + Math.random() * 170) * k * (0.5 + s.slip);
+      grains.push({
+        x: tx + (Math.random() - 0.5) * 18 * q,
+        y: ty + (Math.random() - 0.5) * 18 * q,
+        vx: out * sp * (0.7 + Math.random() * 0.5),
+        vy: (Math.random() * 90 - 20) * k,
+        t: 0,
+        life: 0.35 + Math.random() * 0.3,
+        r: (1.6 + Math.random() * 2.2) * k,
+      });
+    }
+  } else grainDebt = 0;
+  const flow = s.fell ? 0 : s.v * ppm;
+  ctx.fillStyle = '#e8c48c';
+  for (const g of grains) {
+    g.t += dt;
+    const drag = Math.exp(-4 * dt);
+    g.vx *= drag;
+    g.vy *= drag;
+    g.x += g.vx * dt;
+    g.y += (g.vy + flow) * dt;
+    ctx.globalAlpha = Math.max(0, 1 - g.t / g.life) * 0.85;
+    ctx.beginPath();
+    ctx.arc(g.x, g.y, g.r * (1 + g.t * 1.5), 0, Math.PI * 2);
+    ctx.fill();
+  }
+  grains = grains.filter((g) => g.t < g.life);
+  ctx.globalAlpha = 1;
+
+  if (ride) {
+    // 주행: 많이 꺾이면 드리프트 컷, 아니면 주행 컷(가끔 고개 돌림). 어느 컷이든 보드 중심을 같은 자리에, 물리 각도로
+    const a = Math.abs(yaw);
+    if (a > 0.37) drifting = true;
+    else if (a < 0.26) drifting = false;
+    const ph = rt % 6;
+    const c = Math.floor(rt / 6);
+    let row = 'ride';
+    let n = (Math.floor(rt * 8) % 6) + 1;
+    if (drifting) row = yaw < 0 ? 'drift_left' : 'drift_right';
+    else if (s.phase === 'play' && c % 3 !== 0 && ph < 0.75 && a < 0.12) {
+      row = c % 2 ? 'look_left' : 'look_right';
+      n = Math.floor(ph * 8) + 1;
+    }
+    const id = row + two(n);
+    const [sheet, fx, fy, fw, fh] = FR[id];
+    const b = board(art, id);
+    ctx.save();
+    ctx.translate(bx, by);
+    ctx.rotate(yaw - rowAngle(art, row));
+    ctx.drawImage(art[sheet], fx, fy, fw, fh, -b.cx * q, -b.cy * q, fw * q, fh * q);
+    ctx.restore();
+  } else {
+    let id: string;
+    if (s.dizzy > 0 || (s.phase === 'done' && s.fell)) {
+      const f = s.phase === 'done' ? 0 : Math.min(11, Math.floor((1 - s.dizzy / SAND.dizzy) * 12));
+      id = s.phase === 'done' ? 'fall_06' : f < 6 ? 'fall' + two(f + 1) : 'get_up' + two(f - 5);
+    } else if (s.air > 0) id = 'jump' + two(Math.min(6, Math.floor(p * 6) + 1));
+    else id = 'land' + two(Math.min(6, Math.floor(s.landT * 12) + 1));
+    spr(ctx, art, id, x, y - lift, ACT_K * k, s.flip);
+  }
+  // 방패: 둥근 막 · 자석: 머리 위 자석
+  if (s.shield > 0) {
+    const blink = s.shield < 2 ? 0.5 + 0.5 * Math.sin(t * 20) : 1;
+    ctx.globalAlpha = 0.16 * blink;
+    ctx.fillStyle = '#7cc8ff';
+    ctx.strokeStyle = '#e8f6ff';
+    ctx.lineWidth = 3 * k;
+    ctx.beginPath();
+    ctx.ellipse(x, y - lift - 55 * k, 52 * k, 66 * k, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 0.55 * blink;
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+  if (s.magnet > 0) {
+    ctx.globalAlpha = s.magnet < 2 ? 0.5 + 0.5 * Math.sin(t * 20) : 1;
+    spr(ctx, art, 'magnet_pickup', x + Math.sin(t * 6) * 4 * k, y - lift - 112 * k, OB_K * k * 0.3);
+    ctx.globalAlpha = 1;
+  }
+  drawEmote(ctx, x, y - lift - 140 * k, 50 * k);
+}
+
+/** HUD (CSS px): 왼쪽 위 얼굴 + 하트 + 지금 켜진 보상 · 가운데 이름판 + 시간 · 오른쪽 위 냥코인 + 돌아가기 · 오른쪽 세로 진행 막대 · 결과 */
+function drawHud(ctx: CanvasRenderingContext2D, cw: number, ch: number, dpr: number, s: SandState, art: SandArt, v: SandViewOpts) {
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const W = cw / dpr;
+  const H = ch / dpr;
+  const L = miniLayout(W, H);
+  const k = L.k;
+  const plate = (x: number, y: number, w: number, h: number, fill = 'rgba(255,248,232,0.94)') => {
+    ctx.fillStyle = fill;
+    ctx.strokeStyle = 'rgba(140,100,60,0.55)';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.roundRect(x, y, w, h, h / 2);
+    ctx.fill();
+    ctx.stroke();
+  };
+  // 얼굴 + 하트
+  const x0 = L.s.l + 14 * k;
+  const y0 = L.s.t + 14 * k;
+  const r = 27 * k;
+  plate(x0, y0, 210 * k, 2 * r + 8 * k);
+  face(ctx, art, x0 + 4 * k + r, y0 + 4 * k + r, r);
+  for (let i = 0; i < SAND.hearts; i++) {
+    const on = i < s.hearts;
+    ctx.globalAlpha = on ? 1 : 0.3;
+    ctx.filter = on ? 'none' : 'grayscale(1)';
+    spr(ctx, art, 'heart_pickup', x0 + 2 * r + (30 + i * 40) * k, y0 + 4 * k + r + 17 * k, 0.2 * k);
+  }
+  ctx.filter = 'none';
+  ctx.globalAlpha = 1;
+  // 켜진 보상: 아이콘 + 남은 시간 막대
+  const powers: [string, number, number][] = [];
+  if (s.shield > 0) powers.push(['shield_pickup', s.shield, SAND.shield]);
+  if (s.magnet > 0) powers.push(['magnet_pickup', s.magnet, SAND.magnet]);
+  if (s.boost > 0) powers.push(['boost_pad', s.boost, SAND.boostTime]);
+  powers.forEach(([id, left, max], i) => {
+    const px = x0 + i * 58 * k;
+    const py = y0 + 2 * r + 16 * k;
+    plate(px, py, 52 * k, 52 * k);
+    spr(ctx, art, id, px + 26 * k, py + 44 * k, 0.17 * k);
+    ctx.fillStyle = 'rgba(120,85,55,0.25)';
+    ctx.fillRect(px + 8 * k, py + 46 * k, 36 * k, 3 * k);
+    ctx.fillStyle = '#f08a3c';
+    ctx.fillRect(px + 8 * k, py + 46 * k, 36 * k * (left / max), 3 * k);
+  });
+  // 가운데 이름판 + 시간 (좁은 화면은 이름판을 빼고 시간은 하트 판 밑, 냥코인은 돌아가기 밑)
+  ctx.textAlign = 'center';
+  ctx.font = `bold ${17 * k}px system-ui, sans-serif`;
+  const narrow = W < 700;
+  const title = '🐾 모래 미끄럼틀 🐾';
+  const tw = ctx.measureText(title).width + 40 * k;
+  if (!narrow) {
+    plate(W / 2 - tw / 2, y0, tw, 34 * k, 'rgba(240,222,190,0.96)');
+    ctx.fillStyle = '#6b4a2f';
+    ctx.fillText(title, W / 2, y0 + 23 * k);
+  }
+  const ty = narrow ? y0 + 2 * r + 16 * k + (powers.length ? 60 * k : 0) : y0 + 40 * k;
+  ctx.font = `bold ${18 * k}px system-ui, sans-serif`;
+  const clk = `⏱ ${clock(s.t)}`;
+  const cwid = ctx.measureText(clk).width + 32 * k;
+  ctx.fillStyle = 'rgba(90,64,46,0.92)';
+  ctx.beginPath();
+  const tx = narrow ? x0 + cwid / 2 : W / 2;
+  ctx.roundRect(tx - cwid / 2, ty, cwid, 32 * k, 16 * k);
+  ctx.fill();
+  ctx.fillStyle = '#fff6e4';
+  ctx.fillText(clk, tx, ty + 22 * k);
+  // 오른쪽 위: 냥코인
+  ctx.font = `bold ${20 * k}px system-ui, sans-serif`;
+  const coinTxt = String(s.coins);
+  const coinW = ctx.measureText(coinTxt).width + 64 * k;
+  const coinX = narrow ? L.leave.x + L.leave.w - coinW : L.leave.x - coinW - 10 * k;
+  const coinY = narrow ? L.leave.y + L.leave.h + 8 * k : L.leave.y;
+  plate(coinX, coinY, coinW, L.leave.h);
+  spr(ctx, art, 'paw_coin', coinX + 22 * k, coinY + L.leave.h - 5 * k, 0.2 * k);
+  ctx.fillStyle = '#5b4a3f';
+  ctx.textAlign = 'left';
+  ctx.fillText(coinTxt, coinX + 44 * k, coinY + L.leave.h / 2 + 7 * k);
+  drawLeave(ctx, L, v.hover, v.touch);
+  // 오른쪽 세로 진행 막대: 아래 출발 → 위 결승 깃발
+  const bx = W - L.s.r - 30 * k;
+  const top = coinY + L.leave.h + 44 * k;
+  const bottom = H - L.s.b - (v.touch ? 190 : 70) * k;
+  if (bottom - top > 80 * k) {
+    ctx.strokeStyle = 'rgba(255,248,232,0.9)';
+    ctx.lineCap = 'round';
+    ctx.lineWidth = 10 * k;
+    ctx.beginPath();
+    ctx.moveTo(bx, top);
+    ctx.lineTo(bx, bottom);
+    ctx.stroke();
+    const py = bottom - (bottom - top) * (s.d / SAND.length);
+    ctx.strokeStyle = '#f5a05a';
+    ctx.lineWidth = 6 * k;
+    ctx.beginPath();
+    ctx.moveTo(bx, bottom);
+    ctx.lineTo(bx, py);
+    ctx.stroke();
+    ctx.lineCap = 'butt';
+    // 체크무늬 깃발
+    ctx.fillStyle = '#6b4a2f';
+    ctx.fillRect(bx - 1.5 * k, top - 30 * k, 3 * k, 30 * k);
+    for (let i = 0; i < 4; i++)
+      for (let j = 0; j < 3; j++) {
+        ctx.fillStyle = (i + j) % 2 ? '#3d2f26' : '#fffaf0';
+        ctx.fillRect(bx + 1.5 * k + i * 5 * k, top - 30 * k + j * 5 * k, 5 * k, 5 * k);
+      }
+    // 고양이 표시
+    ctx.fillStyle = '#fff8ec';
+    ctx.strokeStyle = 'rgba(140,100,60,0.7)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(bx, py, 14 * k, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    face(ctx, art, bx, py, 13 * k);
+  }
+  // 출발! · 결과
+  if (s.phase === 'play' && s.t < 1.3) {
+    ctx.globalAlpha = Math.min(1, (1.3 - s.t) / 0.4);
+    ctx.font = `bold ${44 * k}px system-ui, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 8 * k;
+    ctx.strokeStyle = 'rgba(70,52,42,0.85)';
+    ctx.strokeText('출발!', W / 2, H * 0.45);
+    ctx.fillStyle = '#ffd84a';
+    ctx.fillText('출발!', W / 2, H * 0.45);
+    ctx.globalAlpha = 1;
+  }
+  if (s.phase === 'done' && s.doneT >= SAND.cardDelay) {
+    ctx.globalAlpha = Math.min(1, (s.doneT - SAND.cardDelay) / 0.25);
+    drawCard(
+      ctx,
+      L,
+      s.fell ? '넘어졌어요' : '완주!',
+      [
+        [`점수 ${s.score}${v.best !== null && s.score >= v.best && s.score > 0 ? ' · 최고 점수!' : ''}`, '#5b4a3f'],
+        [`냥코인 ${s.coins}개 · ${clock(s.t)}${s.fell ? ` · ${Math.round(s.d)}m` : ''}`, '#c98a1c'],
+        [s.fell ? '하트를 다 잃었어요' : s.crashes === 0 ? `무사 완주 보너스 +${SAND.cleanBonus}` : `${s.crashes}번 부딪혔어요`, !s.fell && s.crashes === 0 ? '#3e9a45' : '#d4574a'],
+        [v.best !== null ? `최고 점수 ${Math.max(v.best, s.score)}` : '첫 기록!', '#9a7b62'],
+      ],
+      v.hover,
+      '다시 타기',
+    );
+    ctx.globalAlpha = 1;
+  }
+}

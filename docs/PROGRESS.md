@@ -40,17 +40,25 @@
 - 아직 쓸 곳 없는 것: 미끼(materials_31~36) · 제작 재료 · 수집품/정체불명 물건의 쓰임.
 - 바다 고래: 배 속 미로 전용 그림(살 벽 · 갈비뼈 · 숨구멍)이 오면 maze-draw 의 고래 색·그리기만 바꾼다. 호수·강에도 원하면 field.json whale.sea 에 조각을 더한다.
 - 숲 (2026-10-07 · 08): 장작 패기 그림(기둥 토막 · 좌우 가지 · 그루터기 · 날아가는 토막 · 배경)이 오면 timber-draw 의 그리기 함수만 바꾼다 (다람쥐 잡기는 2026-10-12 에 사용자 그림으로 바꿨다). 아이디어 4(만들기 — 통나무·잎사귀로 잎사귀 모자·나뭇잎 망토·도토리 망치)는 재료가 쌓이면. 왼쪽 숲 지역은 잠김 (마스크는 미리 만들어 둠).
-- 폴더 나누기 (2026-10-12 검토, 사용자 결정 대기): import 에 순환이 없고 방향이 한쪽이라 나눌 수 있다. 제안 — `src/shared/`(assets · audio · sheet · collide · touch · emote · cat · fx · iso · places · squirrel) ·
-  `src/field/`(field · field-draw · minimap) · `src/dungeon/`(dungeon · dungeon-draw · enemy · skills · skills-draw) · `src/fishing/` · `src/village/`(village · village-draw · toys · toys-draw) ·
-  `src/mini/`(maze · sandboard · timber · chase + -draw · mini-draw) · `src/bag/`(bag · bag-draw · book-draw · sources) · `src/data/` 그대로 · main.ts 는 밖. 체크 파일은 제 폴더에.
-  비용: 파일 47개 이동 · import 228줄 경로(tsc 가 다 잡아 준다) · tools(verify · assets · terrain) 경로 · CLAUDE.md 파일 지도, 한 시간 + 전체 검증. 그 뒤 deps.check 에 "장면 폴더끼리 import 금지"(book-draw · sources 예외)를 더한다.
-  다음 단계(따로): main.ts 1748줄의 장면별 입력 · 전환을 각 폴더로.
+- 폴더 나누기: 2026-10-12 밤에 제안대로 했다 (결정 기록). 다음 단계(따로): main.ts 1748줄의 장면별 입력 · 전환을 각 폴더로.
 - 고양이마을 (2026-10-08): 주민 걷는 시트가 오면 자리에서 서성이게(지금은 동작 시트뿐이라 제자리). `angry` 줄은 아직 안 쓴다 (예: 싫어하는 걸 두 번 주면). 요리 가판대 · 냄비 그림이 오면 `drawCook`.
   돌다리 · 동굴 입구 7곳의 새 콘텐츠는 사용자 결정 대기 — 포탈은 연결 전으로 두고 도감 지도엔 동굴로 센다.
   놀아 주기 장난감 그림(깃털 · 상자 · 털실 공)이 오면 toys-draw 만 바꾼다. 놀이 수치(시간 · 섞는 수 · 힘 막대 빠르기 · 칸 폭)는 toys.ts 맨 위 상수.
   더 해 볼 만한 것 — 친구에게 물건 선물(요리 말고) · 하루 단위 이벤트(생일 · 잔치) · 친구가 마을 밖으로 따라 나오기 · 요리 대회 · 마을 꾸미기. 요리 수치(바늘 빠르기 · 칸 폭 · 점수)는 village.json 에서.
 
 ## 결정 기록
+
+### 2026-10-12 밤 · 폴더 나누기 (제안대로)
+
+사용자: 제안에 맞춰 달라.
+
+- src/*.ts 47개와 체크 12개를 폴더로 옮겼다 (git mv — 이력 그대로): shared 12 · field 3(+ squirrel-draw) · dungeon 5 · fishing 2 · village 4 · mini 8 · bag 4, 체크는 제 모듈 폴더에.
+  main.ts · data/ · assets/ 는 그대로. 옛 import 가 전부 src/ 기준이라 경로는 스크립트로 기계적으로 다시 썼고(228줄), import.meta.glob 의 './assets/…' 무늬와 URL 표 키도
+  한 단계 아래로 옮긴 만큼 '../assets/' 로 (assets.ts · field-draw.ts).
+- 장면 폴더끼리 가져오던 네 곳을 정리했다: 다람쥐 · 도토리 그리기를 field/squirrel-draw.ts 로 떼어 다람쥐 잡기가 field-draw 통째 대신 그것만 가져온다(유일한 예외),
+  MON_ROW(몬스터 시트 줄)를 enemy → shared/sheet 로, places 는 fishing.ts 대신 fishing.json 을 읽고, mini-draw 는 shared 로.
+- deps.check(tools/check.mjs)가 규칙을 본다: 순환 없음 · shared 는 shared · data 만 · 장면 폴더끼리 금지 (예외는 EXCEPTIONS 에 이유와 함께). 어기면 npm run check 가 바로 실패한다.
+- 다음 단계(따로): main.ts 1748줄의 장면별 입력 · 전환을 각 폴더로.
 
 ### 2026-10-12 밤 · 검수는 수정 범위만큼 · check/verify 구간 고르기 · import 순환 검사 · 폴더 나누기 검토
 

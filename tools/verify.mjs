@@ -21,7 +21,7 @@ const PLAYER_DATA = readJson('../src/data/player.json');
 const SKILL_DATA = readJson('../src/data/skills.json');
 const SHOP_DATA = readJson('../src/data/shop.json');
 const SPOTS_JSON = readJson('../src/data/fishing.json');
-const { OBS: SAND_OBS, SAND: SAND_CFG, coast: sandCoast, center: sandCenter, width: sandWidth } = await import('../src/sandboard.ts');
+const { OBS: SAND_OBS, SAND: SAND_CFG, coast: sandCoast, center: sandCenter, width: sandWidth } = await import('../src/mini/sandboard.ts');
 /** 개방 구역(field.json open) 안의 워프 — 잠긴 구역 밖 워프는 갈 수 없는 게 맞다 */
 const inOpen = (x, y) => {
   const c = Math.min(FIELD.grid[0] - 1, Math.floor((x * FIELD.grid[0]) / FIELD.size[0]));

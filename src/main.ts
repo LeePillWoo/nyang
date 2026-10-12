@@ -1,9 +1,9 @@
 // 게임 뼈대 — 캔버스·입력·장면 전환(필드 ↔ 던전 · 낚시터)·소리·감정·불러오기.
 // 필드는 field.ts(로직) / field-draw.ts(그리기), 던전은 dungeon.ts / dungeon-draw.ts, 낚시는 fishing.ts / fishing-draw.ts.
-import { assetUrl, image } from './assets.ts';
-import { bagLayout, bagTap, bagView, coinReady, drawBag, drawShop, flipPage, itemIconsReady, resetBagView, resetShopView, shopLayout, shopTap, shopView } from './bag-draw.ts';
-import { count, fromSave, ITEMS, obtain, PAGE, stats, tickBuffs, type Bag } from './bag.ts';
-import { bookLayout, bookTap, bookView, drawBook, groupOf, mapPoints, openBook, ungrouped, type BookData } from './book-draw.ts';
+import { assetUrl, image } from './shared/assets.ts';
+import { bagLayout, bagTap, bagView, coinReady, drawBag, drawShop, flipPage, itemIconsReady, resetBagView, resetShopView, shopLayout, shopTap, shopView } from './bag/bag-draw.ts';
+import { count, fromSave, ITEMS, obtain, PAGE, stats, tickBuffs, type Bag } from './bag/bag.ts';
+import { bookLayout, bookTap, bookView, drawBook, groupOf, mapPoints, openBook, ungrouped, type BookData } from './bag/book-draw.ts';
 import shopData from './data/shop.json' with { type: 'json' };
 import {
   sfxBite,
@@ -50,16 +50,16 @@ import {
   sfxChirp,
   sfxBonk,
   unlockAudio,
-} from './audio.ts';
-import { cardAt, cardRects, drawCards, drawResult, resultButtonAt, resultPoint, skillFxReady, type ResultButton } from './skills-draw.ts';
-import { learn as learnSkill, type SkillId } from './skills.ts';
-import { loadAxe, loadBoat, loadCat, loadSnow } from './cat.ts';
-import { drawDungeon, dungeonReady, roomReady, roomView } from './dungeon-draw.ts';
-import { makeDungeon, maxHp, pick, resetDungeon, skipWaves, updateDungeon, type Dungeon, type DungeonEvent } from './dungeon.ts';
-import { emotesReady, quiet, say, saying, tickEmote, type EmoteId } from './emote.ts';
-import { ENEMY_DEFS, type Kind } from './enemy.ts';
-import { biomeAt, drawField, fieldFx, fieldReady, fieldView, terrainAt, terrainReady } from './field-draw.ts';
-import { backFrom, FIELD, inWarp, makeFieldState, spawnSquirrel, updateField, warpLocked, whaleSpit, type FieldEvent, type FieldState, type Warp } from './field.ts';
+} from './shared/audio.ts';
+import { cardAt, cardRects, drawCards, drawResult, resultButtonAt, resultPoint, skillFxReady, type ResultButton } from './dungeon/skills-draw.ts';
+import { learn as learnSkill, type SkillId } from './dungeon/skills.ts';
+import { loadAxe, loadBoat, loadCat, loadSnow } from './shared/cat.ts';
+import { drawDungeon, dungeonReady, roomReady, roomView } from './dungeon/dungeon-draw.ts';
+import { makeDungeon, maxHp, pick, resetDungeon, skipWaves, updateDungeon, type Dungeon, type DungeonEvent } from './dungeon/dungeon.ts';
+import { emotesReady, quiet, say, saying, tickEmote, type EmoteId } from './shared/emote.ts';
+import { ENEMY_DEFS, type Kind } from './dungeon/enemy.ts';
+import { biomeAt, drawField, fieldFx, fieldReady, fieldView, terrainAt, terrainReady } from './field/field-draw.ts';
+import { backFrom, FIELD, inWarp, makeFieldState, spawnSquirrel, updateField, warpLocked, whaleSpit, type FieldEvent, type FieldState, type Warp } from './field/field.ts';
 import {
   dexReady,
   drawFishing,
@@ -71,24 +71,24 @@ import {
   fishingView,
   resetFishingFx,
   type FishingButton,
-} from './fishing-draw.ts';
-import { again, debugBite, makeFishing, normalizeDex, SPOTS, updateFishing, type Dex, type FishEvent, type FishingState } from './fishing.ts';
-import { ROOMS } from './iso.ts';
-import { drawMinimap, fromMini, inMinimap, minimapPick, minimapRect, toMini } from './minimap.ts';
-import { drawMaze, mazeView } from './maze-draw.ts';
-import { makeMaze, updateMaze, type MazeEvent, type MazeState } from './maze.ts';
-import { miniButtonAt, miniLayout, type MiniButton } from './mini-draw.ts';
-import { drawSandboard, SAND_IMAGES, sandPoint, warmSandboard, type SandArt } from './sandboard-draw.ts';
-import { makeSandboard, SAND, updateSandboard, type SandEvent, type SandState } from './sandboard.ts';
-import { loadSheet, type Sheet } from './sheet.ts';
-import { drawTimber, timberFx } from './timber-draw.ts';
-import { chaseFx, chaseReady, chaseView, drawChase } from './chase-draw.ts';
-import { burn, drawVillage, drawVillagePanel, finishPlay, openVillagePanel, resetVillageView, toyX, villageKey, villagePoints, villageReady, villageTap, villageView, type VillageAct } from './village-draw.ts';
-import { updateToy, type ToyEvent } from './toys.ts';
-import { FRIENDS, fromVillageSave, hello, makeVillage, talkTo, targetAtPoint, tickRequests, updateCook, updateVillage, type VillageSave, type VillageState } from './village.ts';
-import { CHASE, makeChase, updateChase, type ChaseEvent, type ChaseState } from './chase.ts';
-import { makeTimber, TIMBER, updateTimber, type Side, type TimberEvent, type TimberState } from './timber.ts';
-import { buttonAt, controls, drawControls, followStick, onStick, safe, stickBase, stickVector, ui, type ButtonId } from './touch.ts';
+} from './fishing/fishing-draw.ts';
+import { again, debugBite, makeFishing, normalizeDex, SPOTS, updateFishing, type Dex, type FishEvent, type FishingState } from './fishing/fishing.ts';
+import { ROOMS } from './shared/iso.ts';
+import { drawMinimap, fromMini, inMinimap, minimapPick, minimapRect, toMini } from './field/minimap.ts';
+import { drawMaze, mazeView } from './mini/maze-draw.ts';
+import { makeMaze, updateMaze, type MazeEvent, type MazeState } from './mini/maze.ts';
+import { miniButtonAt, miniLayout, type MiniButton } from './shared/mini-draw.ts';
+import { drawSandboard, SAND_IMAGES, sandPoint, warmSandboard, type SandArt } from './mini/sandboard-draw.ts';
+import { makeSandboard, SAND, updateSandboard, type SandEvent, type SandState } from './mini/sandboard.ts';
+import { loadSheet, type Sheet } from './shared/sheet.ts';
+import { drawTimber, timberFx } from './mini/timber-draw.ts';
+import { chaseFx, chaseReady, chaseView, drawChase } from './mini/chase-draw.ts';
+import { burn, drawVillage, drawVillagePanel, finishPlay, openVillagePanel, resetVillageView, toyX, villageKey, villagePoints, villageReady, villageTap, villageView, type VillageAct } from './village/village-draw.ts';
+import { updateToy, type ToyEvent } from './village/toys.ts';
+import { FRIENDS, fromVillageSave, hello, makeVillage, talkTo, targetAtPoint, tickRequests, updateCook, updateVillage, type VillageSave, type VillageState } from './village/village.ts';
+import { CHASE, makeChase, updateChase, type ChaseEvent, type ChaseState } from './mini/chase.ts';
+import { makeTimber, TIMBER, updateTimber, type Side, type TimberEvent, type TimberState } from './mini/timber.ts';
+import { buttonAt, controls, drawControls, followStick, onStick, safe, stickBase, stickVector, ui, type ButtonId } from './shared/touch.ts';
 
 const canvas = document.createElement('canvas');
 const ctx = canvas.getContext('2d')!;
