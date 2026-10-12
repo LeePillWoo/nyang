@@ -449,6 +449,12 @@ export function walkTo(s: VillageState, x: number, y: number, then: Target | nul
   const [tx, ty] = then ? targetAt(s, then) : [x, y];
   s.goal = { x, y, then, stuck: 0, path: findPath(s.cat.x, s.cat.y, tx, ty) };
 }
+/** 곁에 있는 친구 · 가판대면 연다 — 손가락은 걷지 않고 말 걸기만 (2026-10-12 사용자 — 이동은 조이스틱으로만). 멀면 아무것도 안 하고 false */
+export function talkTo(s: VillageState, t: Target | null) {
+  if (!t || gap(s, ...targetAt(s, t)) >= data.reach) return false;
+  s.goal = { x: s.cat.x, y: s.cat.y, then: t, stuck: 0, path: [] };
+  return true;
+}
 /** 누른 곳(지도 px)의 대상 — 친구(몸 · 이름표 · 머리 위 말풍선 둘레, 겹치면 가로로 가장 가까운 친구) · 요리집 앞 가판대 둘레.
  *  곁에 있는 것(near)은 고양이를 눌러도 그것 — 근처에 가서 누르면 말을 건다 */
 export function targetAtPoint(s: VillageState, x: number, y: number): Target | null {

@@ -1643,15 +1643,34 @@ try {
     await sleep(200);
     const TP = await page.evaluate(() => __game.villagePoints());
     const mx = (TP.toyArea.x0 + TP.toyArea.x1) / 2;
-    for (let i = 0; i < 80 && (await page.evaluate(() => __game.villageView.panel?.game?.cat)) === 'watch'; i++) {
-      await page.mouse.move(mx + (i % 2 ? 50 : -50), TP.toyArea.y);
-      await sleep(40);
+    const fx = (u) => mx + u * (TP.toyArea.x1 - TP.toyArea.x0) * 0.42; // 깃털 자리(-1..1) → 화면 x
+    const fg = () => page.evaluate(() => ((g) => g && { cat: g.cat, aim: g.aim, misses: g.misses, score: g.score })(__game.villageView.panel?.game));
+    const shake = async () => {
+      for (let i = 0; i < 150 && (await fg())?.cat !== 'crouch'; i++) {
+        await page.mouse.move(mx + (i % 2 ? 50 : -50), TP.toyArea.y);
+        await sleep(40);
+      }
+    };
+    // 씰룩일 때 홱 빼면 놓친다 × 2 (toys.ts FEATHER.tip) → 세 번째 씰룩엔 "지금 멈추세요!" 말풍선 → 그 자리에 멈춰 두면 덮쳐 잡는다
+    for (let k = 0; k < 2; k++) {
+      await shake();
+      const s = await fg();
+      await page.mouse.move(fx(s.aim > 0 ? -0.95 : 0.95), TP.toyArea.y);
+      await page.waitForFunction(() => __game.villageView.panel?.game?.cat === 'miss', { timeout: 3000 }).catch(() => {});
     }
+    await shake();
+    const tipped = await fg();
+    await page.mouse.move(fx(tipped.aim), TP.toyArea.y);
+    await sleep(150);
+    await page.screenshot({ path: fsPath(new URL('village-feather-tip.png', OUT)) });
     const caught = await page.waitForFunction(() => __game.villageView.panel?.game?.score >= 1, { timeout: 4000 }).then(() => true, () => false);
     await page.screenshot({ path: fsPath(new URL('village-feather.png', OUT)) });
     await page.keyboard.press('Escape');
     const quit = await page.evaluate((id) => ({ kind: __game.villageView.panel?.kind, pts: __game.villageSave.friends[id].pts, line: __game.villageView.line }), f1.id);
-    check(chooser === 'toys' && caught && quit.kind === 'friend' && quit.pts === pts0, `P → 놀이 고르기 · 깃털을 마우스로 흔들다 멈추면 덮쳐 잡는다 · Esc 로 그만두면 점수 없음 ("${quit.line}")`);
+    check(
+      chooser === 'toys' && tipped.cat === 'crouch' && tipped.misses === 2 && caught && quit.kind === 'friend' && quit.pts === pts0,
+      `P → 놀이 고르기 · 깃털: 씰룩일 때 빼면 놓침 × ${tipped.misses} → 세 번째 씰룩엔 "지금 멈추세요!" → 멈춰 두면 잡는다 · Esc 로 그만두면 점수 없음 ("${quit.line}")`,
+    );
     await page.keyboard.press('KeyP');
     await sleep(200);
     await page.keyboard.press('Digit3');
@@ -1690,7 +1709,8 @@ try {
       Object.assign(__game.village.cat, { x: t.x + 30, y: t.y + 12 });
     }, f0.id);
     await page.waitForFunction(() => __game.village.near?.kind === 'friend' && __game.village.near.i === 0, { timeout: 3000 }).catch(() => {});
-    await sleep(300);
+    // 대기 중 한 번 하는 동작(심심 · 혼자 놀기 — 2.6초까지)을 하고 있었으면 그게 끝난 뒤 배고픔으로 바뀐다
+    await page.waitForFunction(() => __game.village.townies[0].anim === 'hungry', { timeout: 3500 }).catch(() => {});
     const hungry = await page.evaluate(() => __game.village.townies[0].anim);
     await page.screenshot({ path: fsPath(new URL('village-ask.png', OUT)) });
     await page.keyboard.press('KeyE');
@@ -1742,7 +1762,8 @@ try {
     await page.close();
   }
   {
-    // 휴대폰 가로: 친구를 눌러 걸어가 창 → 칸 → 먹여 주기 버튼 → 놀아 주기 버튼 → ✕ → 가판대를 눌러 창 · 곁에서 누르기 · 가방은 밀어서 넘긴다 · 세로 화면 · 모자란 재료 바로가기
+    // 휴대폰 가로 (2026-10-12 사용자 — 이동은 조이스틱으로만, 누르기는 곁에서 말 걸기만): 멀리서 친구를 눌러도 걷지 않는다 → 조이스틱으로 다가가 눌러 창 → 칸 →
+    //  먹여 주기 버튼 → 놀아 주기 버튼 → ✕ → 멀리서 가판대를 눌러도 그대로 · 곁에서 누르면 창 · 곁에서 누르기 · 가방은 밀어서 넘긴다 · 세로 화면 · 모자란 재료 바로가기
     const PH = { width: 844, height: 390, deviceScaleFactor: 2, isMobile: true, hasTouch: true, isLandscape: true };
     const tap = async (page, p) => (await page.touchscreen.touchStart(p.x, p.y)).end();
     const { page, errors } = await open('village', '', PH, '&touch');
@@ -1758,8 +1779,26 @@ try {
     const before = await page.evaluate((id) => __game.villageSave.friends[id].pts, f4.id);
     await page.evaluate(() => ((t) => Object.assign(__game.village.cat, { x: t.x + 140, y: t.y + 40 }))(__game.village.townies[4])); // 확대해서 시작 자리에선 이 친구가 안 보인다 — 먼저 다가간다
     await sleep(800);
-    await tap(page, await page.evaluate(() => ((t) => __game.villageScreen(t.x, t.y - 8))(__game.village.townies[4])));
-    const atF4 = await page.waitForFunction(() => __game.villageView.panel?.kind === 'friend' && __game.villageView.panel.i === 4, { timeout: 8000 }).then(() => true, () => false);
+    const f4At = () => page.evaluate(() => ((t) => __game.villageScreen(t.x, t.y - 8))(__game.village.townies[4]));
+    const catAt = () => page.evaluate(() => [__game.village.cat.x, __game.village.cat.y]);
+    const c0 = await catAt();
+    await tap(page, await f4At());
+    await sleep(700);
+    const c1 = await catAt();
+    const farTap = { moved: Math.hypot(c1[0] - c0[0], c1[1] - c0[1]), panel: await page.evaluate(() => __game.villageView.panel) };
+    check(farTap.moved < 1 && !farTap.panel, `멀리 있는 ${f4.name}를 눌러도 걷지 않는다 (이동은 조이스틱으로만)`);
+    // 조이스틱(왼쪽 아래)을 왼쪽으로 밀고 있다가 곁에 닿으면 뗀다 → 누르면 말을 건다
+    const js = { x: PH.width * 0.22, y: PH.height * 0.78 };
+    const hold = await page.touchscreen.touchStart(js.x, js.y);
+    await page.touchscreen.touchMove(js.x - 30, js.y - 8);
+    await page.touchscreen.touchMove(js.x - 60, js.y - 17);
+    const reached = await page.waitForFunction(() => __game.village.near?.kind === 'friend' && __game.village.near.i === 4, { timeout: 6000 }).then(() => true, () => false);
+    await hold.end();
+    await sleep(500);
+    const walked = Math.hypot(...(await catAt()).map((v, i) => v - c1[i]));
+    await tap(page, await f4At());
+    const atF4 = await page.waitForFunction(() => __game.villageView.panel?.kind === 'friend' && __game.villageView.panel.i === 4, { timeout: 3000 }).then(() => true, () => false);
+    check(reached && walked > 30 && atF4, `조이스틱으로 ${f4.name} 곁까지 걸어가(${walked | 0}px) 누르면 친구 창`);
     await sleep(200);
     const P = await page.evaluate(() => __game.villagePoints());
     await tap(page, P.cells[0]);
@@ -1767,7 +1806,7 @@ try {
     await sleep(250);
     await page.screenshot({ path: fsPath(new URL('touch-village-friend.png', OUT)) });
     const after = await page.evaluate((id) => __game.villageSave.friends[id], f4.id);
-    check(atF4 && after.pts === before + VILLAGE.points.love && after.seen[liked] === 'love', `${f4.name}를 눌러 걸어가 창 → 칸 → 먹여 주기 버튼 (아주 좋아하는 ${liked} · 점수 ${before} → ${after.pts})`);
+    check(atF4 && after.pts === before + VILLAGE.points.love && after.seen[liked] === 'love', `${f4.name} 창 → 칸 → 먹여 주기 버튼 (아주 좋아하는 ${liked} · 점수 ${before} → ${after.pts})`);
     // 놀아 주기 버튼 → 놀이 고르기 → 상자 숨바꼭질 카드 → 친구가 든 상자를 누른다 × 3판 → 결과 카드의 좋아요
     await page.evaluate((id) => Object.assign(__game.villageSave.friends[id], { ask: null, askAt: Date.now() + 3600e3 }), f4.id);
     await tap(page, P.play);
@@ -1790,15 +1829,21 @@ try {
     check(chose === 'toys' && box.res?.stars === 3 && box.pts === after.pts + box.res.gain && backTo === 'friend', `놀아 주기 버튼 → 놀이 고르기 → 상자 숨바꼭질: 친구가 든 상자를 눌러 ${'★'.repeat(box.res?.stars ?? 0)} +${box.res?.gain} → 좋아요`);
     await tap(page, P.close);
     const closed = (await page.evaluate(() => __game.villageView.panel)) === null;
+    // 요리집 오른쪽 아래를 누른다 (확대해서 왼쪽은 휴대폰 화면 밖이다 — 화면 밖을 누르면 아무 일도 없고, 다음 ✕ 가 그 자리의 돌아가기를 누른다).
+    //  멀리서 누르면 그대로 · 가판대 곁에서 누르면 창
+    const kitchenTap = async () => tap(page, await page.evaluate((a) => __game.villageScreen(a[2] - 60, a[3] - 12), VILLAGE.kitchenArea));
     await page.evaluate(() => Object.assign(__game.village.cat, { x: 620, y: 470 }));
     await sleep(800);
-    // 요리집 오른쪽 아래 (확대해서 왼쪽은 휴대폰 화면 밖이다 — 화면 밖을 누르면 아무 일도 없고, 다음 ✕ 가 그 자리의 돌아가기를 누른다)
-    const kp = await page.evaluate((a) => __game.villageScreen(a[2] - 60, a[3] - 12), VILLAGE.kitchenArea);
-    await tap(page, kp);
-    const atKitchen = await page.waitForFunction(() => __game.villageView.panel?.kind === 'kitchen', { timeout: 8000 }).then(() => true, () => false);
+    await kitchenTap();
+    await sleep(700);
+    const kFar = await page.evaluate(() => ({ moved: Math.hypot(__game.village.cat.x - 620, __game.village.cat.y - 470), panel: __game.villageView.panel }));
+    await page.evaluate((k) => Object.assign(__game.village.cat, { x: k[0], y: k[1] + 4 }), VILLAGE.kitchen);
+    await sleep(800);
+    await kitchenTap();
+    const atKitchen = await page.waitForFunction(() => __game.villageView.panel?.kind === 'kitchen', { timeout: 3000 }).then(() => true, () => false);
     await sleep(200);
     await page.screenshot({ path: fsPath(new URL('touch-village-kitchen.png', OUT)) });
-    check(closed && atKitchen, `✕ 로 닫고 · 가판대를 누르면 걸어가서 가판대 창 (누른 곳 ${kp.x | 0}, ${kp.y | 0})`);
+    check(closed && kFar.moved < 1 && !kFar.panel && atKitchen, '✕ 로 닫고 · 멀리서 가판대를 눌러도 걷지 않고 · 곁에서 누르면 가판대 창');
     await tap(page, P.close);
     // 곁에 서서 누르기 (2026-10-08 사용자 — 곁에서 누르면 안 됐다: 누른 때 연 것을 다음 프레임이 지웠다). 안내 말풍선은 없앴다
     for (const [label, dy] of [['몸을', -8], ['머리 위를', -50]]) {

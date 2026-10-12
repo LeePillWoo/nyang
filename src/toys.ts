@@ -15,12 +15,13 @@ export const TOYS: Record<ToyId, { name: string; emoji: string; how: string }> =
 };
 export const isToy = (id: string | null): id is ToyId => !!id && id in TOYS;
 
-/** 깃털: 시간 · 키로 움직이는 빠르기(판/초) · 손가락을 따라가는 빠르기 · 친구가 보는 범위 · 흔든 만큼 차오름 · 가만히 · 멀면 줄어듦 · 씰룩 · 덮치기 · 잡았다고 칠 거리 · 끝나고 쉬는 시간 */
-export const FEATHER = { time: 15, speed: 2.4, follow: 14, range: 0.75, gain: 0.32, decay: 0.3, still: 0.1, crouch: 0.7, pounce: 0.35, hold: 0.22, after: 0.9 };
+/** 깃털: 시간 · 키로 움직이는 빠르기(판/초) · 손가락을 따라가는 빠르기 · 친구가 보는 범위 · 흔든 만큼 차오름 · 가만히 · 멀면 줄어듦 · 씰룩 · 덮치기 · 잡았다고 칠 거리 · 끝나고 쉬는 시간 ·
+ *  이만큼 놓치면 씰룩일 때 "지금 멈추세요!" 말풍선 (2026-10-12 사용자 — 멈춰서 잡는 규칙을 잘 모르겠다) */
+export const FEATHER = { time: 15, speed: 2.4, follow: 14, range: 0.75, gain: 0.32, decay: 0.3, still: 0.1, crouch: 0.7, pounce: 0.35, hold: 0.22, after: 0.9, tip: 2 };
 /** 상자: 판 수 · 숨는 모습 · 판마다 섞는 수 · 한 번 섞는 시간 · 열어 보이는 시간 */
 export const BOX = { rounds: 3, show: 1.1, swaps: [3, 5, 7], swapT: [0.55, 0.42, 0.32], reveal: 1.3 };
-/** 공: 던지는 수 · 힘 막대 빠르기(왕복/초) · 친구 앞 칸 폭 · 친구 자리 · 굴러가는 시간 · 보고 넘어가는 시간 */
-export const YARN = { throws: 3, speed: [0.9, 1.15, 1.4], zone: [0.22, 0.17, 0.13], spots: [0.55, 0.82, 0.38], roll: 1.1, after: 1.2 };
+/** 공: 던지는 수 · 힘 막대 빠르기(왕복/초 — 2026-10-12 사용자 "좀 빠르다", 0.9 · 1.15 · 1.4 에서 줄임) · 친구 앞 칸 폭 · 친구 자리 · 굴러가는 시간 · 보고 넘어가는 시간 */
+export const YARN = { throws: 3, speed: [0.6, 0.75, 0.9], zone: [0.22, 0.17, 0.13], spots: [0.55, 0.82, 0.38], roll: 1.1, after: 1.2 };
 
 export type ToyEvent = { type: 'crouch' | 'pounce' | 'catch' | 'miss' | 'hide' | 'swap' | 'pick' | 'right' | 'wrong' | 'roll' | 'hit' | 'short' | 'long' | 'done' };
 type Base = { phase: 'play' | 'done'; t: number; score: number; stars: number; events: ToyEvent[]; rng: () => number };
@@ -37,6 +38,8 @@ export type FeatherGame = Base & {
   aim: number;
   catX: number;
   px0: number;
+  /** 놓친 수 — FEATHER.tip 번이면 씰룩일 때 말풍선 */
+  misses: number;
 };
 export type BoxGame = Base & {
   id: 'box';
@@ -73,7 +76,7 @@ const base = (rng: () => number): Base => ({ phase: 'play', t: 0, score: 0, star
 export const starsOf = (score: number) => (score >= 3 ? 3 : score === 2 ? 2 : 1);
 
 export function makeToy(id: ToyId, rng: () => number = Math.random): ToyGame {
-  if (id === 'feather') return { ...base(rng), id, fx: 0.6, vx: 0, ex: 0, cat: 'watch', ct: 0, aim: 0, catX: 0, px0: 0 };
+  if (id === 'feather') return { ...base(rng), id, fx: 0.6, vx: 0, ex: 0, cat: 'watch', ct: 0, aim: 0, catX: 0, px0: 0, misses: 0 };
   if (id === 'box') return newRound({ ...base(rng), id, round: 0, stage: 'show', st: 0, slots: [0, 1, 2], cat: 0, swaps: [], si: 0, picked: null, right: false, sel: 1 });
   return { ...base(rng), id, n: 0, stage: 'aim', st: 0, power: 0, dir: 1, dist: 0, spot: YARN.spots[0], zone: YARN.zone[0], res: null };
 }
@@ -129,8 +132,8 @@ export function toyPress(g: ToyGame) {
   g.st = 0;
   g.events.push({ type: 'roll' });
 }
-/** 굴러간 자리 (0..1) — 처음엔 빠르고 멈출 때 느리게 */
-export const ballAt = (g: YarnGame) => (g.stage === 'aim' ? 0 : g.dist * (1 - (1 - Math.min(1, g.st / YARN.roll)) ** 2));
+/** 굴러간 자리 (0..1) — 처음엔 빠르고 멈출 때 느리게, 멈춘 뒤엔 그 자리 (after 에서 st 가 0 부터 다시 세어 공이 한 번 더 굴러 보였다) */
+export const ballAt = (g: YarnGame) => (g.stage === 'aim' ? 0 : g.stage === 'after' ? g.dist : g.dist * (1 - (1 - Math.min(1, g.st / YARN.roll)) ** 2));
 
 /** 한 프레임. x = 깃털을 둘 자리(손가락 · 마우스, 없으면 null), dir = 키 (-1 · 0 · 1) */
 export function updateToy(g: ToyGame, input: { x: number | null; dir: number }, dt: number) {
@@ -203,6 +206,7 @@ function stepFeather(g: FeatherGame, input: { x: number | null; dir: number }, d
     if (g.ct >= F.pounce) {
       const got = Math.abs(g.fx - g.aim) <= F.hold;
       if (got) g.score++;
+      else g.misses++;
       Object.assign(g, { cat: got ? 'catch' : 'miss', ct: 0, ex: got ? 0 : 0.35 });
       g.events.push({ type: got ? 'catch' : 'miss' });
     }

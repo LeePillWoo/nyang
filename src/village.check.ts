@@ -32,6 +32,7 @@ import {
   setAnim,
   startCook,
   stopCook,
+  talkTo,
   targetAt,
   targetAtPoint,
   teacher,
@@ -317,6 +318,8 @@ const mixed = (seed: number) => {
   assert.ok(good.g.phase === 'done' && good.g.t >= FEATHER.time && good.g.score >= 3 && good.g.stars === 3, `깃털: 흔들다 멈춰 주면 ${good.g.score}번 잡는다 (씰룩 ${good.crouches}번)`);
   const bad = feather(false);
   assert.ok(bad.g.score === 0 && bad.crouches >= 3 && bad.g.stars === 1, `씰룩일 때 빼면 못 잡는다 (씰룩 ${bad.crouches}번)`);
+  // 놓친 수를 센다 — FEATHER.tip 번 놓치면 그다음 씰룩부터 "지금 멈추세요!" 말풍선 (그리기는 toys-draw)
+  assert.ok(bad.g.misses === bad.crouches && good.g.misses === 0 && bad.g.misses > FEATHER.tip, `놓친 수 ${bad.g.misses} (잘 잡으면 ${good.g.misses})`);
   const still = makeToy('feather', seeded(1)) as FeatherGame;
   for (let i = 0; i < 20 / DT && still.phase === 'play'; i++) updateToy(still, { x: 0, dir: 0 }, DT);
   assert.ok(still.score === 0 && still.ex === 0, '가만히 두면 신나지 않는다');
@@ -359,6 +362,15 @@ const mixed = (seed: number) => {
   toyPress(roll);
   updateToy(roll, { x: null, dir: 0 }, YARN.roll / 2);
   assert.ok(ballAt(roll) > 0.3 && ballAt(roll) < 0.6, '공은 굴러가며 느려진다');
+  updateToy(roll, { x: null, dir: 0 }, YARN.roll / 2 + 0.01);
+  const stops: number[] = [];
+  for (let i = 0; i < 10 && roll.stage === 'after'; i++) {
+    stops.push(ballAt(roll));
+    updateToy(roll, { x: null, dir: 0 }, YARN.after / 12);
+  }
+  assert.ok(stops.length > 5 && stops.every((d) => d === roll.dist), `멈춘 공은 그 자리 — 한 번 더 굴러 보이지 않는다 (${stops.map((d) => d.toFixed(2)).join(' ')})`);
+  // 힘 막대: 한쪽 끝에서 다른 끝까지 가장 빠른 판도 0.5초 넘게 (2026-10-12 사용자 — 빠르다)
+  assert.ok(1 / (2 * Math.max(...YARN.speed)) > 0.5, `힘 막대 0 → 1 이 ${(1 / (2 * Math.max(...YARN.speed))).toFixed(2)}초 넘게`);
 }
 
 // 8) 주민 동작: 배부르면 잠 · 부탁이 있으면 배고픔 · 아니면 대기. 한 번 하는 동작(놀이 · 삐짐 …)은 끝나면 바탕으로. 대기 중 심심하면 혼자 논다
@@ -451,6 +463,18 @@ const mixed = (seed: number) => {
   updateVillage(m, { mx: 0, my: 0, act: false }, 1 / 60);
   assert.deepEqual(targetAtPoint(m, m.cat.x, m.cat.y - C * 0.5), { kind: 'kitchen' }, '가판대 곁에선 고양이를 눌러도 가판대');
   assert.equal(targetAtPoint(m, VILLAGE.center[0] - 60, VILLAGE.center[1] + 60), null, '먼 맨땅은 아무것도 아니다');
+  // 손가락은 걷지 않고 말 걸기만 (2026-10-12 사용자 — 이동은 조이스틱으로만): 멀리 있는 친구를 누르면 그대로, 곁이면 바로 연다
+  const far = makeVillage(seeded(16));
+  const at0 = [far.cat.x, far.cat.y];
+  const went = talkTo(far, { kind: 'friend', i: 1 });
+  for (let i = 0; i < 60; i++) updateVillage(far, { mx: 0, my: 0, act: false }, 1 / 60);
+  assert.ok(!went && !far.goal && far.open === null && far.cat.x === at0[0] && far.cat.y === at0[1], '멀리 있는 친구를 손가락으로 누르면 걷지 않는다');
+  const nb = makeVillage(seeded(17));
+  [nb.cat.x, nb.cat.y] = [nb.townies[1].x + C * 0.7, nb.townies[1].y + C * 0.3];
+  updateVillage(nb, { mx: 0, my: 0, act: false }, 1 / 60);
+  assert.ok(talkTo(nb, targetAtPoint(nb, nb.townies[1].x, nb.townies[1].y - C * 0.5)));
+  updateVillage(nb, { mx: 0, my: 0, act: false }, 1 / 60);
+  assert.deepEqual(nb.open, { kind: 'friend', i: 1 }, '곁에서 손가락으로 누르면 바로 말을 건다');
 }
 
 // 10) 재료 바로가기 · 장소 종류: 요리 재료마다 열린 구역의 가지러 갈 포탈이 있다 (상점 · 낚시터 · 던전 · 숲). 돌다리 · 동굴은 던전이 아니다, 골목은 풍차 밀밭

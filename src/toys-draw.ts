@@ -103,7 +103,29 @@ function hint(g: ToyGame, touch: boolean) {
   }
   if (g.stage === 'aim') return touch ? '친구 앞 노란 칸에 맞게 — 눌러서 굴려요' : '친구 앞 노란 칸에 맞게 — Space 로 굴려요';
   if (g.stage === 'roll') return '데굴데굴…';
-  return g.res === 'hit' ? '덮쳤다!' : g.res === 'short' ? '조금 짧아요' : '너무 셌어요';
+  return g.res === 'hit' ? '덮쳤다!' : '아쉬워요… 다음엔 꼭!'; // 짧다 · 길다를 따지지 않고 (2026-10-12 사용자 — 그냥 아쉬운 느낌으로)
+}
+/** 작은 말풍선 — 꼬리(len) 끝이 (x, y), 판 안으로 당긴다 */
+function tip(ctx: CanvasRenderingContext2D, A: R, x: number, y: number, text: string, t: number, len = 10) {
+  ctx.font = 'bold 16px system-ui, sans-serif';
+  const w = ctx.measureText(text).width + 24;
+  const h = 32;
+  const bx = Math.max(A.x + 6, Math.min(A.x + A.w - 6 - w, x - w / 2));
+  const by = Math.max(A.y + 4, y - len - h - Math.abs(Math.sin(t * 5)) * 4);
+  const tx = Math.max(bx + 14, Math.min(bx + w - 14, x));
+  ctx.fillStyle = '#fffdf6';
+  ctx.strokeStyle = '#ef6b5e';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.roundRect(bx, by, w, h, 12);
+  ctx.moveTo(tx - 6, by + h);
+  ctx.lineTo(tx, y);
+  ctx.lineTo(tx + 6, by + h);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = '#d4483b';
+  ctx.textAlign = 'center';
+  ctx.fillText(text, bx + w / 2, by + h / 2 + 6);
 }
 
 // ── 깃털 ──
@@ -141,7 +163,7 @@ function drawFeather(ctx: CanvasRenderingContext2D, A: R, g: FeatherGame, pose: 
     [anim, frame, tilt] = ['idle', 0, -0.45 * flip * Math.cos(k * Math.PI)];
     y -= Math.sin(k * Math.PI) * A.h * 0.28;
   } else if (g.cat === 'catch') [anim, frame] = ['affection', 3 + (Math.floor(t * 5) % 2)];
-  else if (g.cat === 'miss') [anim, frame] = ['bored', Math.min(3, 1 + Math.floor(g.ct * 4))];
+  else if (g.cat === 'miss') [anim, frame] = ['bored', g.ct < 0.45 ? 1 : 5]; // "…" → 한숨 (기지개 컷은 씰룩과 같아 보여서 안 쓴다)
   ctx.fillStyle = 'rgba(60,45,30,0.2)';
   ctx.beginPath();
   ctx.ellipse(x, ground, H * 0.32, H * 0.08, 0, 0, Math.PI * 2);
@@ -151,7 +173,8 @@ function drawFeather(ctx: CanvasRenderingContext2D, A: R, g: FeatherGame, pose: 
   ctx.rotate(tilt);
   pose(ctx, 0, H * 0.4, H, anim, frame, flip);
   ctx.restore();
-  if (g.cat === 'crouch') {
+  if (g.cat === 'crouch' && g.misses < FEATHER.tip) {
+    // 씰룩 "!" (두 번 놓친 뒤엔 그 자리에 말풍선)
     ctx.font = `bold ${Math.round(H * 0.32)}px system-ui, sans-serif`;
     ctx.textAlign = 'center';
     ctx.fillStyle = '#ef6b5e';
@@ -199,6 +222,8 @@ function drawFeather(ctx: CanvasRenderingContext2D, A: R, g: FeatherGame, pose: 
   ctx.lineTo(0, 50);
   ctx.stroke();
   ctx.restore();
+  // 두 번 놓치면 씰룩일 때 깃털 위에 "지금 멈추세요!"
+  if (g.cat === 'crouch' && g.misses >= FEATHER.tip) tip(ctx, A, fx, fy - 14, '지금 멈추세요!', t, H * 0.3);
 }
 
 // ── 상자 ──
@@ -306,7 +331,7 @@ function drawYarn(ctx: CanvasRenderingContext2D, A: R, g: YarnGame, pose: Pose, 
   let anim = 'idle';
   let frame = Math.floor(t * 4) % 6;
   if (g.stage === 'after' && g.res === 'hit') [anim, frame] = ['affection', Math.floor(t * 5) % 6];
-  else if (g.stage === 'after') [anim, frame] = ['bored', Math.min(3, 1 + Math.floor(g.st * 4))];
+  else if (g.stage === 'after') [anim, frame] = ['bored', g.st < 0.45 ? 1 : 5]; // 아쉬워서 "…" → 한숨
   pose(ctx, fxp + W * 0.04, ground - 2, H, anim, frame, -1);
   // 공 — 굴러가며 돌고 지나온 자리에 실이 풀린다 (덮치면 친구 품에)
   const d = ballAt(g);
