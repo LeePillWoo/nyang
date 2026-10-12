@@ -49,7 +49,7 @@ export type DogSave = {
 const CAT_FRIENDS = cats.friends as { id: string; name: string }[];
 export const CALLS = data.rescue.calls as Call[];
 const SPOTS = data.explorer.spots;
-/** 배달 받는 이 — 고양이마을 친구 여덟 · 우체를 뺀 강아지 주민 */
+/** 배달 받는 이 — 고양이마을 친구 여덟 · 총총(우체부)을 뺀 강아지 주민 */
 export const RECIPIENTS = [...CAT_FRIENDS.map((f) => `cat:${f.id}`), ...DOGS.filter((d) => d.job !== 'post').map((d) => `dog:${d.id}`)];
 /** 받는 이 이름 · 사는 마을 */
 export function recipient(to: string) {
@@ -101,7 +101,8 @@ export function fromDogSave(v: unknown, now: number, rng: () => number = Math.ra
   return s;
 }
 
-// ── 우체국 ── 우체가 배달 주문을 하나씩 보여 준다. 맡으면(slots 개까지) 받는 이에게 가서 말을 걸면 가방의 물건을 건네고 삯을 받는다 (due 초 안이면 bonus 만큼 더)
+// ── 우체국 ── 총총이 배달 주문을 하나씩 보여 준다. 맡으면(slots 개까지) 받는 이에게 가서 말을 걸면 가방의 물건을 건네고 삯을 받는다.
+// due 초 안에 못 가면 실패 (2026-10-13 사용자 — 시간이 지나면 "그만두기" 가 아니라 "실패") — 실패한 배달은 건넬 수 없고 "실패" 를 눌러 지운다
 const pickOf = <T>(list: T[], rng: () => number) => list[Math.floor(rng() * list.length)];
 export function makeOrder(rng: () => number, not: string[] = []): Order {
   const [item, n] = pickOf(data.post.items as [string, number][], rng);
@@ -121,23 +122,24 @@ export function acceptOrder(s: DogSave, now: number, rng: () => number): string 
 /** 다른 주문 보기 · 맡은 배달 그만두기 (벌은 없다) */
 export const nextOffer = (s: DogSave, rng: () => number) => (s.offer = makeOrder(rng, [...s.parcels.map((p) => p.to), s.offer?.to ?? '']));
 export const dropOrder = (s: DogSave, k: number) => void s.parcels.splice(k, 1);
-/** 빨리 배달하면 덤을 받는 남은 초 (0 = 덤 끝) */
+/** 배달 마감까지 남은 초 (0 = 실패) */
 export const dueLeft = (o: Order, now: number) => Math.max(0, Math.ceil((o.at + data.post.due * 1000 - now) / 1000));
-export type Delivery = { ok: true; coins: number; fast: boolean; order: Order } | { ok: false; why: string; order: Order } | null;
+export const failedOrder = (o: Order, now: number) => dueLeft(o, now) === 0;
+export type Delivery = { ok: true; coins: number; order: Order } | { ok: false; why: string; order: Order } | null;
 /** 받는 이(to)에게 말을 걸었다 — 맡은 배달이 있으면 가방의 물건을 건넨다. 없으면 null */
 export function deliver(s: DogSave, bag: Bag, to: string, now: number): Delivery {
   const k = s.parcels.findIndex((p) => p.to === to);
   if (k < 0) return null;
   const o = s.parcels[k];
   const have = count(bag, o.item);
+  if (failedOrder(o, now)) return { ok: false, why: '시간이 지나 배달에 실패했어요 — 우체국에서 "실패" 를 눌러 지워요', order: o };
   if (have < o.n) return { ok: false, why: `${ITEMS[o.item].name} ${o.n - have}개가 더 있어야 해요`, order: o };
   take(bag, o.item, o.n);
-  const fast = dueLeft(o, now) > 0;
-  const coins = Math.round(o.coins * (fast ? 1 + data.post.bonus : 1));
+  const coins = o.coins;
   bag.coins += coins;
   s.parcels.splice(k, 1);
   s.posted++;
-  return { ok: true, coins, fast, order: o };
+  return { ok: true, coins, order: o };
 }
 
 // ── 탐험가 ── 말린 지도를 가져오면(또는 sniff 초마다 킁킁이 냄새로) 필드의 보물 자리 하나에 ✕ — 그 자리에 가서 잠깐 서 있으면 판다
@@ -252,7 +254,7 @@ export function dogLine(save: DogSave, bag: Bag, i: number, now: number, rng: ()
     return c ? (c.on ? `${CALLS[c.i].place}(으)로 가 주게! 필드 지도에 ❗ 표시` : '구조 요청이 들어왔어! 같이 가 줄 텐가?') : hi;
   }
   const to = `dog:${d.id}`;
-  if (save.parcels.some((p) => p.to === to)) return '어, 그거 나한테 온 거야?';
+  if (save.parcels.some((p) => p.to === to && !failedOrder(p, now))) return '어, 그거 나한테 온 거야?';
   return hi;
 }
 

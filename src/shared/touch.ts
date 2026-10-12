@@ -54,7 +54,9 @@ export function wrapText(ctx: CanvasRenderingContext2D, text: string, maxW: numb
   return lines;
 }
 
-export type ButtonId = 'dash' | 'dex' | 'bag' | 'jump' | 'left' | 'right';
+export type ButtonId = 'dash' | 'dex' | 'bag' | 'quests' | 'jump' | 'left' | 'right';
+/** 알약 모양 버튼 (도감 · 가방 · 미션) */
+const PILLS: ButtonId[] = ['dex', 'bag', 'quests'];
 export type Button = { id: ButtonId; x: number; y: number; r: number; label: string };
 /** 떠다니는 조이스틱: 쉬는 자리(x, y) · 반지름 r · 누르면 조이스틱이 생기는 영역 zone (CSS px) */
 export type Stick = { x: number; y: number; r: number; zone: { x0: number; y0: number; x1: number; y1: number } };
@@ -76,9 +78,13 @@ export function controls(w: number, h: number, scene: Scene, touch: boolean): Co
   if (scene === 'field') {
     pill('dex', 0, 56, '📖 도감');
     pill('bag', 1, 56, '🎒 가방');
+    pill('quests', 0, 100, '📜 미션'); // 도감 밑 (2026-10-13 사용자)
   }
   if (scene === 'dungeon') pill('bag', 0, 122, '🎒 가방'); // 체력·경험치 판(14, 14, 높이 100) 밑
-  if (scene === 'village' || scene === 'dogtown') pill('bag', 0, 82, '🎒 가방'); // 마을 알약(두 줄) 밑
+  if (scene === 'village' || scene === 'dogtown') {
+    pill('bag', 0, 82, '🎒 가방'); // 마을 알약(두 줄) 밑
+    pill('quests', 0, 126, '📜 미션');
+  }
   if (!touch || scene === 'fishing') return { stick: null, buttons, k };
   // 엄지로 누르는 것들은 모서리에서 조금 안쪽으로 (inset)
   const r = Math.round(60 * k);
@@ -121,7 +127,7 @@ export function controls(w: number, h: number, scene: Scene, touch: boolean): Co
 /** 둥근 버튼은 조금 넉넉하게, 도감 알약은 그 모양 그대로 */
 export const buttonAt = (c: Controls, x: number, y: number) =>
   c.buttons.find((b) =>
-    b.id === 'dex' || b.id === 'bag' ? Math.abs(x - b.x) <= b.r && Math.abs(y - b.y) <= (b.r * DEX.h) / DEX.w : Math.hypot(x - b.x, y - b.y) <= b.r * 1.2,
+    PILLS.includes(b.id) ? Math.abs(x - b.x) <= b.r && Math.abs(y - b.y) <= (b.r * DEX.h) / DEX.w : Math.hypot(x - b.x, y - b.y) <= b.r * 1.2,
   ) ?? null;
 /** 조이스틱 영역 안인가 (쉬는 자리 둘레도 넉넉하게 — 엄지가 조금 빗나가도) */
 export const onStick = (c: Controls, x: number, y: number) => {
@@ -190,7 +196,7 @@ export function drawControls(ctx: CanvasRenderingContext2D, c: Controls, held: {
   ctx.textAlign = 'center';
   for (const b of c.buttons) {
     const on = pressed.has(b.id);
-    if (b.id === 'dex' || b.id === 'bag') {
+    if (PILLS.includes(b.id)) {
       // 도감: 이름표 같은 알약
       const w = DEX.w * k;
       const h = DEX.h * k;

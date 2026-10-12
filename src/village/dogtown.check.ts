@@ -76,7 +76,7 @@ const NOW = 1_000_000;
   const open = (x: number, y: number) => tileOpen(Math.floor((y / H) * rows), Math.floor((x / W) * cols));
   for (const sp of data.explorer.spots) assert.ok(open(sp.at[0], sp.at[1]), `보물 자리 ${sp.hint} 는 열린 구역`);
   for (const c of CALLS) assert.ok(open(c.at[0], c.at[1]) && ['tree', 'boat', 'pit'].includes(c.kind), `출동 ${c.place}`);
-  assert.equal(RECIPIENTS.length, 15, '배달 받는 이 — 고양이 여덟 · 우체를 뺀 강아지 일곱');
+  assert.equal(RECIPIENTS.length, 15, '배달 받는 이 — 고양이 여덟 · 총총(우체부)을 뺀 강아지 일곱');
   // 강아지마을 포탈 · 장소 종류 · 상점 재료 바로가기는 강아지마을로
   const w = field.warps.find((v) => v.id === 'dog_village')!;
   assert.equal(w.to, 'dogtown', '강아지마을 포탈은 마을로');
@@ -218,7 +218,7 @@ const NOW = 1_000_000;
   assert.equal(early.results[0], 'miss', '너무 일찍 두드리면 헛망치');
 }
 
-// 4) 우체국: 주문 → 맡기(slots 개까지) → 받는 이에게 가면 가방 물건을 건네고 삯 (빨리면 덤) · 물건이 모자라면 안 됨 · 그만두기
+// 4) 우체국: 주문 → 맡기(slots 개까지) → 받는 이에게 가면 가방 물건을 건네고 삯 (마감이 지나면 실패) · 물건이 모자라면 안 됨 · 그만두기
 {
   const s = makeDogSave(NOW, seeded(5));
   const bag = makeBag();
@@ -237,14 +237,15 @@ const NOW = 1_000_000;
   obtain(bag, p.item, p.n);
   const coins = bag.coins;
   const fast = deliver(s, bag, p.to, NOW + 1000);
-  assert.ok(fast?.ok && fast.fast && fast.coins === Math.round(p.coins * (1 + data.post.bonus)), '빨리 배달하면 덤');
+  assert.ok(fast?.ok && fast.coins === p.coins, '마감 안에 배달하면 삯');
   assert.equal(count(bag, p.item), 0, '물건을 건넨다');
   assert.equal(bag.coins, coins + fast.coins);
   assert.equal(s.posted, 1);
   const q = s.parcels[0];
   obtain(bag, q.item, q.n);
   const late = deliver(s, bag, q.to, NOW + data.post.due * 1000 + 5000);
-  assert.ok(late?.ok && !late.fast && late.coins === q.coins, '늦으면 삯만');
+  assert.ok(late && !late.ok && s.parcels.includes(q) && s.posted === 1, '마감이 지나면 실패 — 건넬 수 없고 남아 있다 (실패를 눌러 지운다)');
+  dropOrder(s, s.parcels.indexOf(q));
   acceptOrder(s, NOW, rng);
   dropOrder(s, 0);
   assert.equal(s.parcels.length, 0, '그만두기');

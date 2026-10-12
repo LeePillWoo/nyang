@@ -23,6 +23,7 @@ import {
   DOGTOWN,
   dropOrder,
   dueLeft,
+  failedOrder,
   nextOffer,
   postOffer,
   readMap,
@@ -67,7 +68,7 @@ function drawDog(ctx: CanvasRenderingContext2D, i: number, p: { anim: string; an
 /** 주민 머리 위 할 일 표지 — 보고할 의뢰 · 구조 요청 · 보물 냄새 · 배달 받을 이 */
 function badgeOf(i: number, save: DogSave, bag: Bag, now: number) {
   const d = DOGS[i];
-  if (save.parcels.some((p) => p.to === `dog:${d.id}`)) return '📦';
+  if (save.parcels.some((p) => p.to === `dog:${d.id}` && !failedOrder(p, now))) return '📦';
   if (d.job === 'guild' && save.guild.quests.some((q) => questDone(q, bag))) return '✅';
   if (d.job === 'rescue' && save.call && !save.call.on) return '🚨';
   if (d.job === 'explorer' && save.dig === null && (sniffWait(save, now) === 0 || count(bag, DOGTOWN.explorer.map) > 0)) return '👃';
@@ -393,7 +394,7 @@ export function dogTap(w: number, h: number, x: number, y: number, s: DogtownSta
     if (inR(Q.take, px, py)) return doTake(s, save, i, now);
     if (inR(Q.other, px, py)) return nextOffer(save, s.rng), { kind: 'post' };
     const k = Q.drops.findIndex((r, j) => save.parcels[j] && inR(r, px, py));
-    if (k >= 0) return dropOrder(save, k), dsay('배달을 그만뒀어요'), { kind: 'post' };
+    if (k >= 0) return dsay(failedOrder(save.parcels[k], now) ? '실패한 배달을 지웠어요' : '배달을 그만뒀어요'), dropOrder(save, k), { kind: 'post' };
   } else {
     const n = job === 'explorer' ? 2 : 1;
     const S = simpleLayout(A, L.wide, n);
@@ -631,7 +632,7 @@ function drawPost(ctx: CanvasRenderingContext2D, L: PL, A: R, save: DogSave, bag
     const tw = L.wide ? O.w - 340 : O.w - 130;
     txt(ctx, `${ITEMS[o.item].name} ×${o.n} → ${who.name}`, O.x + 104, O.y + (L.wide ? 80 : 86), tw, 20, '#5b4a3f');
     txt(ctx, `${who.town} · 가방에 ${count(bag, o.item)}/${o.n}`, O.x + 104, O.y + (L.wide ? 104 : 112), tw, 15, count(bag, o.item) >= o.n ? '#3e9a45' : '#9a7b62', false);
-    txt(ctx, `삯 ${o.coins}냥 · ${DOGTOWN.post.due / 60}분 안에 가면 +${Math.round(DOGTOWN.post.bonus * 100)}%`, O.x + 104, O.y + (L.wide ? 128 : 138), tw, 15, '#c98a1c');
+    txt(ctx, `삯 ${o.coins}냥 · ${DOGTOWN.post.due / 60}분 안에 배달 (넘으면 실패)`, O.x + 104, O.y + (L.wide ? 128 : 138), tw, 15, '#c98a1c');
   }
   const full = save.parcels.length >= DOGTOWN.post.slots;
   button(ctx, Q.take, full ? `맡은 배달 가득` : '맡기', full ? 'soft' : 'main');
@@ -648,8 +649,8 @@ function drawPost(ctx: CanvasRenderingContext2D, L: PL, A: R, save: DogSave, bag
     txt(ctx, `📦 ${who.name}(${who.town})에게 ${ITEMS[p.item].name} ×${p.n}`, r.x + 78, r.y + 30, tw, 17, '#5b4a3f');
     txt(ctx, `가방에 ${have}/${p.n}`, r.x + 78, r.y + 54, 140, 15, have >= p.n ? '#3e9a45' : '#d4574a');
     const left = dueLeft(p, now);
-    txt(ctx, left ? `⏱ ${mmss(left)} 안에 가면 덤` : '덤 시간은 지났어요', r.x + 78 + (L.wide ? 150 : 0), r.y + (L.wide ? 54 : 78), 200, 15, left ? '#c98a1c' : '#b09a85', false);
-    button(ctx, Q.drops[k], '그만두기', 'soft');
+    txt(ctx, left ? `⏱ ${mmss(left)} 남음` : '⏱ 시간 초과 — 배달 실패', r.x + 78 + (L.wide ? 150 : 0), r.y + (L.wide ? 54 : 78), 220, 15, left ? '#c98a1c' : '#d4574a', !left);
+    button(ctx, Q.drops[k], left ? '그만두기' : '실패', left ? 'soft' : 'warn');
   });
 }
 

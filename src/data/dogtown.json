@@ -1,5 +1,5 @@
 {
-  "_comment": "강아지마을 (2026-10-12 사용자 요청 — 고양이마을처럼 들어가는 마을, 강아지 주민 8마리, 모험 거점). 배경 backgrounds/village/dog_village_field_v2 (1254×1254) — 좌표 = 그 그림 px. 걷는 땅 = walk 다각형 − blocks (고양이마을과 같은 town.ts). dogs = 주민(시트는 village-dogs.json id) · at 발 자리 · job 맡은 일 · sign 간판 자리 · label 간판 글. guild = 모험가 길드(의뢰 게시판 board 칸 · 바꾸기 reroll 냥코인 · 등급 ranks [이름, 점수] — 2026-10-12 사용자: 아직 구역 개방 같은 건 없이 점수만 쌓는다). 의뢰 type: kill 몬스터 · elite 정예 · clear 던전 깨기 · fish 물고기 · bigfish 월척 · salvage 건지기 · timber 장작 패기 한 판 토막(이상) · chase 다람쥐 잡기 한 판 점수 · maze 미로 탈출 · sand 샌드보드 무사 완주 · cook 요리 그릇 · item 납품(item n개 — 보고할 때 가져간다) · forage 숲 도끼질에 찾은 것 · rescue 구조 · post 배달 · treasure 보물 · forge 망치질 · train 훈련 한 판 점수. forge = 대장간 (강화 단계마다 coins 냥코인 · need 재료 — 모자란 재료는 그 값에 사서 채운다, merge 합치기 값). post = 우체국 (주문 slots 개, due 초 안에 배달하면 bonus 배, parcel 소포 냥코인 범위, items 주문 물건 [id, n], 받는 이는 고양이마을 친구 · 강아지 주민). explorer = 탐험가 (map 말린 지도 아이템, sniff 초마다 킁킁이 냄새 지도 한 장, spots 보물 자리 — 필드 뭍, coins 범위 · loot 나올 것 [id, 확률] · gear 장비 하나 확률). rescue = 구조대 (처음 들른 뒤 first 초, 그 뒤 구조할 때마다 every 초 뒤 새 출동, calls 출동 — kind tree 나무 위 새끼 고양이 · boat 떠내려가는 배 · pit 구덩이에 빠진 강아지, at 필드 자리, coins 범위 · map 말린 지도 확률).",
+  "_comment": "강아지마을 (2026-10-12 사용자 요청 — 고양이마을처럼 들어가는 마을, 강아지 주민 8마리, 모험 거점). 배경 backgrounds/village/dog_village_field_v2 (1254×1254) — 좌표 = 그 그림 px. 걷는 땅 = walk 다각형 − blocks (고양이마을과 같은 town.ts). dogs = 주민(시트는 village-dogs.json id) · at 발 자리 · job 맡은 일 · sign 간판 자리 · label 간판 글. guild = 모험가 길드(의뢰 게시판 board 칸 · 바꾸기 reroll 냥코인 · 등급 ranks [이름, 점수] — 2026-10-12 사용자: 아직 구역 개방 같은 건 없이 점수만 쌓는다). 의뢰 type: kill 몬스터 · elite 정예 · clear 던전 깨기 · fish 물고기 · bigfish 월척 · salvage 건지기 · timber 장작 패기 한 판 토막(이상) · chase 다람쥐 잡기 한 판 점수 · maze 미로 탈출 · sand 샌드보드 무사 완주 · cook 요리 그릇 · item 납품(item n개 — 보고할 때 가져간다) · forage 숲 도끼질에 찾은 것 · rescue 구조 · post 배달 · treasure 보물 · forge 망치질 · train 훈련 한 판 점수. forge = 대장간 (강화 단계마다 coins 냥코인 · need 재료 — 모자란 재료는 그 값에 사서 채운다, merge 합치기 값). post = 우체국 (주문 slots 개, due 초 안에 배달해야 한다 — 넘으면 실패(2026-10-13 사용자), parcel 소포 냥코인 범위, items 주문 물건 [id, n], 받는 이는 고양이마을 친구 · 강아지 주민). explorer = 탐험가 (map 말린 지도 아이템, sniff 초마다 킁킁이 냄새 지도 한 장, spots 보물 자리 — 필드 뭍, coins 범위 · loot 나올 것 [id, 확률] · gear 장비 하나 확률). rescue = 구조대 (처음 들른 뒤 first 초, 그 뒤 구조할 때마다 every 초 뒤 새 출동, calls 출동 — kind tree 나무 위 새끼 고양이 · boat 떠내려가는 배 · pit 구덩이에 빠진 강아지, at 필드 자리, coins 범위 · map 말린 지도 확률).",
   "image": "backgrounds/village/dog_village_field_v2",
   "size": [1254, 1254],
   "unit": 2,
@@ -85,7 +85,7 @@
     },
     {
       "id": "uche",
-      "name": "우체",
+      "name": "총총",
       "sheet": "uche",
       "size": 0.95,
       "about": "우체부 · 부지런한 웰시코기",
@@ -184,8 +184,7 @@
   "post": {
     "slots": 2,
     "due": 600,
-    "bonus": 0.5,
-    "parcel": [25, 40],
+        "parcel": [40, 60],
     "items": [["materials_01", 3], ["cook_fish", 2], ["materials_06", 3], ["materials_05", 4], ["materials_07", 3], ["cook_milk", 2], ["dish_01", 1], ["dish_02", 1], ["materials_04", 4]]
   },
   "explorer": {

@@ -1214,7 +1214,7 @@ try {
     await page.keyboard.press('KeyE');
     await sleep(300);
     const posted = await page.evaluate(() => ({ posted: __game.dogSave.posted, parcels: __game.dogSave.parcels.length, banner: __game.dogView.msg, anim: __game.dogtown.dogs[6].anim }));
-    check(!!parcel && posted.anim === 'affection' && posted.posted === 1 && posted.parcels === 0 && (await coins()) === k4 + Math.round(parcel.coins * 1.5) && posted.banner.includes('배달 완료'), `우체국 맡기 → 버나드 곁에서 E → 배달 완료 · 빠른 배달 덤 (냥코인 +${(await coins()) - k4})`);
+    check(!!parcel && posted.anim === 'affection' && posted.posted === 1 && posted.parcels === 0 && (await coins()) === k4 + parcel.coins && posted.banner.includes('배달 완료'), `우체국 맡기 → 버나드 곁에서 E → 배달 완료 (냥코인 +${(await coins()) - k4})`);
     // ── 구조대: 요청이 들어오면 출동! ──
     await page.keyboard.press('Escape');
     await page.evaluate(() => (__game.dogSave.callAt = 0));
@@ -1432,6 +1432,44 @@ try {
     await page.close();
   }
 
+  if (S_DOG) {
+    // 미션 창 (2026-10-13 사용자): 필드 도감 밑 📜 미션 버튼 → 길드 의뢰 · 배달 · 보물 · 구조가 한 창에 → 시간이 지난 배달은 "실패" 버튼(눌러 지움) →
+    //  납품 의뢰의 📍 바로가기 → 그 재료를 얻는 포탈 앞으로. 휴대폰 세로도 같은 버튼. 화면 quests-desktop.png · screen-quests-portrait.png
+    for (const [name, view] of [['desktop', null], ['portrait', { width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true }]]) {
+      const { page, errors } = await open('field', '', view, view ? '&touch' : '');
+      await page.evaluate(() => {
+        const s = __game.dogSave;
+        s.guild.quests = [{ id: 'logs', p: 0 }, { id: 'clear', p: 1 }, { id: 'fish', p: 2 }];
+        s.parcels = [{ item: 'materials_01', n: 3, to: 'dog:bernard', coins: 50, at: Date.now() - 3600e3 }, { item: 'cook_fish', n: 2, to: 'cat:' + Object.keys(__game.villageSave.friends)[0], coins: 50, at: Date.now() }];
+        s.dig = 0;
+      });
+      const btn = (await page.evaluate(() => __game.controls)).buttons.find((b) => b.id === 'quests');
+      const dex = (await page.evaluate(() => __game.controls)).buttons.find((b) => b.id === 'dex');
+      if (view) await tap(page, btn);
+      else await click2(page, btn);
+      await sleep(200);
+      const q = await page.evaluate(() => ({ open: __game.questsOpen, P: __game.questPoints() }));
+      await page.screenshot({ path: fsPath(new URL(`${name === 'desktop' ? 'quests-desktop' : 'screen-quests-portrait'}.png`, OUT)) });
+      const failRow = q.P.rows.find((r) => r.drop === '실패');
+      const keepRow = q.P.rows.find((r) => r.drop === '그만두기');
+      check(q.open && btn && dex && Math.abs(btn.x - dex.x) < 1 && btn.y > dex.y && q.P.rows.length === 6 && !!failRow && !!keepRow && q.P.rows.every((r) => r.go || r.drop === '실패'), `${name}: 도감 밑 📜 미션 버튼 → 의뢰 3 · 배달 2 · 보물 — 시간이 지난 배달은 "실패" · 줄마다 📍 바로가기`);
+      if (view) await tap(page, failRow.dropAt);
+      else await click2(page, failRow.dropAt);
+      await sleep(100);
+      const left = await page.evaluate(() => __game.dogSave.parcels.length);
+      const P2 = await page.evaluate(() => __game.questPoints());
+      const logs = P2.rows.find((r) => r.title === '통나무 납품');
+      if (view) await tap(page, logs.goAt);
+      else await click2(page, logs.goAt);
+      await page.waitForFunction(() => __game.scene === 'field' && !__game.questsOpen, { timeout: 5000 }).catch(() => {});
+      await sleep(800);
+      const w = FIELD.warps.find((v) => v.id === logs.go);
+      const at = await page.evaluate(() => [__game.field.x, __game.field.y]);
+      check(left === 1 && !!w && Math.hypot(at[0] - w.back[0], at[1] - w.back[1]) < 2, `${name}: "실패" 를 누르면 그 배달을 지운다 · 통나무 납품의 📍 → ${w?.label} 포탈 앞으로`);
+      check(errors.length === 0, `${name}: 페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
+      await page.close();
+    }
+  }
   // 3-9) 미개방 구역 · 미니게임 (실제 키·마우스):
   //  개방 구역 가장자리에서 밖으로 밀어도 못 넘어간다 · 잠긴 포탈은 눌러도 워프하지 않는다 (화면 field-locked.png) →
   //  피라미드 포탈 → 미로: 길을 BFS 로 풀어 모퉁이마다 WASD 로 걸어 출구까지, 보너스 냥코인·기록, 돌아가기 →
@@ -2403,11 +2441,12 @@ try {
     const w0 = await page.evaluate(() => ({ n: __game.dungeon.enemies.length, q: __game.dungeon.wave.queue.length, total: __game.dungeon.wave.total }));
     check(w0.n + w0.q === WAVE_DATA.counts[0] && w0.total === WAVE_DATA.counts.length, `웨이브 1: 방 몬스터 ${w0.n} + 가장자리에서 ${w0.q} (웨이브 ${w0.total}개)`);
     await page.evaluate(() => setInterval(() => (__game.dungeon.P.invT = 1), 50)); // 이 검사에선 안 다친다
-    const spawned = await page.waitForFunction((n) => __game.dungeon.enemies.length > n, { timeout: 6000 }, w0.n).then(() => true, () => false);
-    const far = await page.evaluate(() => {
-      const d = __game.dungeon;
-      return d.enemies.slice(3).every((e) => Math.hypot(e.x - d.P.x, e.z - d.P.z) > 3.5);
-    });
+    // 나온 그 프레임에서 잰다 (전체 검증 중엔 page.evaluate 가 늦어 몬스터가 이미 다가와 있었다)
+    const fresh = await page
+      .waitForFunction((n) => { const d = __game.dungeon; return d.enemies.length > n && d.enemies.slice(n).map((e) => Math.hypot(e.x - d.P.x, e.z - d.P.z)); }, { timeout: 6000, polling: 'raf' }, w0.n)
+      .then((h) => h.jsonValue(), () => null);
+    const spawned = !!fresh;
+    const far = !!fresh && fresh.every((dist) => dist > 3.5);
     check(spawned && far, '가장자리에서 예고 뒤 몬스터가 더 나온다 (고양이 가까이는 아니다)');
     await page.screenshot({ path: fsPath(new URL('dungeon-wave.png', OUT)) });
     // 자동 냥펀치로 쓰러뜨려 생선뼈 → 레벨 업 카드

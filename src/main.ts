@@ -3,6 +3,7 @@
 import { assetUrl, image } from './shared/assets.ts';
 import { bagLayout, bagTap, bagView, coinReady, drawBag, drawShop, flipPage, itemIconsReady, resetBagView, resetShopView, shopLayout, shopTap, shopView } from './bag/bag-draw.ts';
 import { count, fromSave, ITEMS, obtain, PAGE, stats, tickBuffs, type Bag } from './bag/bag.ts';
+import { drawQuests, questPoints, questTap } from './bag/quest-draw.ts';
 import { bookLayout, bookTap, bookView, drawBook, groupOf, mapPoints, openBook, ungrouped, type BookData } from './bag/book-draw.ts';
 import shopData from './data/shop.json' with { type: 'json' };
 import {
@@ -109,7 +110,7 @@ import {
   type RopeRes,
   type RopeTap,
 } from './village/dogtown-draw.ts';
-import { deliver, dig, digSpot, dogAtPoint, dogOf, DOGS, dogTalkTo, fromDogSave, makeDogtown, rescueDone, rescueSpot, setDogAnim, spotNear, tickRescue, updateDogtown, type Call, type DogSave, type DogtownState } from './village/dogtown.ts';
+import { deliver, dig, digSpot, dogAtPoint, dogOf, DOGS, dogTalkTo, dropOrder, fromDogSave, makeDogtown, rescueDone, rescueSpot, setDogAnim, spotNear, tickRescue, updateDogtown, type Call, type DogSave, type DogtownState } from './village/dogtown.ts';
 import { noteGuild, type GuildEvent } from './village/guild.ts';
 import { makeRope, updateRope, type Rope } from './village/rope.ts';
 import { drawTraining, dummyAt, dummyPoint, resetTrainFx, trainFx, trainingReady } from './mini/training-draw.ts';
@@ -175,10 +176,10 @@ addEventListener('keydown', (e) => {
   unlockAudio();
   if (e.code === 'Space') e.preventDefault();
   // 도감 (B) · 가방 (I) — 열려 있는 동안은 다른 키를 먹는다 (Esc 는 창만 닫는다)
-  const want = e.code === 'KeyB' ? 'dex' : e.code === 'KeyI' ? 'bag' : null;
+  const want = e.code === 'KeyB' ? 'dex' : e.code === 'KeyI' ? 'bag' : e.code === 'KeyQ' ? 'quests' : null;
   if (want && !e.repeat) {
     if (panel === want) return closePanel();
-    if (!panel && (want === 'dex' ? dexAllowed() : bagAllowed())) return openPanel(want);
+    if (!panel && (want === 'dex' ? dexAllowed() : want === 'quests' ? questsAllowed() : bagAllowed())) return openPanel(want);
   }
   if (panel) {
     if (e.code === 'Escape') closePanel();
@@ -314,11 +315,15 @@ const ctl = () => controls(innerWidth, innerHeight, scene, touchOn);
 
 // ── 창: 물고기 도감 (필드 버튼 · 낚시터 도감 판 · B) · 가방 (필드·던전 버튼 · I). 열려 있는 동안 게임은 멈춘다
 // 'dex' = 도감 (물고기 · 몬스터 · 아이템), 'shop' = 고등어 상점 (강아지마을 고등어 아저씨)
-let panel: 'dex' | 'bag' | 'shop' | null = null;
+let panel: 'dex' | 'bag' | 'shop' | 'quests' | null = null;
 const dexAllowed = () => !fadeTo && !rope && (scene !== 'fishing' || dexReady(fishing));
 const bagAllowed = () =>
   !fadeTo && !rope && (scene === 'field' || scene === 'dungeon' || (scene === 'village' && !villageView.panel && !villageView.gifts.length) || (scene === 'dogtown' && !dogView.panel));
-function openPanel(p: 'dex' | 'bag' | 'shop') {
+/** 미션 창 — 필드 · 마을 (창이 없을 때) */
+const questsAllowed = () => !fadeTo && !rope && (scene === 'field' || (scene === 'village' && !villageView.panel && !villageView.gifts.length) || (scene === 'dogtown' && !dogView.panel));
+/** 미션 창의 바로가기가 "가까운 곳"을 고를 기준 — 필드면 고양이 자리, 마을이면 그 마을 포탈 */
+const questHere = () => (scene === 'field' ? [field.x, field.y] : (FIELD.warps.find((w) => w.to === scene)?.at ?? [field.x, field.y]));
+function openPanel(p: 'dex' | 'bag' | 'shop' | 'quests') {
   if (p === 'dex') scene === 'fishing' ? openBook('fish', fishing.spotId) : scene === 'dungeon' ? openBook('monster', groupOf(dungeon.enemies[0]?.kind ?? 'sword')) : openBook();
   if (p === 'bag') resetBagView();
   if (p === 'shop') resetShopView();
@@ -405,6 +410,17 @@ canvas.addEventListener('pointerdown', (e) => {
     else if (r === 'travel' && bookView.go) travelTo(bookView.go);
     return;
   }
+  if (panel === 'quests') {
+    const r = questTap(innerWidth, innerHeight, p.x, p.y, dsave, bag, questHere(), Date.now());
+    if (r?.kind === 'close') closePanel();
+    else if (r?.kind === 'travel') travelTo(r.id);
+    else if (r?.kind === 'drop') {
+      dropOrder(dsave, r.k);
+      saveDog();
+      sfxPickup();
+    }
+    return;
+  }
   if (rope) return ropeAction(ropeTap(innerWidth, innerHeight, p.x, p.y, rope.r));
   if (scene === 'dungeon' && dungeon.result) {
     const b = resultButtonAt(innerWidth, innerHeight, p.x, p.y, Object.keys(dungeon.run.skills).length);
@@ -456,6 +472,7 @@ canvas.addEventListener('pointerdown', (e) => {
     if (b) {
       pressing.set(e.pointerId, b.id);
       if (b.id === 'bag' && bagAllowed()) openPanel('bag');
+      if (b.id === 'quests' && questsAllowed()) openPanel('quests');
       return;
     }
     if (!stick && onStick(c, p.x, p.y)) return void grabStick(c, e.pointerId, p);
@@ -469,6 +486,7 @@ canvas.addEventListener('pointerdown', (e) => {
     if (b) {
       pressing.set(e.pointerId, b.id);
       if (b.id === 'bag' && bagAllowed()) openPanel('bag');
+      if (b.id === 'quests' && questsAllowed()) openPanel('quests');
       return;
     }
     if (!stick && onStick(c, p.x, p.y)) return void grabStick(c, e.pointerId, p);
@@ -523,6 +541,7 @@ canvas.addEventListener('pointerdown', (e) => {
     pressing.set(e.pointerId, b.id);
     if (b.id === 'dex' && dexAllowed()) openPanel('dex');
     else if (b.id === 'bag' && bagAllowed()) openPanel('bag');
+    else if (b.id === 'quests' && questsAllowed()) openPanel('quests');
     return;
   }
   if (!stick && onStick(c, p.x, p.y)) {
@@ -874,6 +893,9 @@ if (trace)
       get dexOpen() { return panel === 'dex'; },
       get bagOpen() { return panel === 'bag'; },
       get shopOpen() { return panel === 'shop'; },
+      get questsOpen() { return panel === 'quests'; },
+      /** 미션 창의 줄 · 바로가기 · 그만두기/실패 버튼 (CSS px) */
+      questPoints: () => questPoints(innerWidth, innerHeight, dsave, bag, questHere(), Date.now()),
       /** 도감에서 지금 보는 물고기 낚시터 탭 */
       get dexTab() { return bookView.tab.fish; },
       book: bookView,
@@ -1530,7 +1552,7 @@ function handOver(to: string) {
     saveBag();
   }
   saveDog();
-  return { ok: d.ok, msg: d.ok ? `📦 배달 완료! 냥코인 +${d.coins}${d.fast ? ' (빠른 배달 덤)' : ''}` : `📦 배달: ${d.why}` };
+  return { ok: d.ok, msg: d.ok ? `📦 배달 완료! 냥코인 +${d.coins}` : `📦 배달: ${d.why}` };
 }
 /** 강아지마을 한 프레임: 창이 열려 있으면 고양이는 서 있고(주민은 그대로) 망치질만 */
 function stepDogtown(dt: number) {
@@ -2079,6 +2101,7 @@ function drawOverlay() {
   if (panel === 'dex') return drawBook(ctx, innerWidth, innerHeight, bookData(), last / 1000);
   if (panel === 'shop') return drawShop(ctx, innerWidth, innerHeight, bag, SHOP, lastDt);
   if (panel === 'bag') return drawBag(ctx, innerWidth, innerHeight, bag, lastDt);
+  if (panel === 'quests') return drawQuests(ctx, innerWidth, innerHeight, dsave, bag, questHere(), Date.now());
   if (rope) return drawRope(ctx, innerWidth, innerHeight, rope.r, rope.call, rope.res, last / 1000, touchOn);
   if (scene === 'dogtown' && dogView.panel) return drawDogPanel(ctx, innerWidth, innerHeight, dogtown, dsave, bag, last / 1000, lastDt, Date.now(), touchOn);
   if (scene === 'village' && (villageView.panel || villageView.gifts.length))
@@ -2103,15 +2126,15 @@ function drawFade() {
 
 const help = document.getElementById('help')!;
 const HELP = {
-  field: 'WASD 이동 · 숲은 도끼로 (부스럭거리는 수풀엔 무언가 · 다람쥐는 쫓아가 잡기), 물은 배로 · 이정표 앞 포탈에 잠시 서 있으면 던전 · 바다에서 배를 멈추고 있으면… 고래? · 지도 끌기·미니맵으로 둘러보기, 포탈 클릭 = 워프 · 강아지마을엔 모험가 길드 · 대장간 · 상점 · 미니맵의 ✕ 보물 · ❗ 구조 · I 가방 · B 도감 · M 미니맵 · T 지형 보기',
+  field: 'WASD 이동 · 숲은 도끼로 (부스럭거리는 수풀엔 무언가 · 다람쥐는 쫓아가 잡기), 물은 배로 · 이정표 앞 포탈에 잠시 서 있으면 던전 · 바다에서 배를 멈추고 있으면… 고래? · 지도 끌기·미니맵으로 둘러보기, 포탈 클릭 = 워프 · 강아지마을엔 모험가 길드 · 대장간 · 상점 · 미니맵의 ✕ 보물 · ❗ 구조 · I 가방 · B 도감 · Q 미션 · M 미니맵 · T 지형 보기',
   dungeon: 'WASD 이동 · 냥펀치는 저절로 (몬스터가 가까이 오면) · Space 구르기 · 웨이브 8번을 버티면 클리어 · 생선뼈를 모으면 레벨 업 → 기술 카드 (1·2·3) · I 가방 · 빛나는 칸에 3초 서 있으면 나가기',
   maze: 'WASD 이동 · 횃불이 닿는 길만 보여요 · 냥코인을 줍고 막다른 길 끝의 보물 상자를 찾아 출구로 · 빠를수록 탈출 보너스 · R 새 미로 · Esc 돌아가기',
   whale: '고래에게 삼켜졌다! WASD 이동 · 플랑크톤 빛이 닿는 길만 보여요 · 냥코인과 진주 조개를 찾아 숨구멍으로 · 빠를수록 보너스 · Esc 포기 (그래도 뱉어 줘요)',
   sandboard: 'A/D 좌우 · Space 점프 (높은 바위·선인장·기둥은 점프대로만) · 부딪히면 하트 -1 · 자석·방패·하트·가속 발판 · R 다시 · Esc 돌아가기',
   timber: 'A · ← 왼쪽에서, D · → 오른쪽에서 패요 · 가지가 내 쪽으로 내려오면 콩! · 팰수록 시간이 늘지만 점점 빨리 줄어요 · R 다시 · Esc 돌아가기',
   chase: 'WASD 이동 · 눈이 반짝이는 나무 구멍 · 부스럭거리는 수풀에서 다람쥐가 튀어나와요 · 쫓아가 닿으면 잡기 (황금 다람쥐 3점) · 도토리에 맞으면 잠깐 멍 · 60초 · R 다시 · Esc 돌아가기',
-  village: 'WASD 이동 · 친구나 요리 가판대 앞에서 E (또는 누르기) · 재료로 요리해서 친구에게 먹여 주면 친해져요 · 부탁(!)을 들어주면 냥코인 · I 가방 · Esc 돌아가기',
-  dogtown: 'WASD 이동 · 강아지 주민 앞에서 E (또는 누르기) · 길드 의뢰 · 대장간 강화 · 고등어 상점 · 우체국 배달 · 탐험가 보물 지도 · 훈련장 · 구조대 · I 가방 · Esc 돌아가기',
+  village: 'WASD 이동 · 친구나 요리 가판대 앞에서 E (또는 누르기) · 재료로 요리해서 친구에게 먹여 주면 친해져요 · 부탁(!)을 들어주면 냥코인 · I 가방 · Q 미션 · Esc 돌아가기',
+  dogtown: 'WASD 이동 · 강아지 주민 앞에서 E (또는 누르기) · 길드 의뢰 · 대장간 강화 · 고등어 상점 · 우체국 배달 · 탐험가 보물 지도 · 훈련장 · 구조대 · I 가방 · Q 미션 · Esc 돌아가기',
   training: '빛나는 허수아비 쪽 방향키(WASD · ←↑→↓)로 쳐요 · 빨리 칠수록 딱!(2점) · 공이 굴러오면 닿기 직전에 Space 로 구르기 · R 다시 · Esc 마을로',
 };
 const HELP_TOUCH = {
