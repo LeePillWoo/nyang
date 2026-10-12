@@ -5,7 +5,7 @@ import { makeBag } from './bag.ts';
 import { hitPlayer, makeDungeon, maxHp, pick, PLAYER, strike, updateDungeon, WAVES, waveKinds, type Dungeon } from './dungeon.ts';
 import { ENEMY_DEFS, makeEnemy, type Enemy } from './enemy.ts';
 import { room, ROOMS } from './iso.ts';
-import { gainXp, learn, MAX_LV, need, rollCards, SKILL_IDS, SKILLS, SLOTS, XP, type SkillId } from './skills.ts';
+import { gainXp, learn, MAX_LV, need, readyOf, rollCards, SKILL_IDS, SKILLS, SLOTS, XP, type SkillId } from './skills.ts';
 
 const sheets = {} as never;
 const DT = 1 / 60;
@@ -134,6 +134,18 @@ const one = (id: SkillId, lvl: number, mons: [string, number, number][], secs: n
   assert.ok(Math.abs(d.enemies[0].x - sx) < 0.3, '묶이면 못 다가온다');
   d = one('catnip_cloud', 1, [['fat', 1.2, 0]], 1);
   assert.ok(d.enemies[0].slowT > 0 && d.enemies[0].slowK === 0.7 && lost(d.enemies[0]) >= 5, `캣닢 구름: 느려지고 초당 6 (${lost(d.enemies[0])})`);
+  d = one('catnip_cloud', 1, [['fat', 2.2, 0]], 1);
+  assert.ok(lost(d.enemies[0]) >= 5, `캣닢 구름은 넓다 — 2.2m 밖 적도 (${lost(d.enemies[0])}, 2026-10-08 1.8 → 2.4m)`);
+  assert.equal(readyOf(d.run, 'catnip_cloud'), null, '늘 켜져 있는 기술은 시계가 없다');
+  // HUD 쿨다운 시계: 쏘면 0 쪽으로 · 시간이 지나면 1(준비됨) 쪽으로
+  d = one('tail_swirl', 1, [['fat', 1.5, 0]], 0.4);
+  const r0 = readyOf(d.run, 'tail_swirl')!;
+  run(d, 1);
+  const r1 = readyOf(d.run, 'tail_swirl')!;
+  assert.ok(r0 < 0.2 && r1 > r0 && r1 < 1, `쿨다운 시계: 쏜 뒤 ${r0.toFixed(2)} → 1초 뒤 ${r1.toFixed(2)}`);
+  d.enemies.length = 0; // 칠 적이 없으면 다시 쏘지 않고 기다린다
+  run(d, 3);
+  assert.equal(readyOf(d.run, 'tail_swirl'), 1, '다 차면 준비됨 (1)');
   d = arena({ zoom: 2 }, [['fat', 2, 0]]);
   d.P.faceX = 1;
   d.P.faceZ = 0;

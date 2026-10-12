@@ -1,8 +1,10 @@
-// 다람쥐 잡기 그리기 — 위에서 본 숲 속 공터 (풀밭 · 둘레 나무 · 수풀) · 치즈 · 다람쥐(필드와 같은 그리기) · 황금 다람쥐 빛 · 떠오르는 점수 ·
-// 위 가운데 남은 시간과 잡은 점수 · 미니게임 공용 HUD(알약 · 돌아가기 · 결과 카드). 전용 그림이 없어 캔버스로 그린다 —
-// 그림이 오면 drawGround · drawTrees · drawBush 만 바꾼다. 좌표는 필드처럼 px (고양이 키 catBody), 공터 가운데가 (0, 0). 로직은 chase.ts.
+// 다람쥐 잡기 그리기 — 사용자 그림(backgrounds/chase/chase_clearing_v1 — 나무 구멍 다섯 · 수풀이 둘러싼 숲 속 공터, 2026-10-08 밤) ·
+// 곧 튀어나올 굴 표시(나무 구멍 속 눈 반짝 · 수풀은 (( )) 부스럭) · 치즈 · 다람쥐(필드와 같은 그리기) · 황금 다람쥐 빛 · 떠오르는 점수 ·
+// 위 가운데 남은 시간과 잡은 점수 · 미니게임 공용 HUD(알약 · 돌아가기 · 결과 카드). 좌표는 필드처럼 px (고양이 키 catBody), 공터 가운데가 (0, 0) —
+// 그림은 CHASE.center 가 (0, 0) 에, 그림 px CHASE.k 개가 1px. 로직은 chase.ts.
+import { image } from './assets.ts';
 import { CAT_FPS, CAT_ROW } from './cat.ts';
-import { CHASE, left, type ChaseEvent, type ChaseState } from './chase.ts';
+import { CHASE, fromImage, left, type Bush, type ChaseEvent, type ChaseState } from './chase.ts';
 import data from './data/field.json' with { type: 'json' };
 import { drawEmote } from './emote.ts';
 import { drawAcorn, drawSquirrel } from './field-draw.ts';
@@ -18,109 +20,44 @@ const RX = CHASE.rx * C;
 const RY = CHASE.ry * C;
 /** 둘레 나무까지 보이는 판 크기 (px) */
 const BOX = { w: RX * 2.4, h: RY * 2.5 };
+/** 그림이 덮는 곳 (좌표 px) — 화면이 이 밖을 보지 않게 */
+const IMG = 1254;
+const [IX0, IY0] = fromImage(0, 0);
+const [IX1, IY1] = fromImage(IMG, IMG);
+/** 들어가기 전에 그림을 불러 둔다 (main 의 enterChase · ?chase) */
+export const chaseReady = () => image(CHASE.image).ready;
 /** 화면 배율이 이보다 작아지게는 줄이지 않는다 (CSS px / px — 고양이 약 27px) — 넘치면 고양이를 따라간다 */
 const SC_MIN = 1.6;
 /** 캔버스 픽셀 기준 변환 (검증 도구가 화면 위치를 찾을 때 쓴다): 화면 = o + 좌표 × sc */
 export const chaseView = { sc: 1, ox: 0, oy: 0 };
 
-function seeded(seed: number) {
-  let s = seed >>> 0;
-  return () => {
-    s = (s * 1664525 + 1013904223) >>> 0;
-    return s / 2 ** 32;
-  };
-}
-/** 공터 둘레의 나무 · 풀숲 장식 · 꽃 (한 번만 만든다) */
-const DECO = (() => {
-  const rnd = seeded(11);
-  const trees: { x: number; y: number; r: number; c: string }[] = [];
-  const GREENS = ['#4e9a40', '#5fae4a', '#3f8f45', '#6aa85e', '#57a04c'];
-  for (let i = 0; i < 70; i++) {
-    const a = rnd() * Math.PI * 2;
-    const k = 1.1 + rnd() * 0.45;
-    trees.push({ x: Math.cos(a) * RX * k, y: Math.sin(a) * RY * k, r: C * (1.1 + rnd() * 0.9), c: rnd() < 0.12 ? '#e3a83a' : GREENS[Math.floor(rnd() * GREENS.length)] });
-  }
-  trees.sort((p, q) => p.y - q.y);
-  const tufts: { x: number; y: number; f: string | null }[] = [];
-  for (let i = 0; i < 60; i++) {
-    const a = rnd() * Math.PI * 2;
-    const k = Math.sqrt(rnd()) * 0.9;
-    tufts.push({ x: Math.cos(a) * RX * k, y: Math.sin(a) * RY * k, f: rnd() < 0.3 ? ['#fff3a8', '#ffffff', '#ffb6c8'][Math.floor(rnd() * 3)] : null });
-  }
-  return { trees, tufts };
-})();
-
-/** 풀밭 공터 — 가운데 밝고 가장자리는 그늘, 풀 포기 · 꽃 */
-function drawGround(ctx: CanvasRenderingContext2D) {
-  ctx.save();
-  ctx.scale(1, RY / RX);
-  const g = ctx.createRadialGradient(0, 0, RX * 0.1, 0, 0, RX);
-  g.addColorStop(0, '#b4dd84');
-  g.addColorStop(0.75, '#9fd27a');
-  g.addColorStop(1, '#7fb862');
-  ctx.fillStyle = g;
-  ctx.beginPath();
-  ctx.arc(0, 0, RX, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.restore();
-  for (const t of DECO.tufts) {
-    ctx.strokeStyle = 'rgba(70, 120, 50, 0.55)';
-    ctx.lineWidth = C * 0.06;
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    for (const dx of [-0.12, 0, 0.12]) {
-      ctx.moveTo(t.x + dx * C, t.y);
-      ctx.lineTo(t.x + dx * C * 1.8, t.y - C * 0.22);
-    }
-    ctx.stroke();
-    if (t.f) {
-      ctx.fillStyle = t.f;
+/** 곧 튀어나올 굴 — 나무 구멍은 속에서 눈 두 개가 깜빡이고, 수풀은 좌우에 (( )) (둘 다 흔들리는 동안만) */
+function drawDen(ctx: CanvasRenderingContext2D, b: Bush, t: number) {
+  if (b.warn <= 0) return;
+  if (b.kind === 'hole') {
+    const open = Math.sin(t * 9) > -0.6 ? 1 : 0.15; // 깜빡
+    const glow = ctx.createRadialGradient(b.ex, b.ey, 0, b.ex, b.ey, C * 0.55);
+    glow.addColorStop(0, b.gold ? 'rgba(255, 220, 90, 0.55)' : 'rgba(255, 245, 200, 0.35)');
+    glow.addColorStop(1, 'rgba(255, 245, 200, 0)');
+    ctx.fillStyle = glow;
+    ctx.fillRect(b.ex - C * 0.6, b.ey - C * 0.6, C * 1.2, C * 1.2);
+    for (const side of [-1, 1]) {
+      ctx.fillStyle = b.gold ? '#ffe27a' : '#fffbe8';
       ctx.beginPath();
-      ctx.arc(t.x + C * 0.2, t.y - C * 0.1, C * 0.08, 0, Math.PI * 2);
+      ctx.ellipse(b.ex + side * C * 0.17, b.ey, C * 0.11, C * 0.11 * open, 0, 0, Math.PI * 2);
       ctx.fill();
+      if (open > 0.5) {
+        ctx.fillStyle = '#2b1d14';
+        ctx.beginPath();
+        ctx.arc(b.ex + side * C * 0.17 + C * 0.025, b.ey + C * 0.015, C * 0.05, 0, Math.PI * 2);
+        ctx.fill();
+      }
     }
   }
-}
-/** 둘레 나무 — 위에서 본 둥근 나무갓 (그림자 · 몸 · 밝은 쪽) */
-function drawTrees(ctx: CanvasRenderingContext2D) {
-  for (const t of DECO.trees) {
-    ctx.fillStyle = 'rgba(30, 60, 30, 0.3)';
-    ctx.beginPath();
-    ctx.ellipse(t.x + t.r * 0.15, t.y + t.r * 0.35, t.r, t.r * 0.6, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = t.c;
-    ctx.beginPath();
-    ctx.arc(t.x, t.y, t.r, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.16)';
-    ctx.beginPath();
-    ctx.arc(t.x - t.r * 0.3, t.y - t.r * 0.3, t.r * 0.55, 0, Math.PI * 2);
-    ctx.fill();
-  }
-}
-/** 수풀 — 흔들리면(곧 튀어나온다) 좌우로 떨고 (( )) 표시 */
-function drawBush(ctx: CanvasRenderingContext2D, x: number, y: number, warn: number, t: number) {
-  const shaking = warn > 0;
-  const dx = shaking ? Math.sin(t * 45) * C * 0.12 : 0;
-  for (const [ox, oy, r, c] of [
-    [-0.5, 0.05, 0.62, '#3f8f45'],
-    [0.5, 0.05, 0.62, '#3f8f45'],
-    [0, -0.25, 0.75, '#4e9a40'],
-    [-0.2, -0.45, 0.4, '#6aa85e'],
-  ] as [number, number, number, string][]) {
-    ctx.fillStyle = c;
-    ctx.beginPath();
-    ctx.arc(x + dx + ox * C, y + oy * C, r * C, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  // 빨간 열매 (나무갓과 구분되게)
-  ctx.fillStyle = '#e8574a';
-  for (const [ox, oy] of [[-0.45, -0.1], [0.35, -0.35], [0.55, 0.15], [-0.1, 0.2]]) {
-    ctx.beginPath();
-    ctx.arc(x + dx + ox * C, y + oy * C, C * 0.09, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  if (!shaking) return;
+  // (( )) — 굴 둘레 (구멍은 튀어나올 자리 위에)
+  const x = b.x;
+  const y = b.y - C * 0.2;
+  const dx = Math.sin(t * 45) * C * 0.06;
   ctx.lineCap = 'round';
   for (const [w, color] of [
     [C * 0.16, 'rgba(60, 45, 30, 0.45)'],
@@ -131,10 +68,10 @@ function drawBush(ctx: CanvasRenderingContext2D, x: number, y: number, warn: num
     for (const side of [-1, 1])
       for (const k of [0, 1]) {
         ctx.beginPath();
-        const cx = x + side * C * 1.15;
+        const cx = x + dx + side * C * 0.95;
         const R = C * (0.26 + k * 0.2);
-        if (side > 0) ctx.arc(cx, y - C * 0.4, R, -0.75, 0.75);
-        else ctx.arc(cx, y - C * 0.4, R, Math.PI - 0.75, Math.PI + 0.75);
+        if (side > 0) ctx.arc(cx, y - C * 0.2, R, -0.75, 0.75);
+        else ctx.arc(cx, y - C * 0.2, R, Math.PI - 0.75, Math.PI + 0.75);
         ctx.stroke();
       }
   }
@@ -169,23 +106,28 @@ export function drawChase(ctx: CanvasRenderingContext2D, cw: number, ch: number,
   const h = ch / dpr;
   const M = miniLayout(w, h);
   const k = M.k;
-  // 판을 화면(위 HUD 아래)에 맞추되 너무 작아지면 그대로 두고 고양이를 따라간다 (판 밖은 안 보이게)
+  // 판(공터 + 둘레 나무)을 화면(위 HUD 아래)에 맞추되 너무 작아지면 그대로 두고 고양이를 따라간다. 그림은 화면을 다 덮게 (그림 밖은 안 보이게)
   const top = M.s.t + 78 * k;
   const vh = h - top - 8;
   const fit = Math.min(w / BOX.w, vh / BOX.h);
-  const sc = Math.max(fit, SC_MIN);
-  const place = (view: number, size: number, at: number) => (size <= view ? 0 : Math.max(-(size - view) / 2, Math.min((size - view) / 2, -at)));
-  const cx = w / 2 + place(w, BOX.w * sc, s.cat.x * sc);
-  const cy = top + vh / 2 + place(vh, BOX.h * sc, s.cat.y * sc);
+  const sc = Math.max(fit, SC_MIN, w / (IX1 - IX0), h / (IY1 - IY0));
+  const follow = (view: number, size: number, at: number) => (size * sc <= view ? 0 : Math.max(-(size - view / sc) / 2, Math.min((size - view / sc) / 2, at)));
+  const clampTo = (c: number, lo: number, hi: number) => (lo > hi ? (lo + hi) / 2 : Math.max(lo, Math.min(hi, c)));
+  // 화면 가운데(가로) · HUD 아래 가운데(세로)에 오는 좌표
+  const camX = clampTo(follow(w, BOX.w, s.cat.x), IX0 + w / 2 / sc, IX1 - w / 2 / sc);
+  const camY = clampTo(follow(vh, BOX.h, s.cat.y), IY0 + (top + vh / 2) / sc, IY1 - (h - top - vh / 2) / sc);
+  const cx = w / 2 - camX * sc;
+  const cy = top + vh / 2 - camY * sc;
   Object.assign(chaseView, { sc: sc * dpr, ox: cx * dpr, oy: cy * dpr });
 
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.fillStyle = '#3f7a42';
   ctx.fillRect(0, 0, cw, ch);
   ctx.setTransform(sc * dpr, 0, 0, sc * dpr, cx * dpr, cy * dpr);
-  drawGround(ctx);
-  drawTrees(ctx);
-  for (const b of s.bushes) drawBush(ctx, b.x, b.y, b.warn, v.t);
+  const bg = image(CHASE.image).img;
+  ctx.imageSmoothingQuality = 'high';
+  if (bg.complete && bg.naturalWidth) ctx.drawImage(bg, IX0, IY0, IX1 - IX0, IY1 - IY0);
+  for (const b of s.bushes) drawDen(ctx, b, v.t);
 
   // 고양이 · 다람쥐 (아래에 있는 것을 나중에) · 황금 다람쥐는 발밑에 금빛
   const cat = s.cat;
@@ -285,7 +227,7 @@ export function drawChase(ctx: CanvasRenderingContext2D, cw: number, ch: number,
   ctx.fillStyle = '#ffe9a8';
   ctx.fillText(pts, w / 2, ty + 28 * k);
   if (s.phase === 'ready') {
-    const lines = [v.touch ? '조이스틱으로 움직이면 시작!' : 'WASD 로 움직이면 시작!', '수풀에서 튀어나오는 다람쥐를 쫓아가 잡아요', `${CHASE.time}초 · 황금 다람쥐는 ${CHASE.goldPoints}점`];
+    const lines = [v.touch ? '조이스틱으로 움직이면 시작!' : 'WASD 로 움직이면 시작!', '나무 구멍 · 수풀에서 튀어나오는 다람쥐를 쫓아가 잡아요', `${CHASE.time}초 · 황금 다람쥐는 ${CHASE.goldPoints}점`];
     lines.forEach((t, i) => {
       ctx.font = `bold ${Math.round((i ? 15 : 21) * k)}px system-ui, sans-serif`;
       ctx.lineWidth = 5 * k;

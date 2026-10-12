@@ -1,6 +1,6 @@
 // node src/chase.check.ts  (npm run check)
 import assert from 'node:assert/strict';
-import { CHASE, inArena, left, makeChase, maxAt, updateChase, type ChaseState, type Runner } from './chase.ts';
+import { arenaK, CHASE, inArena, left, makeChase, maxAt, updateChase, type ChaseState, type Runner } from './chase.ts';
 import data from './data/field.json' with { type: 'json' };
 import { active, SQ_T } from './squirrel.ts';
 
@@ -51,6 +51,9 @@ function play(seed: number, mode: 'still' | 'perfect' | 'human', onFrame?: (s: C
 // 1) 첫 걸음 전엔 시간이 안 가고 다람쥐도 안 나온다
 {
   const s = makeChase(seeded(1));
+  const holes = s.bushes.filter((b) => b.kind === 'hole').length;
+  assert.ok(s.bushes.length === CHASE.dens.length && holes === 5, '굴 = 그림의 나무 구멍 다섯 · 수풀 둘');
+  for (const b of s.bushes) assert.ok(arenaK(b.x, b.y) > 0.85 && arenaK(b.x, b.y) < 1.15, '굴은 공터 가장자리 (' + arenaK(b.x, b.y).toFixed(2) + ')');
   for (let i = 0; i < 120; i++) updateChase(s, { mx: 0, my: 0 }, DT);
   assert.ok(s.phase === 'ready' && left(s) === CHASE.time && s.runners.length === 0, '첫 걸음 전엔 그대로');
   updateChase(s, { mx: 1, my: 0 }, DT);

@@ -82,8 +82,9 @@ import { drawSandboard, SAND_IMAGES, sandPoint, warmSandboard, type SandArt } fr
 import { makeSandboard, SAND, updateSandboard, type SandEvent, type SandState } from './sandboard.ts';
 import { loadSheet, type Sheet } from './sheet.ts';
 import { drawTimber, timberFx } from './timber-draw.ts';
-import { chaseFx, chaseView, drawChase } from './chase-draw.ts';
-import { burn, drawVillage, drawVillagePanel, openVillagePanel, resetVillageView, villageKey, villagePoints, villageReady, villageTap, villageView, type VillageAct } from './village-draw.ts';
+import { chaseFx, chaseReady, chaseView, drawChase } from './chase-draw.ts';
+import { burn, drawVillage, drawVillagePanel, finishPlay, openVillagePanel, resetVillageView, toyX, villageKey, villagePoints, villageReady, villageTap, villageView, type VillageAct } from './village-draw.ts';
+import { updateToy, type ToyEvent } from './toys.ts';
 import { FRIENDS, fromVillageSave, hello, makeVillage, targetAtPoint, tickRequests, updateCook, updateVillage, walkTo, type VillageSave, type VillageState } from './village.ts';
 import { CHASE, makeChase, updateChase, type ChaseEvent, type ChaseState } from './chase.ts';
 import { makeTimber, TIMBER, updateTimber, type Side, type TimberEvent, type TimberState } from './timber.ts';
@@ -152,6 +153,7 @@ addEventListener('keydown', (e) => {
   }
   // 마을 창 (친구 · 가판대 · 요리 · 선물 카드) — 열려 있으면 키를 먹는다
   if (scene === 'village' && (villageView.panel || villageView.gifts.length)) {
+    keys.add(e.code); // 놀이(깃털)는 누르고 있는 키로 움직인다
     if (!e.repeat) onVillageAct(villageKey(e.code, village, vsave, bag, Date.now()));
     return;
   }
@@ -385,6 +387,7 @@ canvas.addEventListener('pointerdown', (e) => {
     return;
   }
   if (scene === 'village') {
+    if (villageView.panel?.kind === 'play') toyPtr = p.x;
     if (villageView.panel || villageView.gifts.length) return onVillageAct(villageTap(innerWidth, innerHeight, p.x, p.y, village, vsave, bag, Date.now()));
     if (miniButtonAt(innerWidth, innerHeight, p.x, p.y, false) === 'leave') return backToField();
     const c = ctl();
@@ -444,8 +447,11 @@ canvas.addEventListener('pointerdown', (e) => {
     mapPoint(p);
   } else if (!drag) drag = { id: e.pointerId, ...p, moved: false };
 });
+/** 놀이(깃털)를 따라가게 할 화면 x (CSS px) — 마우스는 움직인 자리, 손가락은 대고 있는 동안만 */
+let toyPtr: number | null = null;
 canvas.addEventListener('pointermove', (e) => {
   const p = pos(e);
+  if (scene === 'village' && villageView.panel?.kind === 'play' && (e.pointerType === 'mouse' || e.buttons)) toyPtr = p.x;
   if (stick?.id === e.pointerId) {
     Object.assign(stick, p);
     if (Math.hypot(p.x - stick.sx, p.y - stick.sy) > DRAG_PX) stick.moved = true;
@@ -495,6 +501,7 @@ canvas.addEventListener('pointermove', (e) => {
     canvas.style.cursor = drag?.moved ? 'grabbing' : overMap || buttonAt(ctl(), p.x, p.y) || portalAt(p.x, p.y) ? 'pointer' : 'grab';
 });
 function release(e: PointerEvent) {
+  if (e.pointerType !== 'mouse') toyPtr = null;
   if (stick?.id === e.pointerId) {
     // 필드: 조이스틱 영역이어도 움직이지 않고 톡 누른 자리가 포탈이면 워프 (영역 안에서도 포탈을 누를 수 있게)
     const tap = !stick.moved && performance.now() - stick.t0 < 350 && e.type === 'pointerup';
@@ -1236,7 +1243,7 @@ const enterVillage = () =>
 const enterChase = () =>
   goTo(async () => {
     step('다람쥐 잡기');
-    await enemySheet('acorn_squirrel');
+    await Promise.all([enemySheet('acorn_squirrel'), chaseReady()]);
     scene = 'chase';
     roomId = 'chase';
     canvas.style.cursor = '';
@@ -1299,6 +1306,13 @@ function stepVillage(dt: number) {
   updateVillage(village, busy ? { mx: 0, my: 0, act: false } : { ...input(), act: villageAct }, dt, vsave, Date.now());
   villageAct = false;
   if (P?.kind === 'cook' && updateCook(P.cook, dt)) onVillageAct(burn(vsave, bag));
+  if (P?.kind === 'play') {
+    const dir = (keys.has('KeyD') || keys.has('ArrowRight') ? 1 : 0) - (keys.has('KeyA') || keys.has('ArrowLeft') ? 1 : 0);
+    if (dir) toyPtr = null; // 키를 누르면 키가 이긴다
+    updateToy(P.game, { x: toyPtr === null ? null : toyX(innerWidth, innerHeight, toyPtr), dir }, dt);
+    P.game.events.forEach(toySound);
+    if (P.game.phase === 'done' && !P.res) onVillageAct(finishPlay(village, vsave, bag, Date.now()));
+  }
   tickRequests(vsave, Date.now());
   // 친구 곁에 가면 그 친구가 인사한다
   const near = village.near?.kind === 'friend' ? FRIENDS[village.near.i].id : '';
@@ -1313,6 +1327,15 @@ function stepVillage(dt: number) {
     sfxPickup();
     help.classList.add('choosing');
   }
+}
+/** 놀이 사건 → 소리 */
+function toySound(e: ToyEvent) {
+  if (e.type === 'crouch') sfxRustle();
+  else if (e.type === 'pounce' || e.type === 'roll') sfxJump();
+  else if (e.type === 'catch' || e.type === 'right' || e.type === 'hit') sfxCatch();
+  else if (e.type === 'miss' || e.type === 'wrong' || e.type === 'short' || e.type === 'long') sfxFull();
+  else if (e.type === 'swap') sfxBox();
+  else if (e.type === 'hide' || e.type === 'pick') sfxPop();
 }
 /** 마을 장면을 눌렀다 (CSS px): 친구 · 가판대 위면 걸어가서 열고, 아니면 그리로 걸어간다 */
 function villageWalk(p: Pt) {
@@ -1346,14 +1369,14 @@ function onVillageAct(a: VillageAct) {
     saveVillage();
   } else if (a.kind === 'gift') sfxPickup();
   else if (a.kind === 'played') {
-    if (!a.res.ok) sfxFull();
-    else {
-      sfxSnack();
-      if (a.res.up) sfxLevel();
-      say('delight', 1.4);
-      saveBag();
-      saveVillage();
-    }
+    if (a.res.coins) sfxCoin();
+    if (a.res.up) sfxLevel();
+    say(a.res.stars >= 3 ? 'heart' : a.res.stars === 2 ? 'delight' : 'sweat', 1.4);
+    saveBag();
+    saveVillage();
+  } else if (a.kind === 'toy') {
+    sfxPickup();
+    toyPtr = null;
   } else if (a.kind === 'travel') return travelTo(a.id);
   if (!villageView.panel && !villageView.gifts.length) help.classList.remove('choosing');
 }
@@ -1668,7 +1691,7 @@ const HELP = {
   whale: '고래에게 삼켜졌다! WASD 이동 · 플랑크톤 빛이 닿는 길만 보여요 · 냥코인과 진주 조개를 찾아 숨구멍으로 · 빠를수록 보너스 · Esc 포기 (그래도 뱉어 줘요)',
   sandboard: 'A/D 좌우 · Space 점프 (높은 바위·선인장·기둥은 점프대로만) · 부딪히면 하트 -1 · 자석·방패·하트·가속 발판 · R 다시 · Esc 돌아가기',
   timber: 'A · ← 왼쪽에서, D · → 오른쪽에서 패요 · 가지가 내 쪽으로 내려오면 콩! · 팰수록 시간이 늘지만 점점 빨리 줄어요 · R 다시 · Esc 돌아가기',
-  chase: 'WASD 이동 · 흔들리는 수풀에서 다람쥐가 튀어나와요 · 쫓아가 닿으면 잡기 (황금 다람쥐 3점) · 도토리에 맞으면 잠깐 멍 · 60초 · R 다시 · Esc 돌아가기',
+  chase: 'WASD 이동 · 눈이 반짝이는 나무 구멍 · 부스럭거리는 수풀에서 다람쥐가 튀어나와요 · 쫓아가 닿으면 잡기 (황금 다람쥐 3점) · 도토리에 맞으면 잠깐 멍 · 60초 · R 다시 · Esc 돌아가기',
   village: 'WASD 이동 · 친구나 요리 가판대 앞에서 E (또는 누르기) · 재료로 요리해서 친구에게 먹여 주면 친해져요 · 부탁(!)을 들어주면 냥코인 · I 가방 · Esc 돌아가기',
 };
 const HELP_TOUCH = {
@@ -1706,7 +1729,7 @@ const step = (t: string) => {
   dungeon = makeDungeon(sheets, startRoom, bag);
   if (scene === 'dungeon') enteredRoom();
   if (scene === 'sandboard') await loadSandArt();
-  if (scene === 'chase') await enemySheet('acorn_squirrel');
+  if (scene === 'chase') await Promise.all([enemySheet('acorn_squirrel'), chaseReady()]);
   if (scene === 'village') {
     step('고양이마을');
     await villageReady;

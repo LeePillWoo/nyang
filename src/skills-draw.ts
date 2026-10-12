@@ -7,7 +7,7 @@ import { drawCoin, drawIcon } from './bag-draw.ts';
 import fxData from './data/skill-fx.json' with { type: 'json' };
 import { PLAYER, WAVES, type Dungeon } from './dungeon.ts';
 import type { Enemy } from './enemy.ts';
-import { FAMILIES, FX_ANIMS, fxLife, LINK_LIFE, lv, MAX_LV, need, orbitBoxes, punchReach, SKILLS, SLOTS, SNACK, type Card, type SkillFx, type SkillId } from './skills.ts';
+import { FAMILIES, FX_ANIMS, fxLife, LINK_LIFE, lv, MAX_LV, need, orbitBoxes, punchReach, readyOf, SKILLS, SLOTS, SNACK, type Card, type SkillFx, type SkillId } from './skills.ts';
 import { fitText, wrapText } from './touch.ts';
 
 const CELL = fxData.cell;
@@ -680,6 +680,7 @@ export function drawSkillIcons(ctx: CanvasRenderingContext2D, d: Dungeon, right:
     ctx.fill();
     ctx.stroke();
     drawAnim(ctx, SKILLS[id].anim, iconFrame(SKILLS[id].anim, t), x + S / 2, y + S / 2, S * 0.78);
+    cooldownClock(ctx, d, id, x, y, S, t);
     for (let k = 0; k < MAX_LV; k++) {
       ctx.fillStyle = k < n ? fam.color : 'rgba(120,85,55,0.25)';
       ctx.beginPath();
@@ -687,6 +688,79 @@ export function drawSkillIcons(ctx: CanvasRenderingContext2D, d: Dungeon, right:
       ctx.fill();
     }
   });
+}
+/** 기술마다 지난 프레임의 시계 · 준비된 순간 번쩍 (초) */
+const clockSeen = new Map<SkillId, number>();
+const clockFlash = new Map<SkillId, number>();
+let clockT = 0;
+/**
+ * 아이콘 위 쿨다운 시계 (2026-10-08 사용자 요청): 다시 쓸 수 있을 때까지 남은 만큼 어둡게 덮고(12시부터 시계 방향으로 걷힌다) 시곗바늘 ·
+ * 1초 넘게 남았으면 남은 초. 준비되는 순간 테두리가 하얗게 번쩍. 늘 켜져 있는 기술은 그대로 밝다
+ */
+function cooldownClock(ctx: CanvasRenderingContext2D, d: Dungeon, id: SkillId, x: number, y: number, S: number, t: number) {
+  const f = readyOf(d.run, id);
+  const dt = Math.max(0, Math.min(0.1, t - clockT));
+  if (id === (Object.keys(d.run.skills)[0] as SkillId)) clockT = t; // 한 프레임에 한 번
+  const was = clockSeen.get(id);
+  clockSeen.set(id, f ?? 1);
+  if (f !== null && was !== undefined && was < 1 && f >= 1) clockFlash.set(id, 0.45);
+  const cx = x + S / 2;
+  const cy = y + S / 2;
+  if (f !== null && f < 1) {
+    const a = -Math.PI / 2 + f * Math.PI * 2;
+    ctx.save();
+    ctx.beginPath();
+    ctx.roundRect(x, y, S, S, 10);
+    ctx.clip();
+    ctx.fillStyle = 'rgba(40, 28, 20, 0.62)';
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.arc(cx, cy, S, a, Math.PI * 1.5);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255, 246, 216, 0.9)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(cx + Math.cos(a) * S * 0.6, cy + Math.sin(a) * S * 0.6);
+    ctx.stroke();
+    ctx.restore();
+    // 남은 초 (시간으로 도는 기술만 — 1초 넘게 남았을 때)
+    const p = lv(d.run, id);
+    const max = id === 'hiss' ? (p?.cd as number) : id === 'loaf_shield' ? (p?.cd as number) : typeof p?.cd === 'number' ? p.cd : 0;
+    const secs = id === 'paw_combo' ? 0 : (1 - f) * max;
+    if (secs >= 1) {
+      ctx.font = `bold ${Math.round(S * 0.36)}px system-ui, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.lineJoin = 'round';
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = 'rgba(40, 28, 20, 0.9)';
+      ctx.strokeText(String(Math.ceil(secs)), cx, cy + S * 0.13);
+      ctx.fillStyle = '#fff6d8';
+      ctx.fillText(String(Math.ceil(secs)), cx, cy + S * 0.13);
+    }
+  }
+  const fl = clockFlash.get(id) ?? 0;
+  if (fl > 0) {
+    ctx.strokeStyle = `rgba(255, 255, 255, ${Math.min(1, fl * 2.5)})`;
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.roundRect(x - 2, y - 2, S + 4, S + 4, 12);
+    ctx.stroke();
+    clockFlash.set(id, fl - dt);
+  }
+  // 식빵 보호막 — 남은 겹
+  if (id === 'loaf_shield' && d.run.shield > 0) {
+    ctx.font = `bold ${Math.round(S * 0.3)}px system-ui, sans-serif`;
+    ctx.textAlign = 'right';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = 'rgba(40, 28, 20, 0.85)';
+    ctx.strokeText(`×${d.run.shield}`, x + S - 3, y + S - 4);
+    ctx.fillStyle = '#fff6d8';
+    ctx.fillText(`×${d.run.shield}`, x + S - 3, y + S - 4);
+    ctx.textAlign = 'left';
+  }
 }
 /** 아이콘으로 보기 좋은 칸 (반복 동작은 돌고, 한 번 재생은 가운데 칸) */
 const iconFrame = (anim: string, t: number) => (FX_ANIMS[anim]?.[3] ? frameAt(anim, t) : 4);

@@ -1,6 +1,6 @@
 /**
- * 다람쥐 잡기 — 숲 미니게임장 (2026-10-08 사용자 요청: 해바라기밭 포탈 아래 숲). 숲 속 공터에서 60초 동안, 둘레 수풀에서 튀어나오는
- * 다람쥐를 쫓아가 잡는다. 다람쥐 움직임은 필드 숲과 같다(squirrel.ts) — 튀어나와 도토리를 던지고(맞으면 잠깐 멍), 달아나고, 다가가면 홱 피하고,
+ * 다람쥐 잡기 — 숲 미니게임장 (2026-10-08 사용자 요청: 해바라기밭 포탈 아래 숲). 숲 속 공터에서 60초 동안, 둘레 나무 구멍 · 수풀에서 튀어나오는
+ * 다람쥐를 쫓아가 잡는다. 공터는 사용자 그림(backgrounds/chase/chase_clearing_v1 — 같은 날 밤)에 맞춘 둥근 네모(초타원)이고, 다람쥐 굴은 그림의 나무 구멍 다섯 · 수풀 둘. 다람쥐 움직임은 필드 숲과 같다(squirrel.ts) — 튀어나와 도토리를 던지고(맞으면 잠깐 멍), 달아나고, 다가가면 홱 피하고,
  * 오래 못 잡으면 숨는다. 가끔 황금 다람쥐(3마리 몫, 조금 빠름). 갈수록 한꺼번에 더 많이 나온다. 첫 걸음을 떼야 시간이 간다.
  * 좌표는 필드처럼 px (고양이 키 catBody, 세로는 비스듬한 시점만큼 눌림), 공터 가운데가 (0, 0).
  * 그림을 불러오지 않는 순수 로직이라 node 에서 체크된다 (그리기는 chase-draw.ts). 무작위는 rng 로 주입한다.
@@ -13,11 +13,23 @@ const V = data.vertical;
 export const CHASE = {
   /** 제한 시간 (초) */
   time: 60,
-  /** 공터 반지름 (고양이 키 배 — 가로 · 세로, 세로는 화면에서 눌린 크기) */
+  /** 공터 반지름 (고양이 키 배 — 가로 · 세로, 세로는 화면에서 눌린 크기). 모양은 둥근 네모 (|x/rx|³ + |y/ry|³ ≤ 1) — 그림의 공터 모서리까지 */
   rx: 10,
-  ry: 5.5,
-  /** 둘레 수풀 수 */
-  bushes: 9,
+  ry: 5.75,
+  /** 배경 그림 · 공터 가운데(그림 px) · 그림 px 몇 개가 좌표 1px 인지 (고양이 키 catBody = 그림 약 37px) */
+  image: 'backgrounds/chase/chase_clearing_v1',
+  center: [630, 585],
+  k: 2.15,
+  /** 다람쥐 굴 (그림 px): 나무 구멍은 [튀어나오는 자리 x, y, 'hole', 구멍 속 눈 x, y] · 수풀은 [x, y, 'bush'] */
+  dens: [
+    [632, 372, 'hole', 632, 342],
+    [338, 452, 'hole', 326, 433],
+    [936, 458, 'hole', 945, 438],
+    [262, 650, 'hole', 213, 630],
+    [1000, 678, 'hole', 1055, 652],
+    [300, 745, 'bush'],
+    [915, 772, 'bush'],
+  ] as (number | string)[][],
   /** 한꺼번에 나와 있는 수: 처음 → 끝 (step 초마다 하나씩 늘어난다) */
   max: [1, 3],
   step: 15,
@@ -41,8 +53,10 @@ export const CHASE = {
   /** 끝난 뒤 결과 카드가 뜰 때까지 (초) */
   cardDelay: 0.7,
 };
-/** 수풀 — warn > 0 이면 흔들리는 중 (곧 튀어나온다) */
-export type Bush = { x: number; y: number; warn: number; gold: boolean };
+/** 다람쥐 굴 (나무 구멍 · 수풀) — warn > 0 이면 곧 튀어나온다 (구멍엔 눈이 반짝 · 수풀은 부스럭). ex, ey = 구멍 속 눈 자리 */
+export type Bush = { x: number; y: number; warn: number; gold: boolean; kind: 'hole' | 'bush'; ex: number; ey: number };
+/** 그림 px → 좌표 */
+export const fromImage = (x: number, y: number): [number, number] => [(x - CHASE.center[0]) / CHASE.k, (y - CHASE.center[1]) / CHASE.k];
 export type Runner = { q: Squirrel; gold: boolean };
 export type ChaseEvent =
   | { type: 'squirrel'; what: SquirrelWhat; x: number; y: number; gold: boolean; points?: number }
@@ -70,8 +84,10 @@ export type ChaseState = {
   rng: () => number;
 };
 
+/** 공터 가운데에서 잰 크기 (1 = 가장자리) — 둥근 네모(초타원 3제곱)라 반지름 배율로 줄이고 늘리기가 그대로 된다 */
+export const arenaK = (x: number, y: number) => Math.cbrt(Math.abs(x / (CHASE.rx * C)) ** 3 + Math.abs(y / (CHASE.ry * C)) ** 3);
 /** 공터 안인가 (k = 반지름 배율) */
-export const inArena = (x: number, y: number, k = 1) => (x / (CHASE.rx * C)) ** 2 + (y / (CHASE.ry * C)) ** 2 <= k * k;
+export const inArena = (x: number, y: number, k = 1) => arenaK(x, y) <= k;
 /** 다람쥐가 사는 공터: 가장자리 조금 안쪽까지 서고, 수풀 가까운 바깥 둘레를 좋아한다 */
 const ARENA: World = { land: (x, y) => inArena(x, y, 0.94), woods: (x, y) => !inArena(x, y, 0.7), unit: C, vertical: V };
 /** 공터 다람쥐 수치 — 오래 못 잡으면 give 초에 숨고(멀어져서 숨지는 않는다), 황금은 조금 빠르다 */
@@ -85,11 +101,11 @@ export const maxAt = (t: number) => Math.min(CHASE.max[1], CHASE.max[0] + Math.f
 export const left = (s: ChaseState) => Math.max(0, CHASE.time - s.t);
 
 export function makeChase(rng: () => number = Math.random): ChaseState {
-  const bushes: Bush[] = [];
-  for (let i = 0; i < CHASE.bushes; i++) {
-    const a = ((i + 0.5) / CHASE.bushes) * Math.PI * 2;
-    bushes.push({ x: Math.cos(a) * CHASE.rx * C * 0.97, y: Math.sin(a) * CHASE.ry * C * 0.97, warn: 0, gold: false });
-  }
+  const bushes: Bush[] = CHASE.dens.map(([x, y, kind, ex = x, ey = y]) => {
+    const [bx, by] = fromImage(x as number, y as number);
+    const [eyeX, eyeY] = fromImage(ex as number, ey as number);
+    return { x: bx, y: by, warn: 0, gold: false, kind: kind as 'hole' | 'bush', ex: eyeX, ey: eyeY };
+  });
   return {
     phase: 'ready',
     t: 0,
@@ -181,7 +197,7 @@ export function updateChase(s: ChaseState, input: { mx: number; my: number }, dt
     c.x += (input.mx / len) * v * dt;
     c.y += (input.my / len) * v * V * dt;
     if (input.mx !== 0) c.flip = Math.sign(input.mx);
-    const k = Math.hypot(c.x / (CHASE.rx * C), c.y / (CHASE.ry * C));
+    const k = arenaK(c.x, c.y);
     if (k > 0.94) [c.x, c.y] = [(c.x * 0.94) / k, (c.y * 0.94) / k];
   }
   stepRunners(s, dt);

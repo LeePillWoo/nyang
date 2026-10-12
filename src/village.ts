@@ -1,7 +1,9 @@
 /**
  * 고양이마을 — 전투 대신 요리 · 친구 (2026-10-08 사용자 요청). 전용 배경 그림(1536×1024, 좌표 = 그 그림 px)의 마을을 걸어 다니며
  * 요리집 앞 가판대에서 재료로 요리하고(바늘 타이밍 — 잘 멈출수록 그릇이 더 나온다), 주민 친구 여덟에게 먹여 주며 친해진다.
- * 친구마다 아주 좋아하는 · 좋아하는 · 싫어하는 요리가 있고(먹여 봐야 안다), 가끔 먹고 싶은 요리를 부탁한다 (들어주면 냥코인). 놀아 줄 수도 있다.
+ * 친구마다 아주 좋아하는 · 좋아하는 · 싫어하는 요리가 있고(먹여 봐야 안다), 가끔 먹고 싶은 요리를 부탁한다 (들어주면 냥코인).
+ * 놀아 줄 수도 있다 — 미니게임 셋(toys.ts: 깃털 흔들기 · 상자 숨바꼭질 · 털실 공 굴리기), 별만큼 친해지고 좋아하는 놀이면 더.
+ * 부탁은 요리만이 아니라 "놀아 줘"도 (2026-10-08 밤 사용자 — 다들 밥만 달라고 하고 배부르면 자 버린다): 배부르면 조금 뒤 놀자고 한다.
  * 하트가 늘면 요리법 · 선물 · 냥코인을 준다. 한 번에 full 그릇까지 먹고, 한 그릇은 digest 초면 내려간다.
  * 주민은 자기 자리에서 동작 시트(대기 · 놀이 · 화남 · 애정 · 배고픔 · 심심 · 삐짐 · 잠)로 반응한다 — 걷는 시트가 없어 서성이지 않는다.
  * 친구 기록(VillageSave)은 main 이 localStorage 에 둔다. 시간은 now(ms)로 받아 node 에서 체크된다 (그리기는 village-draw.ts). 수치는 data/village.json.
@@ -9,11 +11,12 @@
 import { count, ITEMS, obtain, take, type Bag } from './bag.ts';
 import field from './data/field.json' with { type: 'json' };
 import data from './data/village.json' with { type: 'json' };
+import { isToy, TOY_IDS, TOYS, type ToyId } from './toys.ts';
 
 export const VILLAGE = data;
 export type Pref = 'love' | 'like' | 'normal' | 'dislike';
 type RewardDef = { say: string; recipe?: string; item?: string; items?: (string | number)[][]; coins?: number };
-/** 주민 친구 — 시트(village-cats.json id) · 키 배율 size · 입맛(love · like · dislike 요리 목록) · 대사(hello 하트별 · react 입맛별 · hint · full · ask · thanks · play) · 하트 선물(rewards) */
+/** 주민 친구 — 시트(village-cats.json id) · 키 배율 size · 입맛(love · like · dislike 요리 목록) · 좋아하는 놀이 toy · 대사(hello 하트별 · react 입맛별 · hint · full · ask · askPlay · thanks · play) · 하트 선물(rewards) */
 export type Friend = {
   id: string;
   name: string;
@@ -31,6 +34,8 @@ export type Friend = {
   ask: string;
   thanks: string;
   play: string;
+  toy: ToyId;
+  askPlay: string;
   rewards: Record<string, RewardDef>;
 };
 /** 요리법 — need 재료 [id, 개수] · speed 바늘 빠르기 · zone good 칸 폭 · start 처음부터 안다 */
@@ -40,12 +45,13 @@ export const RECIPES = data.recipes as unknown as Recipe[];
 export type Reward = { level: number; say: string; recipe?: string; items: [string, number][]; coins: number };
 
 // ── 친구 기록 (저장) ──
-/** pts 친해진 점수 · meals 최근에 먹은 때(ms) · seen 먹여 봐서 아는 입맛 · ask 부탁한 요리(없으면 null) · askAt 다음 부탁할 때 · got 받은 하트 선물 · playedAt 마지막으로 놀아 준 때 */
-export type FriendSave = { pts: number; meals: number[]; seen: Record<string, Pref>; ask: string | null; askAt: number; got: number[]; playedAt: number };
+/** pts 친해진 점수 · meals 최근에 먹은 때(ms) · seen 먹여 봐서 아는 입맛 · ask 부탁(요리 id 또는 놀이 id, 없으면 null) · askAt 다음 부탁할 때 · got 받은 하트 선물 ·
+ *  playedAt 마지막으로 놀아 준 때 · games 놀이마다 놀아 준 수 (좋아하는 놀이는 한 번 해 보면 안다) */
+export type FriendSave = { pts: number; meals: number[]; seen: Record<string, Pref>; ask: string | null; askAt: number; got: number[]; playedAt: number; games: Record<string, number> };
 /** recipes 아는 요리법 · cooked 만든 그릇 · fed 먹여 준 그릇 · met 처음 인사를 들었나 */
 export type VillageSave = { friends: Record<string, FriendSave>; recipes: string[]; cooked: number; fed: number; met: boolean };
 
-const freshFriend = (now: number): FriendSave => ({ pts: 0, meals: [], seen: {}, ask: null, askAt: now + data.request.first * 1000, got: [], playedAt: 0 });
+const freshFriend = (now: number): FriendSave => ({ pts: 0, meals: [], seen: {}, ask: null, askAt: now + data.request.first * 1000, got: [], playedAt: 0, games: {} });
 export function makeVillageSave(now: number): VillageSave {
   return {
     friends: Object.fromEntries(FRIENDS.map((f) => [f.id, freshFriend(now)])),
@@ -69,10 +75,11 @@ export function fromVillageSave(v: unknown, now: number): VillageSave {
     d.pts = Math.max(0, Math.min(maxPts(), num(g.pts, 0)));
     d.meals = Array.isArray(g.meals) ? g.meals.filter((t) => typeof t === 'number' && Number.isFinite(t)).slice(-data.full) : [];
     if (g.seen && typeof g.seen === 'object') for (const [id, p] of Object.entries(g.seen)) if (ITEMS[id] && PREFS.includes(p)) d.seen[id] = p;
-    d.ask = typeof g.ask === 'string' && ITEMS[g.ask] ? g.ask : null;
+    d.ask = typeof g.ask === 'string' && (ITEMS[g.ask] || isToy(g.ask)) ? g.ask : null;
     d.askAt = num(g.askAt, d.askAt);
     d.got = Array.isArray(g.got) ? g.got.filter((n) => Number.isInteger(n) && n >= 1 && n <= 5) : [];
     d.playedAt = Math.max(0, num(g.playedAt, 0));
+    if (g.games && typeof g.games === 'object') for (const t of TOY_IDS) if (num(g.games[t], 0) > 0) d.games[t] = Math.floor(num(g.games[t], 0));
   }
   if (Array.isArray(o.recipes)) for (const id of o.recipes) if (RECIPES.some((r) => r.id === id) && !s.recipes.includes(id)) s.recipes.push(id);
   s.cooked = Math.max(0, num(o.cooked, 0));
@@ -103,16 +110,33 @@ export function teacher(recipe: string): { friend: Friend; level: number } | nul
 /** 재료가 다 있나 */
 export const canCook = (bag: Bag, r: Recipe) => r.need.every(([id, n]) => count(bag, id) >= n);
 
-/** 부탁: 부탁할 때가 된 친구는 아는 요리 중 좋아하는 것 하나를 부탁한다 (좋아하는 게 아직 없으면 아는 요리 아무거나, 싫어하는 건 빼고) */
+/**
+ * 부탁: 부탁할 때가 된 친구는 — 배가 부르면 놀자고(좋아하는 놀이가 잘 나온다), 아니면 askPlay 확률로 놀자고 · 나머지는 아는 요리 중 좋아하는 것 하나를
+ * (좋아하는 게 아직 없으면 아는 요리 아무거나, 싫어하는 건 빼고)
+ */
 export function tickRequests(save: VillageSave, now: number, rng: () => number = Math.random) {
   const known = save.recipes;
   for (const f of FRIENDS) {
     const fs = save.friends[f.id];
     if (fs.ask || now < fs.askAt) continue;
+    if (fullness(fs, now) >= data.full || rng() < data.play.ask) {
+      fs.ask = rng() < data.play.favAsk ? f.toy : TOY_IDS[Math.floor(rng() * TOY_IDS.length)];
+      continue;
+    }
     const fav = [...f.love, ...f.like].filter((d) => known.includes(d));
     const pool = fav.length ? fav : known.filter((d) => !f.dislike.includes(d));
     if (pool.length) fs.ask = pool[Math.floor(rng() * pool.length)];
   }
+}
+/** 부탁을 들어줬다 — 냥코인을 주고 다음 부탁은 every 초 뒤 */
+function askDone(fs: FriendSave, bag: Bag, now: number, rng: () => number) {
+  const [a, b] = data.request.coins;
+  const coins = a + Math.floor(rng() * (b - a + 1));
+  bag.coins += coins;
+  fs.ask = null;
+  const [e0, e1] = data.request.every;
+  fs.askAt = now + (e0 + rng() * (e1 - e0)) * 1000;
+  return coins;
 }
 
 export type FeedResult =
@@ -148,33 +172,34 @@ export function feed(save: VillageSave, bag: Bag, f: Friend, dish: string, now: 
   fs.meals = [...fs.meals.filter((t) => now - t < data.digest * 1000), now];
   fs.seen[dish] = pref;
   save.fed++;
-  let coins = 0;
-  if (asked) {
-    const [a, b] = data.request.coins;
-    coins = a + Math.floor(rng() * (b - a + 1));
-    bag.coins += coins;
-    fs.ask = null;
-    const [e0, e1] = data.request.every;
-    fs.askAt = now + (e0 + rng() * (e1 - e0)) * 1000;
-  }
+  const coins = asked ? askDone(fs, bag, now, rng) : 0;
+  // 배가 부르면 곧 놀자고 한다 (잠만 자지 않게)
+  if (fullness(fs, now) >= data.full && !fs.ask) fs.askAt = Math.min(fs.askAt, now + data.play.afterMeal * 1000);
   const rewards = giveRewards(save, bag, f, fs);
   return { ok: true, pref, gain, line: asked ? f.thanks : f.react[pref], coins, asked, rewards, hearts: hearts(fs.pts), up: hearts(fs.pts) > before };
 }
-export type PlayResult = { ok: true; gain: number; line: string; rewards: Reward[]; hearts: number; up: boolean } | { ok: false; wait: number; line: string };
-/** 놀아 주기 (장난감) — playEvery 초에 한 번 points.play 만큼 친해진다. 하트가 늘면 선물도 */
-export function play(save: VillageSave, bag: Bag, f: Friend, now: number): PlayResult {
+/** 놀 수 있나 — 놀자고 부탁했으면 언제든, 아니면 마지막으로 논 뒤 play.every 초가 지나야. 기다릴 초 (0 = 지금) */
+export const playWait = (fs: FriendSave, now: number) => (isToy(fs.ask) ? 0 : Math.max(0, Math.ceil((fs.playedAt + data.play.every * 1000 - now) / 1000)));
+export type PlayResult = { stars: number; gain: number; fav: boolean; asked: boolean; coins: number; line: string; rewards: Reward[]; hearts: number; up: boolean };
+/** 놀이(toy)를 별 stars 로 마쳤다 — 별만큼(play.points) 친해지고 좋아하는 놀이면 play.fav 배, 놀자는 부탁이 그 놀이면 points.request · 냥코인. 하트가 늘면 선물 */
+export function playToy(save: VillageSave, bag: Bag, f: Friend, toy: ToyId, stars: number, now: number, rng: () => number = Math.random): PlayResult {
   const fs = save.friends[f.id];
-  const wait = Math.ceil((fs.playedAt + data.playEvery * 1000 - now) / 1000);
-  if (wait > 0) return { ok: false, wait, line: '방금 놀았는걸. 조금 쉬었다 또 놀자' };
+  const fav = f.toy === toy;
+  const asked = fs.ask === toy;
   const before = hearts(fs.pts);
-  fs.pts = Math.min(maxPts(), fs.pts + data.points.play);
+  const gain = Math.round(data.play.points[Math.max(1, Math.min(3, stars))] * (fav ? data.play.fav : 1)) + (asked ? data.points.request : 0);
+  fs.pts = Math.min(maxPts(), fs.pts + gain);
   fs.playedAt = now;
+  fs.games[toy] = (fs.games[toy] ?? 0) + 1;
+  const coins = asked ? askDone(fs, bag, now, rng) : 0;
   const rewards = giveRewards(save, bag, f, fs);
-  return { ok: true, gain: data.points.play, line: f.play, rewards, hearts: hearts(fs.pts), up: hearts(fs.pts) > before };
+  const line = asked ? f.thanks : fav && stars >= 2 ? f.play : data.play.lines[stars];
+  return { stars, gain, fav, asked, coins, line, rewards, hearts: hearts(fs.pts), up: hearts(fs.pts) > before };
 }
 /** 인사 한 줄 (하트 수에 따라). 좋아하는 걸 아직 모르면 가끔 귀띔 */
 export function hello(save: VillageSave, f: Friend, rng: () => number = Math.random) {
   const fs = save.friends[f.id];
+  if (isToy(fs.ask)) return f.askPlay.replaceAll('{toy}', TOYS[fs.ask].name);
   if (fs.ask) return f.ask.replaceAll('{dish}', ITEMS[fs.ask].name);
   const knowsLove = f.love.some((d) => fs.seen[d] === 'love');
   if (!knowsLove && rng() < 0.5) return f.hint;
@@ -255,8 +280,9 @@ export type Target = { kind: 'friend'; i: number } | { kind: 'kitchen' };
 export type Anim = 'idle' | 'solo_play' | 'angry' | 'affection' | 'hungry' | 'bored' | 'sulk' | 'sleep';
 /** 한 번 하고 바탕 동작으로 돌아가는 동작과 그 길이(초) — 마지막 컷에서 머문다 */
 export const ONE_SHOT: Partial<Record<Anim, number>> = { solo_play: 2.6, angry: 1.8, affection: 2.4, bored: 2.4, sulk: 2.2 };
-/** 바탕 동작 — 배부르면 잠, 부탁이 있으면 배고픔(생선 생각풍선), 아니면 대기 */
-export const baseAnim = (fs: FriendSave | undefined, now: number): Anim => (!fs ? 'idle' : fullness(fs, now) >= data.full ? 'sleep' : fs.ask ? 'hungry' : 'idle');
+/** 바탕 동작 — 놀자고 하면 심심(한숨 · 기지개), 배부르면 잠, 먹고 싶은 게 있으면 배고픔(생선 생각풍선), 아니면 대기 */
+export const baseAnim = (fs: FriendSave | undefined, now: number): Anim =>
+  !fs ? 'idle' : isToy(fs.ask) ? 'bored' : fullness(fs, now) >= data.full ? 'sleep' : fs.ask ? 'hungry' : 'idle';
 /** 먹여 준 반응 — 좋아하면 애정, 싫어하면 삐짐, 보통은 그대로 */
 export const reactAnim = (pref: Pref): Anim => (pref === 'dislike' ? 'sulk' : pref === 'normal' ? 'idle' : 'affection');
 /** 마을 주민 — 자기 자리(걷는 시트가 없다)에서 고양이가 오면 돌아보고, 심심하면 혼자 논다. say 는 머리 위 말풍선 */
@@ -356,7 +382,10 @@ export function updateVillage(s: VillageState, input: { mx: number; my: number; 
     const base = baseAnim(save?.friends[FRIENDS[i].id], now);
     const len = ONE_SHOT[p.anim];
     if (len !== undefined) {
-      if (p.animT > len) setAnim(p, base);
+      if (p.animT > len) {
+        setAnim(p, base);
+        if (p.anim === base) p.animT = 0; // 바탕 동작이 한 번 동작(놀자고 심심)이면 되풀이
+      }
     } else if (p.anim !== base) setAnim(p, base);
     else if (base === 'idle' && (p.idleT -= dt) <= 0) {
       setAnim(p, s.rng() < 0.5 ? 'bored' : 'solo_play');

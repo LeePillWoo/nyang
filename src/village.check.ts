@@ -7,6 +7,7 @@ import CATS from './data/village-cats.json' with { type: 'json' };
 import { FIELD, warpLocked } from './field.ts';
 import { placeKind } from './places.ts';
 import { shortcut } from './sources.ts';
+import { ballAt, BOX, FEATHER, isToy, makeToy, starsOf, TOY_IDS, TOYS, toyPick, toyPress, updateToy, YARN, type BoxGame, type FeatherGame, type YarnGame } from './toys.ts';
 import {
   baseAnim,
   BLOCKS,
@@ -23,7 +24,8 @@ import {
   makeVillage,
   makeVillageSave,
   ONE_SHOT,
-  play,
+  playToy,
+  playWait,
   prefOf,
   RECIPES,
   serve,
@@ -50,6 +52,16 @@ const seeded = (seed: number) => {
   };
 };
 const T0 = 1_000_000_000_000;
+/** 고르게 섞인 무작위 (확률을 세는 시험용 — 위 seeded 는 이어지는 값이 서로 닮아 비율이 틀어진다) */
+const mixed = (seed: number) => {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+};
 
 // 1) 데이터: 친구 여덟 — 시트가 있고(village-cats.json), 대사가 다 있다. 요리 · 재료 · 입맛 · 선물이 다 있는 것을 가리킨다.
 //    처음 아는 요리 셋, 나머지는 친구가 하트로 알려 준다. 요리마다 좋아하는 친구가 있다. 가게 재료(우유 · 밀가루 · 달걀 · 쌀)는 고등어 상점에서 판다
@@ -62,6 +74,7 @@ const T0 = 1_000_000_000_000;
     assert.ok(FRIENDS.some((f) => f.love.includes(r.id) || f.like.includes(r.id)), `${ITEMS[r.id].name} 를 좋아하는 친구가 있다`);
   }
   assert.equal(RECIPES.filter((r) => r.start).length, 3, '처음 아는 요리 셋');
+  assert.ok(TOY_IDS.every((t) => FRIENDS.some((f) => f.toy === t)), '놀이마다 좋아하는 친구가 있다');
   const sheets = CATS as Record<string, { anims: Record<string, { fps: number; f: number[][] }> }>;
   for (const f of FRIENDS) {
     const sh = sheets[f.sheet];
@@ -71,6 +84,7 @@ const T0 = 1_000_000_000_000;
     assert.ok(f.love.length >= 1, `${f.name} 는 아주 좋아하는 요리가 있다`);
     assert.equal(f.hello.length, 6, `${f.name} 하트마다 인사`);
     assert.ok(f.play && f.full && f.ask.includes('{dish}') && f.thanks && f.hint, `${f.name} 대사`);
+    assert.ok(TOY_IDS.includes(f.toy) && f.askPlay.includes('{toy}'), `${f.name} 좋아하는 놀이 ${f.toy} · 놀자 대사`);
     for (const [k, r] of Object.entries(f.rewards)) {
       assert.ok(Number(k) >= 1 && Number(k) <= 5 && r.say, `${f.name} ♥${k} 선물`);
       for (const id of [r.item, ...(r.items ?? []).map(([i]) => i as string)].filter(Boolean)) assert.ok(ITEMS[id as string], `${f.name} 선물 ${id}`);
@@ -87,13 +101,16 @@ const T0 = 1_000_000_000_000;
   assert.deepEqual(knownRecipes(s).map((r) => r.id), ['dish_01', 'dish_02', 'dish_03']);
   assert.deepEqual(fromVillageSave(null, T0), s);
   const f1 = FRIENDS[1].id;
-  const odd = fromVillageSave({ friends: { [f1]: { pts: 9999, meals: ['x'], seen: { dish_03: 'love', nope: 'love' }, ask: 'nope', got: [1, 9], playedAt: 'x' } }, recipes: ['dish_05', 'zzz'], cooked: -3 }, T0);
-  assert.deepEqual(odd.friends[f1], { pts: 100, meals: [], seen: { dish_03: 'love' }, ask: null, askAt: T0 + VILLAGE.request.first * 1000, got: [1], playedAt: 0 }, '이상한 값은 버린다');
+  const odd = fromVillageSave({ friends: { [f1]: { pts: 9999, meals: ['x'], seen: { dish_03: 'love', nope: 'love' }, ask: 'nope', got: [1, 9], playedAt: 'x', games: { feather: 2, nope: 5, box: 'x' } } }, recipes: ['dish_05', 'zzz'], cooked: -3 }, T0);
+  assert.deepEqual(odd.friends[f1], { pts: 100, meals: [], seen: { dish_03: 'love' }, ask: null, askAt: T0 + VILLAGE.request.first * 1000, got: [1], playedAt: 0, games: { feather: 2 } }, '이상한 값은 버린다');
+  assert.equal(fromVillageSave({ friends: { [f1]: { ask: 'box' } } }, T0).friends[f1].ask, 'box', '놀자는 부탁도 저장된다');
   assert.deepEqual(odd.recipes, ['dish_01', 'dish_02', 'dish_03', 'dish_05']);
   assert.equal(odd.cooked, 0);
   s.friends[f1].pts = 37;
   s.friends[f1].playedAt = T0;
   s.friends[f1].meals = [T0 - 5000];
+  s.friends[f1].games = { yarn: 3 };
+  s.friends[f1].ask = 'feather';
   assert.deepEqual(fromVillageSave(JSON.parse(JSON.stringify(s)), T0), s, '저장했다 불러와도 그대로');
 }
 
@@ -171,18 +188,39 @@ const T0 = 1_000_000_000_000;
   assert.ok(!feed(makeVillageSave(T0), bag, f, 'curios_01', T0).ok, '물약은 못 먹인다');
 }
 
-// 5) 부탁: first 초 뒤 아는 요리 중 좋아하는 것을 부탁 · 들어주면 더 친해지고 냥코인, 다음 부탁은 every 초 뒤 · 인사 대신 부탁을 말한다
+// 5) 부탁: first 초 뒤 — 아는 요리 중 좋아하는 것 또는 놀자 (play.ask 확률) · 들어주면 더 친해지고 냥코인, 다음 부탁은 every 초 뒤 · 인사 대신 부탁을 말한다
+//    (2026-10-08 밤 사용자: 다들 밥만 달라고 하고 배부르면 자 버린다 — 놀자고도 한다, 배가 부르면 늘 놀자)
 {
   const save = makeVillageSave(T0);
   tickRequests(save, T0 + 1000, seeded(4));
   assert.ok(FRIENDS.every((f) => save.friends[f.id].ask === null), '처음엔 부탁이 없다');
-  tickRequests(save, T0 + VILLAGE.request.first * 1000 + 1, seeded(4));
-  for (const f of FRIENDS) {
-    const ask = save.friends[f.id].ask;
-    assert.ok(ask && save.recipes.includes(ask) && !f.dislike.includes(ask), `${f.name} 는 아는 요리를 부탁한다 (${ask})`);
-    assert.ok(hello(save, f).includes(ITEMS[ask].name), `${f.name} 인사 대신 부탁`);
+  let food = 0;
+  let toys = 0;
+  for (let seed = 1; seed <= 40; seed++) {
+    const v = makeVillageSave(T0);
+    tickRequests(v, T0 + VILLAGE.request.first * 1000 + 1, mixed(seed));
+    for (const f of FRIENDS) {
+      const ask = v.friends[f.id].ask;
+      if (isToy(ask)) {
+        toys++;
+        assert.ok(hello(v, f).includes(TOYS[ask].name), `${f.name} 인사 대신 놀자`);
+      } else {
+        food++;
+        assert.ok(ask && v.recipes.includes(ask) && !f.dislike.includes(ask), `${f.name} 는 아는 요리를 부탁한다 (${ask})`);
+        assert.ok(hello(v, f).includes(ITEMS[ask].name), `${f.name} 인사 대신 부탁`);
+      }
+    }
   }
-  const f = FRIENDS[2];
+  const share = toys / (food + toys);
+  assert.ok(Math.abs(share - VILLAGE.play.ask) < 0.1, `부탁 중 놀자는 ${(share * 100).toFixed(0)}% (play.ask ${VILLAGE.play.ask * 100}%)`);
+  // 배가 부르면 늘 놀자고 한다
+  const full = makeVillageSave(T0);
+  for (const f of FRIENDS) full.friends[f.id].meals = [T0, T0, T0];
+  tickRequests(full, T0 + VILLAGE.request.first * 1000 + 1, seeded(9));
+  assert.ok(FRIENDS.every((f) => isToy(full.friends[f.id].ask)), '배가 부르면 놀자고 한다');
+  // 요리 부탁을 들어주기 — 요리를 부탁한 친구로
+  tickRequests(save, T0 + VILLAGE.request.first * 1000 + 1, seeded(4));
+  const f = FRIENDS.find((v) => { const a = save.friends[v.id].ask; return !!a && !isToy(a); })!;
   const ask = save.friends[f.id].ask!;
   const bag = makeBag();
   obtain(bag, ask, 1);
@@ -221,19 +259,106 @@ const T0 = 1_000_000_000_000;
   assert.equal(knownRecipes(save).length, RECIPES.length, '모두와 친해지면 요리법을 다 안다');
 }
 
-// 7) 놀아 주기: points.play 점, 한 친구에게 playEvery 초에 한 번 (그 안엔 기다리라고 한다), 하트가 늘면 선물
+// 7) 놀아 주기 미니게임 (2026-10-08 밤 — 깃털 흔들기 · 상자 숨바꼭질 · 털실 공 굴리기): 별(1~3) → 친해짐 play.points, 좋아하는 놀이면 play.fav 배,
+//    놀자는 부탁이 그 놀이면 points.request · 냥코인, 한 친구와 play.every 초에 한 번 (놀자고 부탁했으면 언제든), 놀아 본 놀이를 센다, 배부르면 곧 놀자고 한다
 {
   const save = makeVillageSave(T0);
   const bag = makeBag();
   const f = FRIENDS[3];
-  const r = play(save, bag, f, T0);
-  assert.ok(r.ok && r.gain === VILLAGE.points.play && r.line === f.play && save.friends[f.id].pts === VILLAGE.points.play, '놀아 주면 점수');
-  const again = play(save, bag, f, T0 + 1000);
-  assert.ok(!again.ok && again.wait > 0 && again.wait <= VILLAGE.playEvery, `바로 또는 안 된다 (${again.ok ? 0 : again.wait}초 뒤)`);
-  assert.ok(play(save, bag, f, T0 + VILLAGE.playEvery * 1000 + 1).ok, '시간이 지나면 또');
-  save.friends[f.id].pts = VILLAGE.heart - 1;
-  const up = play(save, bag, f, T0 + VILLAGE.playEvery * 2000 + 2);
-  assert.ok(up.ok && up.up && up.rewards.length === 1 && up.rewards[0].level === 1, '놀다가 하트가 늘면 선물');
+  const other = TOY_IDS.find((t) => t !== f.toy)!;
+  assert.equal(playWait(save.friends[f.id], T0), 0, '처음엔 바로 놀 수 있다');
+  const r1 = playToy(save, bag, f, other, 2, T0);
+  assert.ok(r1.gain === VILLAGE.play.points[2] && !r1.fav && !r1.asked && r1.coins === 0 && save.friends[f.id].games[other] === 1 && r1.line === VILLAGE.play.lines[2], `★★ 다른 놀이 → +${r1.gain} · "${r1.line}"`);
+  const wait = playWait(save.friends[f.id], T0 + 1000);
+  assert.ok(wait > 0 && wait <= VILLAGE.play.every, `바로 또는 못 논다 (${wait}초 뒤)`);
+  assert.equal(playWait(save.friends[f.id], T0 + VILLAGE.play.every * 1000 + 1), 0, '시간이 지나면 또');
+  const r2 = playToy(save, bag, f, f.toy, 3, T0 + VILLAGE.play.every * 1000 + 1);
+  assert.ok(r2.fav && r2.gain === Math.round(VILLAGE.play.points[3] * VILLAGE.play.fav) && r2.line === f.play, `★★★ 좋아하는 놀이 → +${r2.gain} · "${r2.line}"`);
+  // 놀자는 부탁: 쉬는 중이어도 · 그 놀이를 하면 냥코인 · 부탁 점수
+  save.friends[f.id].ask = other;
+  assert.equal(playWait(save.friends[f.id], T0 + VILLAGE.play.every * 1000 + 2), 0, '놀자고 부탁했으면 언제든');
+  const coins0 = bag.coins;
+  const r3 = playToy(save, bag, f, other, 1, T0 + VILLAGE.play.every * 1000 + 3, seeded(3));
+  assert.ok(r3.asked && r3.gain === VILLAGE.play.points[1] + VILLAGE.points.request && r3.coins >= VILLAGE.request.coins[0] && bag.coins === coins0 + r3.coins && save.friends[f.id].ask === null, `놀자는 부탁을 들어주면 +${r3.gain} · 냥코인 ${r3.coins}`);
+  // 하트가 늘면 선물
+  const g = makeVillageSave(T0);
+  g.friends[f.id].pts = VILLAGE.heart - 1;
+  const up = playToy(g, makeBag(), f, f.toy, 1, T0);
+  assert.ok(up.up && up.rewards.length === 1 && up.rewards[0].level === 1, '놀다가 하트가 늘면 선물');
+  // 배부르면 곧 놀자고 한다 (잠만 자지 않게)
+  const m = makeVillageSave(T0);
+  const fm = FRIENDS[0];
+  const mb = makeBag();
+  obtain(mb, fm.love[0], 3);
+  for (let i = 0; i < VILLAGE.full; i++) feed(m, mb, fm, fm.love[0], T0 + i * 1000);
+  assert.ok(m.friends[fm.id].askAt <= T0 + (VILLAGE.full - 1) * 1000 + VILLAGE.play.afterMeal * 1000, '배가 부르면 afterMeal 초 뒤 부탁');
+  tickRequests(m, T0 + VILLAGE.full * 1000 + VILLAGE.play.afterMeal * 1000, seeded(2));
+  assert.ok(isToy(m.friends[fm.id].ask), `배부른 ${fm.name}는 놀자고 한다 (${m.friends[fm.id].ask})`);
+}
+
+// 7-2) 미니게임 셋 — 잘하면 ★★★, 못하면 ★ (했으면 적어도 하나)
+{
+  assert.deepEqual([0, 1, 2, 3, 5].map(starsOf), [1, 1, 2, 3, 3], '점수 → 별');
+  const DT = 1 / 60;
+  // 깃털: 친구 앞에서 흔들어 신나게 → 씰룩이면 멈춰 두면 잡는다 / 씰룩일 때 홱 빼면 놓친다
+  const feather = (hold: boolean) => {
+    const g = makeToy('feather', seeded(1)) as FeatherGame;
+    let crouches = 0;
+    let frames = 0;
+    while (g.phase === 'play' && frames++ < 40 / DT) {
+      let x: number | null = 0.3 * Math.sin(g.t * 9); // 친구 앞에서 흔들기
+      if (g.cat === 'crouch' || g.cat === 'pounce') x = hold ? g.aim : g.aim > 0 ? -1 : 1;
+      updateToy(g, { x, dir: 0 }, DT);
+      crouches += g.events.filter((e) => e.type === 'crouch').length;
+    }
+    return { g, crouches };
+  };
+  const good = feather(true);
+  assert.ok(good.g.phase === 'done' && good.g.t >= FEATHER.time && good.g.score >= 3 && good.g.stars === 3, `깃털: 흔들다 멈춰 주면 ${good.g.score}번 잡는다 (씰룩 ${good.crouches}번)`);
+  const bad = feather(false);
+  assert.ok(bad.g.score === 0 && bad.crouches >= 3 && bad.g.stars === 1, `씰룩일 때 빼면 못 잡는다 (씰룩 ${bad.crouches}번)`);
+  const still = makeToy('feather', seeded(1)) as FeatherGame;
+  for (let i = 0; i < 20 / DT && still.phase === 'play'; i++) updateToy(still, { x: 0, dir: 0 }, DT);
+  assert.ok(still.score === 0 && still.ex === 0, '가만히 두면 신나지 않는다');
+  const keys = makeToy('feather', seeded(1)) as FeatherGame;
+  for (let i = 0; i < 30; i++) updateToy(keys, { x: null, dir: -1 }, DT);
+  assert.ok(keys.fx < 0.6 - FEATHER.speed * 0.4, '키로도 움직인다');
+  // 상자: 친구가 든 상자를 끝까지 따라가면 다 맞힌다 · 늘 1번이면 우연만큼
+  const box = (follow: boolean, seed: number) => {
+    const g = makeToy('box', seeded(seed)) as BoxGame;
+    let swaps = 0;
+    for (let i = 0; i < 60 / DT && g.phase === 'play'; i++) {
+      updateToy(g, { x: null, dir: 0 }, DT);
+      swaps += g.events.filter((e) => e.type === 'swap').length;
+      if (g.stage === 'pick') toyPick(g, follow ? g.slots[g.cat] : 0);
+    }
+    return { g, swaps };
+  };
+  const b1 = box(true, 3);
+  assert.ok(b1.g.phase === 'done' && b1.g.score === BOX.rounds && b1.g.stars === 3 && b1.swaps === BOX.swaps.reduce((a, b) => a + b, 0), `상자: 따라가면 ${b1.g.score}/${BOX.rounds} (섞기 ${b1.swaps}번)`);
+  let lucky = 0;
+  for (let seed = 1; seed <= 30; seed++) lucky += box(false, seed).g.score;
+  assert.ok(lucky / 30 > 0.5 && lucky / 30 < 1.6, `아무거나 고르면 우연만큼 (${(lucky / 30).toFixed(2)}판)`);
+  // 공: 힘을 친구 자리에서 멈추면 덮친다 · 너무 약하면 짧고 · 세면 지나친다
+  const yarn = (at: (g: YarnGame) => number) => {
+    const g = makeToy('yarn', seeded(5)) as YarnGame;
+    const res: string[] = [];
+    for (let i = 0; i < 40 / DT && g.phase === 'play'; i++) {
+      if (g.stage === 'aim' && Math.abs(g.power - at(g)) < 0.02) toyPress(g);
+      updateToy(g, { x: null, dir: 0 }, DT);
+      for (const e of g.events) if (e.type === 'hit' || e.type === 'short' || e.type === 'long') res.push(e.type);
+    }
+    return { g, res };
+  };
+  const y1 = yarn((g) => g.spot);
+  assert.ok(y1.g.phase === 'done' && y1.g.score === YARN.throws && y1.g.stars === 3, `공: 친구 자리에서 멈추면 ${y1.res.join(' ')}`);
+  assert.deepEqual(yarn(() => 0.05).res, ['short', 'short', 'short'], '약하면 짧다');
+  assert.deepEqual(yarn(() => 0.99).res, ['long', 'long', 'long'], '세면 지나친다');
+  const roll = makeToy('yarn', seeded(1)) as YarnGame;
+  roll.power = 0.6;
+  toyPress(roll);
+  updateToy(roll, { x: null, dir: 0 }, YARN.roll / 2);
+  assert.ok(ballAt(roll) > 0.3 && ballAt(roll) < 0.6, '공은 굴러가며 느려진다');
 }
 
 // 8) 주민 동작: 배부르면 잠 · 부탁이 있으면 배고픔 · 아니면 대기. 한 번 하는 동작(놀이 · 삐짐 …)은 끝나면 바탕으로. 대기 중 심심하면 혼자 논다
@@ -246,6 +371,9 @@ const T0 = 1_000_000_000_000;
   fs.meals = [T0, T0, T0];
   assert.equal(baseAnim(fs, T0 + 1000), 'sleep', '배부르면 잠');
   assert.equal(baseAnim(fs, T0 + VILLAGE.digest * 1000 + 1), 'hungry', '한 그릇 내려가면 깬다');
+  fs.ask = 'feather';
+  assert.equal(baseAnim(fs, T0 + 1000), 'bored', '놀자고 하면 심심 (배불러도 자지 않는다)');
+  fs.ask = 'dish_01';
   const s = makeVillage(seeded(7));
   const p = s.townies[0];
   setAnim(p, 'sulk');
@@ -253,6 +381,9 @@ const T0 = 1_000_000_000_000;
   assert.equal(p.anim, 'sulk', '한 번 하는 동작은 끝날 때까지');
   for (let i = 0; i < 60 * (ONE_SHOT.sulk ?? 2) + 5; i++) updateVillage(s, { mx: 0, my: 0, act: false }, 1 / 60, save, T0 + 1000);
   assert.equal(p.anim, 'sleep', '끝나면 바탕 동작(잠)으로');
+  save.friends[FRIENDS[0].id].ask = 'box';
+  for (let i = 0; i < 60 * 8; i++) updateVillage(s, { mx: 0, my: 0, act: false }, 1 / 60, save, T0 + 1000);
+  assert.ok(p.anim === 'bored' && p.animT < (ONE_SHOT.bored ?? 3) + 0.05, '놀자고 하면 심심 동작을 되풀이한다');
   const q = makeVillage(seeded(8));
   const seen = new Set<string>();
   for (let i = 0; i < 60 * 60; i++) {

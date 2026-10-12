@@ -1,8 +1,8 @@
-// 고양이마을 그리기 — 전용 배경(backgrounds/village, 1536×1024)을 크게 보여 주고 고양이를 따라간다 (2026-10-08 저녁 — 필드 조각 광장에서 바꿈).
+// 고양이마을 그리기 — 전용 배경(backgrounds/village, 1254×1254 — 2026-10-08 밤 새 그림)을 크게 보여 주고 고양이를 따라간다.
 // 주민 친구 여덟은 전용 시트(characters/npcs/village_cats — 품종마다 한 장, 동작 8줄 × 6컷, 효과까지 그림에 들어 있다)로 그린다:
 // 대기 · 장난감 놀이 · 화남 · 애정(하트) · 배고픔(생선 생각풍선) · 심심 · 삐짐(먹구름) · 잠(Z). 시트는 오른쪽을 보고 있어 왼쪽은 뒤집는다.
 // 이름표 · 하트 · 부탁 말풍선 · 대사 말풍선 · 요리 가판대 표지 · HUD. (곁에 가서 누르면 말을 건다 — 안내 말풍선은 없다)
-// 창: 친구(먹여 주기 · 놀아 주기 · 이야기) · 요리 가판대(요리법 · 부족한 재료 바로가기) · 요리(바늘 타이밍) · 하트 선물 카드. 창은 가방처럼 디자인 좌표
+// 창: 친구(먹여 주기 · 놀아 주기 · 이야기) · 놀이 고르기 · 놀이(미니게임 — toys-draw.ts) · 요리 가판대(요리법 · 부족한 재료 바로가기) · 요리(바늘 타이밍) · 하트 선물 카드. 창은 가방처럼 디자인 좌표
 // (가로 1000×560 · 세로 540×1040)로 그리고 화면에 맞춰 줄인다. 로직은 village.ts.
 import { image } from './assets.ts';
 import { button, drawCoin, drawIcon, header, itemCell, toast, useLines } from './bag-draw.ts';
@@ -15,6 +15,8 @@ import { drawLeave, drawPill, miniLayout, type MiniButton } from './mini-draw.ts
 import { drawFrame, type Sheet } from './sheet.ts';
 import { shortcut, type Shortcut } from './sources.ts';
 import { fitText, safe, wrapText } from './touch.ts';
+import { drawToyGame, fromX, slotAt, toyLayout, type Pose } from './toys-draw.ts';
+import { isToy, makeToy, TOY_IDS, toyMove, toyPick, toyPress, TOYS, type ToyGame, type ToyId } from './toys.ts';
 import {
   BLOCKS,
   C,
@@ -28,7 +30,8 @@ import {
   hello,
   knownRecipes,
   ONE_SHOT,
-  play,
+  playToy,
+  playWait,
   reactAnim,
   RECIPES,
   serve,
@@ -90,6 +93,22 @@ function drawVillager(ctx: CanvasRenderingContext2D, f: Friend, p: Townie, x: nu
   ctx.restore();
   return y - z - (py - 34) * k;
 }
+/** 친구의 한 컷 (놀이 창) — 발밑 (x, y) · 키 h(px) · 동작 줄 · 컷 · 보는 쪽 */
+const poseOf =
+  (f: Friend): Pose =>
+  (ctx, x, y, h, anim, frame, flip = 1) => {
+    const a = ATLAS[f.sheet];
+    const im = image(a.file).img;
+    if (!im.complete || !im.naturalWidth) return;
+    const an = a.anims[anim] ?? a.anims.idle;
+    const [sx, sy, sw, sh, px, py] = an.f[Math.max(0, Math.min(an.f.length - 1, frame))];
+    const k = (h / 96) * f.size;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.scale(flip, 1);
+    ctx.drawImage(im, sx, sy, sw, sh, -px * k, -py * k, sw * k, sh * k);
+    ctx.restore();
+  };
 /** 치즈 (발밑 x, y · 키 k px) — 필드 고양이 시트. 돌려주는 것: 정수리 높이 */
 function drawCat(ctx: CanvasRenderingContext2D, sh: Sheet, x: number, y: number, k: number, flip: number, moving: boolean, animT: number) {
   const row = moving ? CAT_ROW.run : CAT_ROW.idle;
@@ -143,7 +162,15 @@ const heartText = (n: number) => '♥'.repeat(n) + '♡'.repeat(5 - n);
 const PREF_MARK: Record<Pref, string> = { love: '❤', like: '👍', normal: '🙂', dislike: '💧' };
 
 // ── 화면 상태 (창 · 고른 것 · 알림 · 선물 카드) ──
-export type Panel = { kind: 'friend'; i: number } | { kind: 'kitchen' } | { kind: 'cook'; cook: Cook } | null;
+export type Panel =
+  | { kind: 'friend'; i: number }
+  | { kind: 'kitchen' }
+  | { kind: 'cook'; cook: Cook }
+  /** 놀이 고르기 (sel = 키보드로 고른 칸) */
+  | { kind: 'toys'; i: number; sel: number }
+  /** 놀이 중 · 끝나면 res (점수를 매긴 결과) */
+  | { kind: 'play'; i: number; game: ToyGame; res: PlayResult | null }
+  | null;
 export const villageView = {
   panel: null as Panel,
   /** 친구 창: 고른 먹을 것 · 대사 / 가판대: 고른 요리법 */
@@ -250,7 +277,12 @@ export function drawVillage(ctx: CanvasRenderingContext2D, cw: number, ch: numbe
         ctx.roundRect(bx - C * 0.42, by - C * 0.27, C * 0.84, C * 0.54, C * 0.22);
         ctx.fill();
         ctx.stroke();
-        drawIcon(ctx, fs.ask, bx - C * 0.13, by, C * 0.42);
+        if (isToy(fs.ask)) {
+          ctx.font = `${C * 0.38}px "Segoe UI Emoji", system-ui, sans-serif`;
+          ctx.textAlign = 'center';
+          ctx.fillStyle = '#000';
+          ctx.fillText(TOYS[fs.ask].emoji, bx - C * 0.13, by + C * 0.13);
+        } else drawIcon(ctx, fs.ask, bx - C * 0.13, by, C * 0.42);
         ctx.fillStyle = '#ef6b5e';
         ctx.font = `bold ${C * 0.36}px system-ui, sans-serif`;
         ctx.textAlign = 'center';
@@ -333,13 +365,43 @@ function cardLayout(L: PL) {
   const bar: R = { x: card.x + 50, y: card.y + h - (L.wide ? 170 : 250), w: w - 100, h: 40 };
   return { card, ok, bar };
 }
+/** 놀이 고르기: 놀이 셋 (가로 화면은 나란히 · 세로는 위아래) */
+function toysLayout(L: PL) {
+  const { card } = cardLayout(L);
+  const cards = TOY_IDS.map((_, i): R =>
+    L.wide ? { x: card.x + 20 + i * ((card.w - 40) / 3), y: card.y + 96, w: (card.w - 40) / 3 - 12, h: card.h - 96 - 90 } : { x: card.x + 20, y: card.y + 110 + i * 186, w: card.w - 40, h: 170 },
+  );
+  return { card, cards };
+}
 /** 창에서 누를 곳 가운데 (CSS px) — 검증용 */
 export function villagePoints(w: number, h: number) {
   const L = panelLayout(w, h);
   const mid = (r: R) => ({ x: L.ox + (r.x + r.w / 2) * L.k, y: L.oy + (r.y + r.h / 2) * L.k });
   const F = friendLayout(L);
   const K = kitchenLayout(L);
-  return { close: mid(L.close), cells: F.cells.map(mid), feed: mid(F.feed), play: mid(F.play), talk: mid(F.talk), recipes: K.cards.map(mid), cook: mid(K.cook), gos: K.gos.map(mid), ok: mid(cardLayout(L).ok) };
+  const T = toyLayout(cardLayout(L).card);
+  const css = (x: number, y: number) => ({ x: L.ox + x * L.k, y: L.oy + y * L.k });
+  return {
+    close: mid(L.close),
+    cells: F.cells.map(mid),
+    feed: mid(F.feed),
+    play: mid(F.play),
+    talk: mid(F.talk),
+    recipes: K.cards.map(mid),
+    cook: mid(K.cook),
+    gos: K.gos.map(mid),
+    ok: mid(cardLayout(L).ok),
+    toys: toysLayout(L).cards.map(mid),
+    toyOk: mid(T.ok),
+    /** 놀이판 (깃털: 가로 -1..1 → 화면 x) · 상자 자리 0 · 1 · 2 */
+    toyArea: { x0: css(T.area.x, 0).x, x1: css(T.area.x + T.area.w, 0).x, y: mid(T.area).y },
+    boxes: [0, 1, 2].map((i) => css(T.area.x + T.area.w * (0.2 + i * 0.3), T.area.y + T.area.h * 0.62)),
+  };
+}
+/** 화면 x(CSS px) → 깃털 자리 (-1..1) — main 이 마우스 · 손가락으로 */
+export function toyX(w: number, h: number, x: number) {
+  const L = panelLayout(w, h);
+  return fromX(toyLayout(cardLayout(L).card).area, (x - L.ox) / L.k);
 }
 /** 친구 창에 보이는 먹을 것 (가방에 있는 요리 · 간식, 부탁한 것 먼저) */
 function dishes(b: Bag, ask: string | null) {
@@ -353,6 +415,9 @@ export type VillageAct =
   | { kind: 'close' }
   | { kind: 'fed'; res: FeedResult; friend: Friend }
   | { kind: 'played'; res: PlayResult; friend: Friend }
+  /** 놀이를 시작했다 · 그만뒀다 */
+  | { kind: 'toy'; game: ToyGame }
+  | { kind: 'quit' }
   | { kind: 'talk' }
   | { kind: 'cook'; cook: Cook }
   | { kind: 'served'; cook: Cook }
@@ -391,6 +456,23 @@ export function villageTap(w: number, h: number, x: number, y: number, s: Villag
     villageView.panel = { kind: 'kitchen' }; // 다 됐으면 어디를 눌러도 가판대로
     return { kind: 'pick' };
   }
+  if (P?.kind === 'play') {
+    const T = toyLayout(cardLayout(L).card);
+    const g = P.game;
+    if (g.phase === 'done') return P.res ? backToFriend(P.i) : null; // 결과를 보고 나서 어디를 눌러도 친구 창으로
+    const { card } = cardLayout(L);
+    if (!inR(card, px, py)) return quitToy(P.i); // 카드 밖 = 그만하기
+    if (g.id === 'box') toyPick(g, slotAt(T.area, px));
+    else if (g.id === 'yarn') toyPress(g);
+    return { kind: 'pick' };
+  }
+  if (P?.kind === 'toys') {
+    const T = toysLayout(L);
+    const c = T.cards.findIndex((r) => inR(r, px, py));
+    if (c >= 0) return startToy(P.i, TOY_IDS[c], s, save, now);
+    if (!inR(T.card, px, py)) return backToFriend(P.i);
+    return null;
+  }
   if (px < 0 || py < 0 || px > L.DW || py > L.DH || inR(L.close, px, py)) {
     villageView.panel = null;
     return { kind: 'close' };
@@ -409,7 +491,7 @@ export function villageTap(w: number, h: number, x: number, y: number, s: Villag
       s.townies[P.i].hop = 0.5;
       return { kind: 'talk' };
     }
-    if (inR(F.play, px, py)) return playPick(s, save, b, now);
+    if (inR(F.play, px, py)) return openToys(P.i, s, save, now);
     if (inR(F.feed, px, py)) return feedPick(s, save, b, now);
     return null;
   }
@@ -454,17 +536,41 @@ function feedPick(s: VillageState, save: VillageSave, b: Bag, now: number): Vill
   Object.assign(p, { hop: res.pref === 'dislike' ? 0 : 0.5, say: res.line, sayT: 2.6 });
   return { kind: 'fed', res, friend: f };
 }
-/** 놀아 준다 — 장난감 놀이 동작, playEvery 초에 한 번 점수 */
-function playPick(s: VillageState, save: VillageSave, b: Bag, now: number): VillageAct {
+/** 놀아 주기 → 놀이 고르기 (조금 전에 놀았으면 기다리라고 한다 — 놀자고 부탁했으면 언제든) */
+function openToys(i: number, s: VillageState, save: VillageSave, now: number): VillageAct {
+  const f = FRIENDS[i];
+  const fs = save.friends[f.id];
+  const wait = playWait(fs, now);
+  if (wait > 0) {
+    villageView.line = `방금 놀았는걸. 조금 쉬었다 또 놀자 (${Math.ceil(wait / 60)}분 뒤)`;
+    setAnim(s.townies[i], 'bored');
+    return { kind: 'pick' };
+  }
+  const ask = fs.ask;
+  villageView.panel = { kind: 'toys', i, sel: Math.max(0, TOY_IDS.indexOf(isToy(ask) ? ask : f.toy)) };
+  return { kind: 'pick' };
+}
+/** 놀이를 시작한다 */
+function startToy(i: number, toy: ToyId, s: VillageState, save: VillageSave, now: number): VillageAct {
+  if (playWait(save.friends[FRIENDS[i].id], now) > 0) return backToFriend(i);
+  const game = makeToy(toy, s.rng);
+  villageView.panel = { kind: 'play', i, game, res: null };
+  return { kind: 'toy', game };
+}
+const backToFriend = (i: number): VillageAct => ((villageView.panel = { kind: 'friend', i }), { kind: 'pick' });
+const quitToy = (i: number): VillageAct => ((villageView.panel = { kind: 'friend', i }), (villageView.line = '응? 벌써 끝이야?'), { kind: 'quit' });
+/** 놀이가 끝났다 (main 이 game.phase 가 done 이 된 프레임에 부른다) — 별만큼 친해지고, 친구는 별에 따라 애정 · 놀이 · 심심 */
+export function finishPlay(s: VillageState, save: VillageSave, b: Bag, now: number): VillageAct {
   const P = villageView.panel;
-  if (P?.kind !== 'friend') return null;
+  if (P?.kind !== 'play' || P.game.phase !== 'done' || P.res) return null;
   const f = FRIENDS[P.i];
+  const res = playToy(save, b, f, P.game.id, P.game.stars, now, s.rng);
+  P.res = res;
+  villageView.line = res.line;
+  for (const r of res.rewards) villageView.gifts.push({ friend: f, r });
   const p = s.townies[P.i];
-  const res = play(save, b, f, now);
-  villageView.line = res.ok ? res.line : `${res.line} (${Math.ceil(res.wait / 60)}분 뒤)`;
-  setAnim(p, res.ok ? 'solo_play' : 'bored');
-  if (res.ok) for (const r of res.rewards) villageView.gifts.push({ friend: f, r });
-  Object.assign(p, { say: res.line, sayT: 2.4 });
+  setAnim(p, res.stars >= 3 ? 'affection' : res.stars === 2 ? 'solo_play' : 'bored');
+  Object.assign(p, { hop: res.stars >= 2 ? 0.5 : 0, say: res.line, sayT: 2.6 });
   return { kind: 'played', res, friend: f };
 }
 /** 고른 요리법으로 요리를 시작한다 */
@@ -493,7 +599,7 @@ export function burn(save: VillageSave, b: Bag): VillageAct {
   return { kind: 'served', cook: P.cook };
 }
 
-/** 창 키: Esc 닫기 · Enter/Space 먹여 주기 · 요리 · 멈추기 · P 놀아 주기 · ←/→ ↑/↓ 고르기 */
+/** 창 키: Esc 닫기 · Enter/Space 먹여 주기 · 요리 · 멈추기 · P 놀아 주기 · ←/→ ↑/↓ 고르기 · 놀이: 1 2 3 · Space · ← → */
 export function villageKey(code: string, s: VillageState, save: VillageSave, b: Bag, now: number): VillageAct {
   const P = villageView.panel;
   const go = code === 'Enter' || code === 'NumpadEnter' || code === 'Space' || code === 'KeyE';
@@ -509,6 +615,26 @@ export function villageKey(code: string, s: VillageState, save: VillageSave, b: 
     }
     return null;
   }
+  if (P?.kind === 'play') {
+    const g = P.game;
+    if (g.phase === 'done') return P.res && (go || code === 'Escape') ? backToFriend(P.i) : null;
+    if (code === 'Escape') return quitToy(P.i);
+    const n = /^(?:Digit|Numpad)([1-3])$/.exec(code)?.[1];
+    if (n) toyPick(g, Number(n) - 1);
+    else if (go) toyPress(g);
+    else if (g.id === 'box' && (code === 'ArrowLeft' || code === 'KeyA')) toyMove(g, -1);
+    else if (g.id === 'box' && (code === 'ArrowRight' || code === 'KeyD')) toyMove(g, 1);
+    return null;
+  }
+  if (P?.kind === 'toys') {
+    if (code === 'Escape') return backToFriend(P.i);
+    const n = /^(?:Digit|Numpad)([1-3])$/.exec(code)?.[1];
+    if (n) return startToy(P.i, TOY_IDS[Number(n) - 1], s, save, now);
+    if (go) return startToy(P.i, TOY_IDS[P.sel], s, save, now);
+    const d = code === 'ArrowRight' || code === 'KeyD' || code === 'ArrowDown' || code === 'KeyS' ? 1 : code === 'ArrowLeft' || code === 'KeyA' || code === 'ArrowUp' || code === 'KeyW' ? -1 : 0;
+    if (d) P.sel = (P.sel + d + TOY_IDS.length) % TOY_IDS.length;
+    return d ? { kind: 'pick' } : null;
+  }
   if (code === 'Escape') {
     villageView.panel = null;
     return { kind: 'close' };
@@ -516,7 +642,7 @@ export function villageKey(code: string, s: VillageState, save: VillageSave, b: 
   const step = code === 'ArrowRight' || code === 'KeyD' || code === 'ArrowDown' || code === 'KeyS' ? 1 : code === 'ArrowLeft' || code === 'KeyA' || code === 'ArrowUp' || code === 'KeyW' ? -1 : 0;
   if (P?.kind === 'friend') {
     if (go) return feedPick(s, save, b, now);
-    if (code === 'KeyP') return playPick(s, save, b, now);
+    if (code === 'KeyP') return openToys(P.i, s, save, now);
     const list = dishes(b, save.friends[FRIENDS[P.i].id].ask);
     if (step && list.length) {
       const i = Math.max(0, list.indexOf(villageView.pick ?? ''));
@@ -549,6 +675,8 @@ export function drawVillagePanel(ctx: CanvasRenderingContext2D, w: number, h: nu
   if (P?.kind === 'friend') drawFriend(ctx, L, P.i, s, save, b, now);
   else if (P?.kind === 'kitchen') drawKitchen(ctx, L, save, b);
   else if (P?.kind === 'cook') drawCook(ctx, L, P.cook, t, touch);
+  else if (P?.kind === 'toys') drawToys(ctx, L, P.i, P.sel, save);
+  else if (P?.kind === 'play') drawToyGame(ctx, cardLayout(L).card, P.game, poseOf(FRIENDS[P.i]), P.res, t, touch);
   if (villageView.gifts.length) drawGift(ctx, L, villageView.gifts[0], t);
   const ty = P?.kind === 'kitchen' ? kitchenLayout(L).cook.y - 52 : friendLayout(L).ask.y;
   toast(ctx, { wide: false, DW: L.DW, DH: L.DH, detail: { x: 0, y: ty + 54, w: 0, h: 0 } }, villageView.msg, villageView.msgT);
@@ -635,7 +763,14 @@ function drawFriend(ctx: CanvasRenderingContext2D, L: PL, i: number, s: VillageS
   ctx.fill();
   ctx.fillStyle = fs.ask ? '#d4574a' : '#b09a85';
   ctx.font = 'bold 17px system-ui, sans-serif';
-  if (fs.ask) {
+  if (isToy(fs.ask)) {
+    ctx.font = '26px "Segoe UI Emoji", system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(TOYS[fs.ask].emoji, A.x + 26, A.y + A.h / 2 + 9);
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#d4574a';
+    fitText(ctx, `부탁: ${TOYS[fs.ask].name} 하고 놀고 싶대요 · 들어주면 더 친해지고 냥코인`, A.x + 50, A.y + 29, A.w - 60, 17, 'bold ');
+  } else if (fs.ask) {
     drawIcon(ctx, fs.ask, A.x + 26, A.y + A.h / 2, 32);
     fitText(ctx, `부탁: ${ITEMS[fs.ask].name} 먹고 싶대요 · 들어주면 더 친해지고 냥코인`, A.x + 50, A.y + 29, A.w - 60, 17, 'bold ');
   } else fitText(ctx, '지금은 부탁이 없어요 · 요리를 먹여 주거나 놀아 주면 친해져요', A.x + 16, A.y + 29, A.w - 30, 17, 'bold ');
@@ -668,9 +803,59 @@ function drawFriend(ctx: CanvasRenderingContext2D, L: PL, i: number, s: VillageS
   }
   const pick = villageView.pick;
   button(ctx, F.feed, pick ? `${ITEMS[pick].name} 먹여 주기` : '먹여 주기', pick ? 'main' : 'soft');
-  const canPlay = now - fs.playedAt >= VILLAGE.playEvery * 1000;
-  button(ctx, F.play, canPlay ? '🧶 놀아 주기' : '놀았어요', canPlay ? 'main' : 'soft');
+  const wait = playWait(fs, now);
+  button(ctx, F.play, isToy(fs.ask) ? `${TOYS[fs.ask].emoji} 같이 놀자!` : wait > 0 ? `놀았어요 (${Math.ceil(wait / 60)}분)` : '🧶 놀아 주기', wait > 0 ? 'soft' : 'main');
   button(ctx, F.talk, '이야기', 'soft');
+}
+
+/** 놀이 고르기 — 셋 중 하나 (좋아하는 놀이는 한 번 해 보면 ❤, 놀자고 부탁한 놀이엔 "부탁!") */
+function drawToys(ctx: CanvasRenderingContext2D, L: PL, i: number, sel: number, save: VillageSave) {
+  const f = FRIENDS[i];
+  const fs = save.friends[f.id];
+  const T = toysLayout(L);
+  const { card } = T;
+  ctx.fillStyle = '#fffaf0';
+  ctx.beginPath();
+  ctx.roundRect(card.x, card.y, card.w, card.h, 28);
+  ctx.fill();
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#5b4a3f';
+  fitText(ctx, `${f.name}와 뭐 하고 놀까?`, card.x + card.w / 2, card.y + 52, card.w - 40, 28, 'bold ');
+  ctx.fillStyle = '#9a7b62';
+  fitText(ctx, L.wide ? '1 · 2 · 3 또는 ← → Enter · Esc 돌아가기' : '눌러서 골라요 · 창 밖을 누르면 돌아가요', card.x + card.w / 2, card.y + 80, card.w - 40, 15, '');
+  TOY_IDS.forEach((id, k) => {
+    const r = T.cards[k];
+    const toy = TOYS[id];
+    const on = sel === k;
+    const asked = fs.ask === id;
+    ctx.fillStyle = on ? '#fff1dc' : '#ffffff';
+    ctx.strokeStyle = asked ? '#ef6b5e' : on ? '#f08a3c' : 'rgba(120,85,55,0.2)';
+    ctx.lineWidth = asked || on ? 4 : 2;
+    ctx.beginPath();
+    ctx.roundRect(r.x, r.y, r.w, r.h, 16);
+    ctx.fill();
+    ctx.stroke();
+    const big = L.wide ? { x: r.x + r.w / 2, y: r.y + 70 } : { x: r.x + 60, y: r.y + r.h / 2 + 18 };
+    ctx.font = `${L.wide ? 54 : 50}px "Segoe UI Emoji", system-ui, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#000';
+    ctx.fillText(toy.emoji, big.x, big.y);
+    const tx = L.wide ? r.x + r.w / 2 : r.x + 120;
+    const tw = L.wide ? r.w - 20 : r.w - 136;
+    ctx.textAlign = L.wide ? 'center' : 'left';
+    ctx.fillStyle = '#5b4a3f';
+    fitText(ctx, `${k + 1}. ${toy.name}`, tx, L.wide ? r.y + 118 : r.y + 40, tw, 20, 'bold ');
+    ctx.fillStyle = '#7a6656';
+    ctx.font = '14px system-ui, sans-serif';
+    wrapText(ctx, toy.how, tw)
+      .slice(0, L.wide ? 5 : 3)
+      .forEach((l, j) => ctx.fillText(l, tx, (L.wide ? r.y + 146 : r.y + 70) + j * 20));
+    const tags = [...(asked ? ['부탁!'] : []), ...(f.toy === id && (fs.games[id] ?? 0) > 0 ? ['❤ 좋아해요'] : [])].join(' · ');
+    if (tags) {
+      ctx.fillStyle = '#ef6b5e';
+      fitText(ctx, tags, tx, L.wide ? r.y + r.h - 16 : r.y + r.h - 16, tw, 15, 'bold ');
+    }
+  });
 }
 
 function drawKitchen(ctx: CanvasRenderingContext2D, L: PL, save: VillageSave, b: Bag) {

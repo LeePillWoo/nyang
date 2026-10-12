@@ -101,6 +101,21 @@ export function lv(run: Run, id: SkillId): Level | null {
 }
 const num = (p: Level, k: string) => (typeof p[k] === 'number' ? (p[k] as number) : 0);
 
+/**
+ * HUD 시계 (2026-10-08 사용자 요청 — 기술 아이콘에 다시 쓸 수 있을 때까지): 0 = 방금 씀 → 1 = 준비됨. 늘 켜져 있는 기술(캣닢 구름 · 우다다 잔상 · 빙글 상자 · 발톱)은 null.
+ * 식빵 보호막은 남은 겹이 있으면 준비됨(없을 때만 다시 차오르는 시계), 냥냥 펀치는 다음 냥펀치가 충격파면 준비됨
+ */
+export function readyOf(run: Run, id: SkillId): number | null {
+  const p = lv(run, id);
+  if (!p) return null;
+  const fill = (left: number, max: number) => (max > 0 ? 1 - Math.max(0, Math.min(1, left / max)) : 1);
+  if (id === 'loaf_shield') return run.shield > 0 ? 1 : Math.min(1, run.shieldT / num(p, 'cd'));
+  if (id === 'hiss') return fill(run.hissCd, num(p, 'cd'));
+  if (id === 'paw_combo') return ((run.punches % num(p, 'every')) + 1) / num(p, 'every');
+  if (typeof p.cd === 'number') return fill(run.cd[id] ?? 0, p.cd);
+  return null;
+}
+
 /** 생선뼈를 먹는다. 레벨이 오른 수를 돌려준다 (pending 에 쌓인다) */
 export function gainXp(run: Run, n: number) {
   run.xp += n;
