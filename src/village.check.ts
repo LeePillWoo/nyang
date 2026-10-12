@@ -41,7 +41,6 @@ import {
   updateVillage,
   VILLAGE,
   walkable,
-  walkTo,
   type Target,
 } from './village.ts';
 
@@ -405,7 +404,8 @@ const mixed = (seed: number) => {
   assert.ok(seen.has('idle') && (seen.has('bored') || seen.has('solo_play')), `대기 중 심심하면 혼자 논다 (${[...seen].join(', ')})`);
 }
 
-// 9) 마을 걷기: 늘 걸을 수 있는 곳 · 막힌 곳(분수)엔 안 들어간다 · 누르면 친구 · 가판대까지 걸어가 닿으면 연다 · 곁에서 누르면 바로
+// 9) 마을 걷기: 늘 걸을 수 있는 곳 · 막힌 곳(분수)엔 안 들어간다 · 시작 자리에서 친구 · 가판대 곁까지 걸어서 닿는다 ·
+//    누르기 · 클릭은 곁에서 말 걸기만 — 빈 곳이나 먼 것을 누르면 걷지 않는다 (2026-10-12 사용자 — 터치 이동 제거, 걷기는 WASD · 조이스틱으로만)
 {
   const s = makeVillage(seeded(9));
   const rng = seeded(10);
@@ -425,21 +425,26 @@ const mixed = (seed: number) => {
     assert.ok(((f.cat.x - fountain.x) / fountain.rx) ** 2 + ((f.cat.y - fountain.y) / fountain.ry) ** 2 > 1, '분수 안으로는 안 들어간다');
   }
   assert.ok(f.cat.y < fountain.y - fountain.ry, `분수를 비켜 돌아 위로 지나간다 (${f.cat.y.toFixed(0)})`);
-  // 누르면 걸어가서 연다 — 친구 여덟 · 가판대, 시작 자리에서
-  const targets: Target[] = [{ kind: 'kitchen' }, ...FRIENDS.map((_, i) => ({ kind: 'friend' as const, i }))];
-  for (const t of targets) {
-    const v = makeVillage(seeded(12));
-    const [x, y] = targetAt(v, t);
-    walkTo(v, x, y, t);
-    let opened: Target | null = v.open;
-    let secs = 0;
-    for (; secs < 10 && !opened; secs += 1 / 60) {
-      updateVillage(v, { mx: 0, my: 0, act: false }, 1 / 60);
-      opened = v.open;
+  // 시작 자리에서 걸어서 친구 여덟 · 가판대 곁(말 거는 거리)까지 닿는다 — 걸을 수 있는 16px 칸을 너비 우선으로 퍼뜨려 본다
+  const CELL = 16;
+  const cols = Math.ceil(VILLAGE.size[0] / CELL);
+  const rows = Math.ceil(VILLAGE.size[1] / CELL);
+  const reached = [[Math.floor(VILLAGE.start[0] / CELL), Math.floor(VILLAGE.start[1] / CELL)]];
+  const seen = new Set([reached[0][1] * cols + reached[0][0]]);
+  for (let q = 0; q < reached.length; q++) {
+    for (const [dc, dr] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const [c, r] = [reached[q][0] + dc, reached[q][1] + dr];
+      if (c < 0 || r < 0 || c >= cols || r >= rows || seen.has(r * cols + c) || !walkable((c + 0.5) * CELL, (r + 0.5) * CELL)) continue;
+      seen.add(r * cols + c);
+      reached.push([c, r]);
     }
-    assert.deepEqual(opened, t, `${t.kind === 'kitchen' ? '가판대' : FRIENDS[t.i].name} 까지 걸어가 연다 (${secs.toFixed(1)}초)`);
-    const d = Math.hypot(v.cat.x - x, (v.cat.y - y) / field.vertical) / C;
-    assert.ok(d < VILLAGE.reach * 1.4, `닿은 자리 (${d.toFixed(1)}배)`);
+  }
+  const targets: Target[] = [{ kind: 'kitchen' }, ...FRIENDS.map((_, i) => ({ kind: 'friend' as const, i }))];
+  const v = makeVillage(seeded(12));
+  for (const t of targets) {
+    const [x, y] = targetAt(v, t);
+    const d = Math.min(...reached.map(([c, r]) => Math.hypot((c + 0.5) * CELL - x, ((r + 0.5) * CELL - y) / field.vertical) / C));
+    assert.ok(d < VILLAGE.reach * 0.8, `${t.kind === 'kitchen' ? '가판대' : FRIENDS[t.i].name} 곁까지 걸어서 닿는다 (${d.toFixed(2)}배)`);
   }
   // 가까이 서서 E — 가장 가까운 것
   const e = makeVillage(seeded(13));
@@ -454,7 +459,7 @@ const mixed = (seed: number) => {
     updateVillage(n, { mx: 0, my: 0, act: false }, 1 / 60);
     const t = targetAtPoint(n, p.x + C * 0.3, p.y + dy);
     assert.deepEqual(t, { kind: 'friend', i: 1 }, `${FRIENDS[1].name}의 ${label}를 누르면 ${FRIENDS[1].name}`);
-    walkTo(n, p.x, p.y, t);
+    talkTo(n, t);
     updateVillage(n, { mx: 0, my: 0, act: false }, 1 / 60);
     assert.deepEqual(n.open, { kind: 'friend', i: 1 }, `곁에서 ${FRIENDS[1].name}의 ${label}를 누르면 바로 말을 건다`);
   }
@@ -463,18 +468,18 @@ const mixed = (seed: number) => {
   updateVillage(m, { mx: 0, my: 0, act: false }, 1 / 60);
   assert.deepEqual(targetAtPoint(m, m.cat.x, m.cat.y - C * 0.5), { kind: 'kitchen' }, '가판대 곁에선 고양이를 눌러도 가판대');
   assert.equal(targetAtPoint(m, VILLAGE.center[0] - 60, VILLAGE.center[1] + 60), null, '먼 맨땅은 아무것도 아니다');
-  // 손가락은 걷지 않고 말 걸기만 (2026-10-12 사용자 — 이동은 조이스틱으로만): 멀리 있는 친구를 누르면 그대로, 곁이면 바로 연다
+  // 누르기는 걷지 않는다: 멀리 있는 친구 · 빈 곳을 누르면 그대로, 곁이면 바로 연다
   const far = makeVillage(seeded(16));
   const at0 = [far.cat.x, far.cat.y];
-  const went = talkTo(far, { kind: 'friend', i: 1 });
+  const went = talkTo(far, { kind: 'friend', i: 1 }) || talkTo(far, targetAtPoint(far, VILLAGE.center[0] - 60, VILLAGE.center[1] + 60));
   for (let i = 0; i < 60; i++) updateVillage(far, { mx: 0, my: 0, act: false }, 1 / 60);
-  assert.ok(!went && !far.goal && far.open === null && far.cat.x === at0[0] && far.cat.y === at0[1], '멀리 있는 친구를 손가락으로 누르면 걷지 않는다');
+  assert.ok(!went && !far.talk && far.open === null && far.cat.x === at0[0] && far.cat.y === at0[1], '멀리 있는 친구 · 빈 곳을 누르면 걷지 않는다');
   const nb = makeVillage(seeded(17));
   [nb.cat.x, nb.cat.y] = [nb.townies[1].x + C * 0.7, nb.townies[1].y + C * 0.3];
   updateVillage(nb, { mx: 0, my: 0, act: false }, 1 / 60);
   assert.ok(talkTo(nb, targetAtPoint(nb, nb.townies[1].x, nb.townies[1].y - C * 0.5)));
   updateVillage(nb, { mx: 0, my: 0, act: false }, 1 / 60);
-  assert.deepEqual(nb.open, { kind: 'friend', i: 1 }, '곁에서 손가락으로 누르면 바로 말을 건다');
+  assert.deepEqual(nb.open, { kind: 'friend', i: 1 }, '곁에서 누르면 바로 말을 건다');
 }
 
 // 10) 재료 바로가기 · 장소 종류: 요리 재료마다 열린 구역의 가지러 갈 포탈이 있다 (상점 · 낚시터 · 던전 · 숲). 돌다리 · 동굴은 던전이 아니다, 골목은 풍차 밀밭

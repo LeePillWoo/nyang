@@ -289,8 +289,8 @@ export const reactAnim = (pref: Pref): Anim => (pref === 'dislike' ? 'sulk' : pr
 export type Townie = { x: number; y: number; flip: number; anim: Anim; animT: number; idleT: number; hop: number; say: string; sayT: number };
 export type VillageState = {
   cat: { x: number; y: number; flip: number; moving: boolean; animT: number };
-  /** 누른 곳으로 저절로 걸어간다 — path 는 격자 길 찾기로 얻은 중간 지점들, then 이 있으면 닿았을 때 그걸 연다 */
-  goal: { x: number; y: number; then: Target | null; stuck: number; path: number[][] } | null;
+  /** 곁에서 누른 친구 · 가판대 — 다음 프레임 처음에 연다 (누른 때 열면 프레임 처음에 지워졌다) */
+  talk: Target | null;
   townies: Townie[];
   /** 말 걸 수 있는 거리 안의 가장 가까운 것 */
   near: Target | null;
@@ -304,7 +304,7 @@ export function makeVillage(rng: () => number = Math.random): VillageState {
   const [x, y] = data.start;
   return {
     cat: { x, y, flip: 1, moving: false, animT: 0 },
-    goal: null,
+    talk: null,
     townies: FRIENDS.map((f) => ({ x: f.at[0], y: f.at[1], flip: f.at[0] < data.center[0] ? 1 : -1, anim: 'idle', animT: rng() * 3, idleT: idleEvery(rng), hop: 0, say: '', sayT: 0 })),
     near: null,
     open: null,
@@ -339,40 +339,18 @@ function stepToward(s: VillageState, ux: number, uy: number, dt: number) {
   return false;
 }
 
-/** 한 프레임. mx, my = 화면 기준 -1..1 (누르면 저절로 걷기는 멈춘다), act = E · Space (가까운 것에 말 걸기). save · now 가 있으면 주민 바탕 동작(잠 · 배고픔)을 거기서 본다 */
+/** 한 프레임. mx, my = 화면 기준 -1..1 (WASD · 조이스틱), act = E · Space (가까운 것에 말 걸기). save · now 가 있으면 주민 바탕 동작(잠 · 배고픔)을 거기서 본다 */
 export function updateVillage(s: VillageState, input: { mx: number; my: number; act: boolean }, dt: number, save?: VillageSave, now = 0) {
   s.t += dt;
   s.open = null;
   const c = s.cat;
   c.animT += dt;
-  // 누른 친구 · 가판대에 닿았으면 연다 — 이미 곁이면 바로 (누른 때 열면 이 프레임 처음에 지워졌다)
-  if (s.goal?.then && gap(s, ...targetAt(s, s.goal.then)) < data.reach) {
-    s.open = s.goal.then;
-    s.goal = null;
+  if (s.talk) {
+    s.open = s.talk;
+    s.talk = null;
   }
   const len = Math.hypot(input.mx, input.my);
-  if (len > 0) s.goal = null;
-  c.moving = false;
-  if (len > 0) c.moving = stepToward(s, input.mx / len, input.my / len, dt);
-  else if (s.goal) {
-    const g = s.goal;
-    const [tx, ty] = g.then ? targetAt(s, g.then) : [g.x, g.y];
-    // 중간 지점(격자 길)을 차례로 지나 마지막엔 목표 자체로
-    while (g.path.length && Math.hypot(g.path[0][0] - c.x, (g.path[0][1] - c.y) / V) < CELL * 0.6) g.path.shift();
-    const [wx, wy] = g.path[0] ?? [tx, ty];
-    const dx = wx - c.x;
-    const dy = (wy - c.y) / V;
-    if (!g.then && !g.path.length && Math.hypot(dx, dy) < 2) s.goal = null;
-    else {
-      c.moving = stepToward(s, dx, dy, dt);
-      g.stuck = c.moving ? 0 : g.stuck + dt;
-      if (g.stuck > 0.6) {
-        // 더는 못 가면 거기서 멈춘다 (가까우면 그래도 연다)
-        if (g.then && Math.hypot(tx - c.x, (ty - c.y) / V) < data.reach * C * 1.4) s.open = g.then;
-        s.goal = null;
-      }
-    }
-  }
+  c.moving = len > 0 && stepToward(s, input.mx / len, input.my / len, dt);
   // 주민: 자기 자리에서 고양이가 가까이 오면 돌아본다. 한 번 하는 동작이 끝나면 바탕 동작으로, 대기 중 심심하면 혼자 논다
   s.townies.forEach((p, i) => {
     p.animT += dt;
@@ -399,60 +377,11 @@ export function updateVillage(s: VillageState, input: { mx: number; my: number; 
   if (input.act && s.near) s.open = s.near;
 }
 
-/** 길 찾기 격자 한 칸 (px) — 마을 1536×1024 를 96×64 칸으로 */
-const CELL = 16;
-/**
- * 격자 너비 우선 탐색으로 (sx, sy) → (tx, ty) 길. 목표 칸이 막혀 있으면(친구가 서 있는 곳 둘레 등) 가장 가까운 걸을 수 있는 칸으로.
- * 돌려주는 것: 지나갈 칸 가운데들 (시작 칸은 빼고, 마지막은 목표 칸). 못 가면 []
- */
-function findPath(sx: number, sy: number, tx: number, ty: number): number[][] {
-  const [W, H] = data.size;
-  const cols = Math.ceil(W / CELL);
-  const rows = Math.ceil(H / CELL);
-  const ok = (c: number, r: number) => c >= 0 && r >= 0 && c < cols && r < rows && walkable((c + 0.5) * CELL, (r + 0.5) * CELL);
-  const c0 = Math.floor(sx / CELL);
-  const r0 = Math.floor(sy / CELL);
-  let c1 = Math.floor(tx / CELL);
-  let r1 = Math.floor(ty / CELL);
-  if (!ok(c1, r1)) {
-    let bd = Infinity;
-    for (let r = 0; r < rows; r++)
-      for (let c = 0; c < cols; c++) {
-        const d = Math.hypot(c - c1, (r - r1) / V);
-        if (d < bd && ok(c, r)) [bd, c1, r1] = [d, c, r];
-      }
-  }
-  const prev = new Int32Array(cols * rows).fill(-1);
-  const start = r0 * cols + c0;
-  const end = r1 * cols + c1;
-  prev[start] = start;
-  const queue = [start];
-  for (let q = 0; q < queue.length && prev[end] < 0; q++) {
-    const cur = queue[q];
-    const [cc, cr] = [cur % cols, Math.floor(cur / cols)];
-    for (const [dc, dr] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]) {
-      const [nc, nr] = [cc + dc, cr + dr];
-      const n = nr * cols + nc;
-      if (!ok(nc, nr) || prev[n] >= 0) continue;
-      if (dc && dr && !(ok(cc + dc, cr) && ok(cc, cr + dr))) continue; // 모서리를 비스듬히 뚫고 가지 않는다
-      prev[n] = cur;
-      queue.push(n);
-    }
-  }
-  if (prev[end] < 0) return [];
-  const path: number[][] = [];
-  for (let n = end; n !== start; n = prev[n]) path.push([((n % cols) + 0.5) * CELL, (Math.floor(n / cols) + 0.5) * CELL]);
-  return path.reverse();
-}
-/** 누른 곳(지도 px)으로 격자 길을 찾아 걸어간다. 대상(친구 · 가판대) 위면 닿았을 때 연다 — 이미 곁이면 다음 프레임에 바로 */
-export function walkTo(s: VillageState, x: number, y: number, then: Target | null) {
-  const [tx, ty] = then ? targetAt(s, then) : [x, y];
-  s.goal = { x, y, then, stuck: 0, path: findPath(s.cat.x, s.cat.y, tx, ty) };
-}
-/** 곁에 있는 친구 · 가판대면 연다 — 손가락은 걷지 않고 말 걸기만 (2026-10-12 사용자 — 이동은 조이스틱으로만). 멀면 아무것도 안 하고 false */
+/** 곁에 있는 친구 · 가판대면 연다 — 누르기 · 클릭은 말 걸기만, 걷기는 WASD · 조이스틱으로만
+ *  (2026-10-12 사용자 — 빈 곳을 누르면 그리로 걸어가던 터치 이동을 뺐다, 마우스도 같이). 멀면 아무것도 안 하고 false */
 export function talkTo(s: VillageState, t: Target | null) {
   if (!t || gap(s, ...targetAt(s, t)) >= data.reach) return false;
-  s.goal = { x: s.cat.x, y: s.cat.y, then: t, stuck: 0, path: [] };
+  s.talk = t;
   return true;
 }
 /** 누른 곳(지도 px)의 대상 — 친구(몸 · 이름표 · 머리 위 말풍선 둘레, 겹치면 가로로 가장 가까운 친구) · 요리집 앞 가판대 둘레.

@@ -85,7 +85,7 @@ import { drawTimber, timberFx } from './timber-draw.ts';
 import { chaseFx, chaseReady, chaseView, drawChase } from './chase-draw.ts';
 import { burn, drawVillage, drawVillagePanel, finishPlay, openVillagePanel, resetVillageView, toyX, villageKey, villagePoints, villageReady, villageTap, villageView, type VillageAct } from './village-draw.ts';
 import { updateToy, type ToyEvent } from './toys.ts';
-import { FRIENDS, fromVillageSave, hello, makeVillage, talkTo, targetAtPoint, tickRequests, updateCook, updateVillage, walkTo, type VillageSave, type VillageState } from './village.ts';
+import { FRIENDS, fromVillageSave, hello, makeVillage, talkTo, targetAtPoint, tickRequests, updateCook, updateVillage, type VillageSave, type VillageState } from './village.ts';
 import { CHASE, makeChase, updateChase, type ChaseEvent, type ChaseState } from './chase.ts';
 import { makeTimber, TIMBER, updateTimber, type Side, type TimberEvent, type TimberState } from './timber.ts';
 import { buttonAt, controls, drawControls, followStick, onStick, safe, stickBase, stickVector, ui, type ButtonId } from './touch.ts';
@@ -398,7 +398,7 @@ canvas.addEventListener('pointerdown', (e) => {
       return;
     }
     if (!stick && onStick(c, p.x, p.y)) return void grabStick(c, e.pointerId, p);
-    return villageWalk(p, e.pointerType !== 'mouse');
+    return villageTalk(p);
   }
   if (scene === 'timber') {
     const btn = miniButtonAt(innerWidth, innerHeight, p.x, p.y, miniDone());
@@ -509,7 +509,7 @@ function release(e: PointerEvent) {
     stick = null;
     const w = tap && scene === 'field' ? portalAt(at.x, at.y) : null;
     if (w) warpTo(w);
-    if (tap && scene === 'village') villageWalk(at, e.pointerType !== 'mouse'); // 조이스틱 자리라도 톡 누르면 곁에 있는 친구 · 가판대에 말 걸기
+    if (tap && scene === 'village') villageTalk(at); // 조이스틱 자리라도 톡 누르면 곁에 있는 친구 · 가판대에 말 걸기
   }
   if (panelSwipe?.id === e.pointerId) {
     const q = pos(e);
@@ -1337,15 +1337,12 @@ function toySound(e: ToyEvent) {
   else if (e.type === 'swap') sfxBox();
   else if (e.type === 'hide' || e.type === 'pick') sfxPop();
 }
-/** 마을 장면을 눌렀다 (CSS px): 마우스는 친구 · 가판대 위면 걸어가서 열고, 아니면 그리로 걸어간다.
- *  손가락은 걷지 않는다 — 곁에 있는 친구 · 가판대에 말 걸기만 (2026-10-12 사용자 — 이동은 조이스틱으로만) */
-function villageWalk(p: Pt, finger: boolean) {
+/** 마을 장면을 눌렀다 (CSS px) — 곁에 있는 친구 · 가판대에 말 걸기만. 걷기는 WASD · 조이스틱으로만 (2026-10-12 사용자 — 빈 곳을 누르면 그리로 걸어가던 터치 이동을 뺐다) */
+function villageTalk(p: Pt) {
   const d = Math.min(devicePixelRatio, 2);
   const x = (p.x * d - villageView.ox) / villageView.sc;
   const y = (p.y * d - villageView.oy) / villageView.sc;
-  const t = targetAtPoint(village, x, y);
-  if (finger) talkTo(village, t);
-  else walkTo(village, x, y, t);
+  talkTo(village, targetAtPoint(village, x, y));
 }
 /** 마을 창에서 한 일 → 소리 · 감정 · 저장 */
 function onVillageAct(a: VillageAct) {

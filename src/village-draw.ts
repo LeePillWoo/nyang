@@ -8,7 +8,6 @@ import { image } from './assets.ts';
 import { button, drawCoin, drawIcon, header, itemCell, toast, useLines } from './bag-draw.ts';
 import { count, ITEMS, type Bag } from './bag.ts';
 import { CAT_FPS, CAT_ROW } from './cat.ts';
-import field from './data/field.json' with { type: 'json' };
 import CATS from './data/village-cats.json' with { type: 'json' };
 import { drawEmote } from './emote.ts';
 import { drawLeave, drawPill, miniLayout, type MiniButton } from './mini-draw.ts';
@@ -52,7 +51,6 @@ import {
   type VillageState,
 } from './village.ts';
 
-const V = field.vertical;
 type R = { x: number; y: number; w: number; h: number };
 const inR = (r: R, x: number, y: number) => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
 
@@ -298,14 +296,6 @@ export function drawVillage(ctx: CanvasRenderingContext2D, cw: number, ch: numbe
     },
   });
   things.sort((a, b) => a.y - b.y).forEach((o) => o.draw());
-  // 저절로 걸어가는 곳 표시
-  if (s.goal && !s.goal.then) {
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
-    ctx.lineWidth = C * 0.05;
-    ctx.beginPath();
-    ctx.ellipse(s.goal.x, s.goal.y, C * 0.35, C * 0.35 * V, 0, 0, Math.PI * 2);
-    ctx.stroke();
-  }
 
   // HUD
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
