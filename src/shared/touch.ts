@@ -1,7 +1,7 @@
 // 화면 크기 대응 · 터치 조작. 좌표는 전부 CSS px (캔버스 실제 픽셀이 아니라) — 포인터 좌표와 바로 맞댄다.
 //  - ui(): 화면이 작으면 HUD·버튼을 줄이고 크면 키우는 배율
 //  - safe(): 노치·홈 막대를 피할 여백 (CSS env(safe-area-inset-*))
-//  - 터치 조작: 왼쪽 아래 영역의 떠다니는 조이스틱(필드·던전·미로 — 그 영역 어디를 눌러도 그 자리에 생긴다), 던전 오른쪽 아래 구르기 버튼 (냥펀치는 자동),
+//  - 터치 조작: 왼쪽 아래 영역의 떠다니는 조이스틱(필드·던전·미로·마을 — 그 영역 어디를 눌러도 그 자리에 생긴다), 던전 · 훈련장 오른쪽 아래 구르기 버튼 (냥펀치는 자동),
 //    샌드보드 ◀ · 점프 · ▶. 모서리에 붙이지 않고 화면 크기에 비례해 조금 안쪽으로 (2026-10-07 사용자 요청 — 엄지로 누르기 편하게)
 //  - 필드 도감 버튼은 터치가 아니어도 보인다 (마우스로도 누른다)
 
@@ -60,7 +60,7 @@ export type Button = { id: ButtonId; x: number; y: number; r: number; label: str
 export type Stick = { x: number; y: number; r: number; zone: { x0: number; y0: number; x1: number; y1: number } };
 /** k = HUD 배율 (그리기용) */
 export type Controls = { stick: Stick | null; buttons: Button[]; k: number };
-export type Scene = 'field' | 'dungeon' | 'fishing' | 'maze' | 'sandboard' | 'timber' | 'chase' | 'village';
+export type Scene = 'field' | 'dungeon' | 'fishing' | 'maze' | 'sandboard' | 'timber' | 'chase' | 'village' | 'dogtown' | 'training';
 
 /** 도감 버튼 (알약) 크기 — Button.r 은 폭의 절반 */
 const DEX = { w: 84, h: 36 };
@@ -78,7 +78,7 @@ export function controls(w: number, h: number, scene: Scene, touch: boolean): Co
     pill('bag', 1, 56, '🎒 가방');
   }
   if (scene === 'dungeon') pill('bag', 0, 122, '🎒 가방'); // 체력·경험치 판(14, 14, 높이 100) 밑
-  if (scene === 'village') pill('bag', 0, 82, '🎒 가방'); // 마을 알약(두 줄) 밑
+  if (scene === 'village' || scene === 'dogtown') pill('bag', 0, 82, '🎒 가방'); // 마을 알약(두 줄) 밑
   if (!touch || scene === 'fishing') return { stick: null, buttons, k };
   // 엄지로 누르는 것들은 모서리에서 조금 안쪽으로 (inset)
   const r = Math.round(60 * k);
@@ -88,6 +88,8 @@ export function controls(w: number, h: number, scene: Scene, touch: boolean): Co
   const px = w - s.r - ins.x - pr;
   const py = h - s.b - ins.y - pr;
   if (scene === 'dungeon') buttons.push({ id: 'dash', x: px, y: py, r: pr, label: '구르기' }); // 냥펀치는 자동
+  // 훈련장: 허수아비는 눌러서 치고, 구르기 버튼만 (조이스틱 없음)
+  if (scene === 'training') return { stick: null, buttons: [...buttons, { id: 'dash', x: px, y: py, r: pr, label: '구르기' }], k };
   if (scene === 'sandboard') {
     // 샌드보드는 좌우만 — ◀ (왼쪽) · 점프 (가운데) · ▶ (오른쪽), 한 줄로 (2026-10-07 사용자 요청)
     const ar = Math.round(46 * k);

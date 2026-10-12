@@ -30,13 +30,35 @@ export type ItemDef = { name: string; type: ItemType; desc: string; price: numbe
 export const ITEMS = itemData as Record<string, ItemDef>;
 export const isEquip = (id: string) => SLOTS.includes(ITEMS[id]?.type as Slot);
 
-export type Stack = { id: string; n: number };
+// ── 장비 강화 (강아지마을 대장간, 2026-10-12) ── 장비 한 점마다 강화 점수 fp — 망치질 한 번에 별 1~3점, per 점마다 +1 (최대 +max).
+// 강화 한 번마다 늘어나는 능력치 = 원래 능력치의 bonus 배 (적어도 1) — 양수 능력치만 (도토리 망치의 이동 -5 는 그대로), 가방 칸(bag)은 늘지 않는다
+export const FORGE = { per: 3, max: 5, bonus: 0.25 };
+export const MAX_FP = FORGE.per * FORGE.max;
+/** 강화 단계 (+0 ~ +5) */
+export const forgeLevel = (fp = 0) => Math.min(FORGE.max, Math.floor(fp / FORGE.per));
+/** 강화까지 친 이 장비의 능력치 */
+export function itemStats(id: string, fp = 0): Partial<Stats> {
+  const base = ITEMS[id]?.stats ?? {};
+  const lv = forgeLevel(fp);
+  if (!lv) return base;
+  const out: Partial<Stats> = { ...base };
+  for (const k of STAT_KEYS) {
+    const v = base[k] ?? 0;
+    if (v > 0 && k !== 'bag') out[k] = v + Math.max(lv, Math.round(v * FORGE.bonus * lv));
+  }
+  return out;
+}
+
+/** fp = 장비의 강화 점수 (장비만) */
+export type Stack = { id: string; n: number; fp?: number };
 export type Buff = { id: string; stats: Partial<Stats>; left: number };
 export type Bag = {
   coins: number;
   /** 가방 칸 (null = 빈 칸). 길이 = 기본 칸 + 장비의 bag */
   slots: (Stack | null)[];
   equip: Partial<Record<Slot, string>>;
+  /** 끼고 있는 장비의 강화 점수 (칸마다) */
+  fp: Partial<Record<Slot, number>>;
   buffs: Buff[];
   /** 지금까지 얻은 개수 (아이템 도감) — 팔거나 버려도 줄지 않는다 */
   found: Record<string, number>;
@@ -52,18 +74,19 @@ export function makeBag(): Bag {
     coins: 0,
     slots: Array(BAG_SIZE).fill(null),
     equip: { weapon: 'equipment_01', rod: 'equipment_25' },
+    fp: {},
     buffs: [],
     found: { equipment_01: 1, equipment_25: 1 },
   };
 }
 
-/** 장비 능력치 합 (+ buffs 면 먹은 것의 잠깐 능력치도) */
+/** 장비 능력치 합 — 강화까지 (+ buffs 면 먹은 것의 잠깐 능력치도) */
 export function stats(b: Bag, buffs = true): Stats {
   const s = zero();
   const add = (o?: Partial<Stats>) => {
     for (const k of STAT_KEYS) s[k] += o?.[k] ?? 0;
   };
-  for (const id of Object.values(b.equip)) if (id) add(ITEMS[id]?.stats);
+  for (const slot of SLOTS) if (b.equip[slot]) add(itemStats(b.equip[slot]!, b.fp[slot]));
   if (buffs) for (const f of b.buffs) add(f.stats);
   return s;
 }
@@ -104,8 +127,8 @@ export function room(b: Bag, id: string): number {
   const max = isEquip(id) ? 1 : MAX_STACK;
   return b.slots.reduce((t, s) => t + (!s ? max : s.id === id ? max - s.n : 0), 0);
 }
-/** 팔 때 값 (살 때의 절반, 최소 1) */
-export const sellPrice = (id: string) => Math.max(1, Math.floor(ITEMS[id].price / 2));
+/** 팔 때 값 (살 때의 절반, 최소 1 — 강화한 장비는 +1 마다 절반만큼 더) */
+export const sellPrice = (id: string, fp = 0) => Math.max(1, Math.floor((ITEMS[id].price / 2) * (1 + forgeLevel(fp) / 2)));
 /** 상점에서 n 개 산다 (자리만큼만). 안 되면 까닭 */
 export function buy(b: Bag, id: string, n = 1): string | null {
   const k = Math.min(n, room(b, id), Math.floor(b.coins / ITEMS[id].price));
@@ -119,7 +142,7 @@ export function sellAt(b: Bag, i: number, n = 1): number {
   const s = b.slots[i];
   if (!s) return 0;
   const k = Math.min(n, s.n);
-  b.coins += sellPrice(s.id) * k;
+  b.coins += sellPrice(s.id, s.fp) * k;
   removeAt(b, i, k);
   return k;
 }
@@ -155,33 +178,46 @@ export function equipAt(b: Bag, i: number): string | null {
   if (!s || !isEquip(s.id)) return '장비가 아니에요';
   const slot = ITEMS[s.id].type as Slot;
   const old = b.equip[slot];
+  const oldFp = b.fp[slot];
   b.equip[slot] = s.id;
-  b.slots[i] = old ? { id: old, n: 1 } : null;
+  setFp(b, slot, s.fp);
+  b.slots[i] = old ? withFp({ id: old, n: 1 }, oldFp) : null;
   if (overflow(b)) {
     // 배낭을 벗어 칸이 줄었는데 넘치는 칸에 물건이 있다 → 되돌린다
     b.slots[i] = s;
     b.equip[slot] = old;
+    setFp(b, slot, oldFp);
     fit(b);
     return '가방 끝 칸을 먼저 비워 주세요';
   }
   fit(b);
   return null;
 }
+/** 강화 점수가 있으면 붙인다 (0 은 안 적는다 — 저장이 가볍게) */
+const withFp = (s: Stack, fp?: number): Stack => (fp ? { ...s, fp } : s);
+function setFp(b: Bag, slot: Slot, fp?: number) {
+  if (fp) b.fp[slot] = fp;
+  else delete b.fp[slot];
+}
 /** 장비를 벗어 가방에 넣는다 */
 export function unequip(b: Bag, slot: Slot): string | null {
   const id = b.equip[slot];
   if (!id) return null;
+  const fp = b.fp[slot];
   delete b.equip[slot];
   if (overflow(b)) {
     b.equip[slot] = id;
     return '가방 끝 칸을 먼저 비워 주세요';
   }
   fit(b);
-  if (addItem(b, id) > 0) {
+  const free = b.slots.findIndex((v) => !v);
+  if (free < 0) {
     b.equip[slot] = id;
     fit(b);
     return '가방이 가득 찼어요';
   }
+  b.slots[free] = withFp({ id, n: 1 }, fp);
+  setFp(b, slot);
   return null;
 }
 /** 칸 수보다 뒤에 물건이 남았나 */
@@ -245,23 +281,30 @@ export function fromSave(v: unknown): Bag {
   if (!v || typeof v !== 'object') return b;
   const o = v as Partial<Bag>;
   if (Number.isFinite(o.coins)) b.coins = Math.max(0, Math.floor(o.coins!));
+  const fpOk = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? Math.max(0, Math.min(MAX_FP, Math.floor(v))) : 0);
   if (o.equip && typeof o.equip === 'object') {
     b.equip = {};
     for (const slot of SLOTS) {
       const id = o.equip[slot];
-      if (typeof id === 'string' && ITEMS[id]?.type === slot) b.equip[slot] = id;
+      if (typeof id === 'string' && ITEMS[id]?.type === slot) {
+        b.equip[slot] = id;
+        setFp(b, slot, fpOk(o.fp?.[slot]));
+      }
     }
   }
   fit(b);
   // 자리는 그대로 (빈 칸도). 칸이 모자라면 남는 건 앞의 빈 칸으로
   const ok = (s: Stack | null | undefined): s is Stack => !!s && typeof s.id === 'string' && !!ITEMS[s.id] && Number.isFinite(s.n) && s.n > 0;
   const saved = Array.isArray(o.slots) ? o.slots : [];
-  const clean = (s: Stack): Stack => ({ id: s.id, n: Math.min(isEquip(s.id) ? 1 : MAX_STACK, Math.floor(s.n)) });
+  const clean = (s: Stack): Stack => (isEquip(s.id) ? withFp({ id: s.id, n: 1 }, fpOk(s.fp)) : { id: s.id, n: Math.min(MAX_STACK, Math.floor(s.n)) });
   saved.forEach((s, i) => {
     if (ok(s) && i < b.slots.length) b.slots[i] = clean(s);
   });
   saved.forEach((s, i) => {
-    if (ok(s) && i >= b.slots.length) addItem(b, s.id, clean(s).n);
+    if (!ok(s) || i < b.slots.length) return;
+    const free = isEquip(s.id) ? b.slots.findIndex((v) => !v) : -1;
+    if (free >= 0) b.slots[free] = clean(s);
+    else addItem(b, s.id, clean(s).n);
   });
   if (Array.isArray(o.buffs)) b.buffs = o.buffs.filter((f) => ITEMS[f?.id]?.use?.buff && f.left > 0).map((f) => ({ id: f.id, stats: ITEMS[f.id].use!.buff!, left: f.left }));
   // 도감: 저장된 게 있으면 그대로, 없으면(도감 전 저장) 지금 가진 것·낀 것으로 채운다

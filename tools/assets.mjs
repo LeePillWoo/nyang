@@ -232,21 +232,23 @@ if (sandSrc.every((f) => fs.existsSync(f)) && (all || !fs.existsSync(SAND_OUT) |
   console.log(`  샌드보드 좌표  src/data/sandboard-atlas.json (프레임 ${Object.keys(frames).length})`);
 }
 
-// 마을 친구 시트 좌표 art/characters/npcs/village_cats/atlas.json → src/data/village-cats.json
-//   id → { name, file(확장자 없이), anims: { idle · solo_play · angry · affection · hungry · bored · sulk · sleep → { fps, loop, f: [[x, y, w, h, 발 px, 발 py] …] } } }
+// 마을 주민 시트 좌표 art/characters/npcs/village_cats · village_dogs /atlas.json → src/data/village-cats.json · village-dogs.json
+//   id → { name, file(확장자 없이), anims: { 동작 → { fps, loop, f: [[x, y, w, h, 발 px, 발 py] …] } } }
+//   고양이: idle · solo_play · angry · affection · hungry · bored · sulk · sleep, 강아지: idle · walk · greet · job_a · job_b · job_c · affection · sleep
 //   atlas 의 file 경로(…/social/…)는 실제 자리와 달라 파일 이름만 쓴다. 칸은 명목 181px 이지만 행마다 잘린 rect 가 달라 rect 를 그대로 옮긴다
-const CATS_ATLAS = path.join(ART, 'characters/npcs/village_cats/atlas.json');
-const CATS_OUT = path.join(ROOT, 'src/data/village-cats.json');
-if (fs.existsSync(CATS_ATLAS) && (all || !fs.existsSync(CATS_OUT) || fs.statSync(CATS_ATLAS).mtimeMs > fs.statSync(CATS_OUT).mtimeMs)) {
-  const atlas = JSON.parse(fs.readFileSync(CATS_ATLAS, 'utf8').replace(/^﻿/, ''));
-  const out = {};
+for (const [kind, label] of [['cats', '마을 고양이'], ['dogs', '마을 강아지']]) {
+  const src = path.join(ART, `characters/npcs/village_${kind}/atlas.json`);
+  const out = path.join(ROOT, `src/data/village-${kind}.json`);
+  if (!fs.existsSync(src) || (!all && fs.existsSync(out) && fs.statSync(src).mtimeMs <= fs.statSync(out).mtimeMs)) continue;
+  const atlas = JSON.parse(fs.readFileSync(src, 'utf8').replace(/^﻿/, ''));
+  const res = {};
   for (const sh of atlas.sheets) {
     const anims = {};
     for (const a of sh.animations) anims[a.id] = { fps: a.fps, loop: a.loop, f: a.frames.map((fr) => [...fr.rect, ...fr.pivotPx.map((v) => Math.round(v))]) };
-    out[sh.id] = { name: sh.name, file: 'characters/npcs/village_cats/' + path.basename(sh.file).replace(/.png$/, ''), anims };
+    res[sh.id] = { name: sh.name, file: `characters/npcs/village_${kind}/` + path.basename(sh.file).replace(/.png$/, ''), anims };
   }
-  fs.writeFileSync(CATS_OUT, JSON.stringify(out).replace(/\]\],"/g, ']],\n"') + '\n');
-  console.log(`  마을 친구 좌표  src/data/village-cats.json (${Object.keys(out).length}마리)`);
+  fs.writeFileSync(out, JSON.stringify(res).replace(/\]\],"/g, ']],\n"') + '\n');
+  console.log(`  ${label} 좌표  src/data/village-${kind}.json (${Object.keys(res).length}마리)`);
 }
 
 // 기술 이펙트 art/effects/skills_8x8/atlas.json → src/data/skill-fx.json (8×8 균등 격자, 칸 128px)

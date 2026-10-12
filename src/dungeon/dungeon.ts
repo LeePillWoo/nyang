@@ -91,7 +91,7 @@ export type Wave = {
 /** 소리용 사건. 한 프레임 동안만 남는다 */
 export type DungeonEvent =
   | { type: 'hit'; finish: boolean }
-  | { type: 'pop'; kind: Kind }
+  | { type: 'pop'; kind: Kind; elite: boolean }
   | { type: 'hurt' }
   | { type: 'loot'; coin: boolean }
   | { type: 'full' }
@@ -441,7 +441,7 @@ export function strike(d: Dungeon, e: Enemy, dmg: number, fromX: number, fromZ: 
     d.stats.kills++;
     if (e.elite) d.stats.elites++;
     addFx(d, e.x, e.z, (d.room.def.popFx as FxId) ?? 'burst', e.elite ? 480 : 333);
-    d.events.push({ type: 'pop', kind: e.kind });
+    d.events.push({ type: 'pop', kind: e.kind, elite: e.elite });
     dropLoot(d, e);
     dropBones(d, e);
     if (e.elite) shakeBy(d, SHAKE_FINISH);

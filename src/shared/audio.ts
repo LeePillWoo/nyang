@@ -225,6 +225,13 @@ export const sfxHiss = () => burst('highpass', 2800, 0.6, 0.12, 0.38, 5200);
 export const sfxSwirl = () => burst('bandpass', 600, 1.1, 0.1, 0.34, 1700);
 /** 둥 — 충격파 */
 export const sfxRing = () => tone('sine', 320, 110, 0.14, 0.24);
+/** 땡 — 대장간 망치질 (잘 맞으면 맑게, 헛망치는 둔하게) */
+export function sfxAnvil(good: boolean) {
+  if (!good) return sfxThud();
+  tone('triangle', 1560, 1480, 0.12, 0.35);
+  tone('sine', 2340, 2200, 0.06, 0.25);
+  burst('highpass', 3000, 0.5, 0.06, 0.05, 6000);
+}
 /** 톡 — 털실 올가미 */
 export const sfxSnare = () => tone('sine', 480, 820, 0.07, 0.12);
 /** 탁 — 빙글 상자가 부딪힐 때 */

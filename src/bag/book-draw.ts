@@ -17,6 +17,8 @@ import { PLACE_COLOR, PLACE_ICON, PLACE_NAME, placeKind, type PlaceKind } from '
 import { drawFrame, type Sheet } from '../shared/sheet.ts';
 import { ROOMS_OF, SOURCES } from './sources.ts';
 import { fitText, safe, wrapText } from '../shared/touch.ts';
+import { DOGS, type DogSave } from '../village/dogtown.ts';
+import { rankOf } from '../village/guild.ts';
 import { FRIENDS, hearts, knownRecipes, RECIPES, type VillageSave } from '../village/village.ts';
 
 export type BookCat = 'fish' | 'monster' | 'item' | 'map';
@@ -30,6 +32,8 @@ export type BookData = {
   sheet: (kind: string) => Sheet | null;
   records: Record<string, number | null>;
   village: VillageSave;
+  /** 강아지마을 기록 (길드 등급 · 배달 · 보물 · 구조 …) */
+  dog: DogSave;
   here: number[];
   /** 지도의 장소로 바로 가기 (필드 · 마을 · 낚시터에서만 — 없으면 버튼이 안 보인다) */
   travel?: (id: string) => void;
@@ -107,7 +111,12 @@ const friendsMade = (v: VillageSave) => FRIENDS.filter((fr) => hearts(v.friends[
 /** 전체 탭의 사이트맵 — 줄을 누르면 그 탭으로 (필드 · 잠긴 곳은 글만) */
 const SITE: { icon: string; tab?: string; title: () => string; line: (d: BookData) => string }[] = [
   { icon: '🏡', tab: 'home', title: () => '마을 · 고양이마을', line: (d) => `요리 · 친구 사귀기 · 친해진 친구 ${friendsMade(d.village)}/${FRIENDS.length} · 요리법 ${knownRecipes(d.village).length}/${RECIPES.length}` },
-  { icon: '🛒', tab: 'home', title: () => `상점 · ${shop.name}`, line: () => `강아지마을 · 물건 ${shop.stock.length}가지 · 요리 재료도` },
+  {
+    icon: '🐶',
+    tab: 'home',
+    title: () => '마을 · 강아지마을',
+    line: (d) => `모험가 길드 등급 ${rankOf(d.dog.guild.gp).name} · 의뢰 ${d.dog.guild.done}건 · 대장간 · ${shop.name} · 우체국 · 탐험가 · 훈련장 · 구조대`,
+  },
   {
     icon: '⚔️',
     tab: 'dungeon',
@@ -607,7 +616,7 @@ function placeNote(p: Place, d: BookData) {
     const v = d.records[p.to];
     return v == null ? `기록 없음 · ${p.label}` : `최고 ${MINI_INFO[p.to].best(v)}`;
   }
-  if (p.kind === 'village') return `친구 ${friendsMade(d.village)}/${FRIENDS.length}`;
+  if (p.kind === 'village') return p.to === 'dogtown' ? `길드 ${rankOf(d.dog.guild.gp).name}` : `친구 ${friendsMade(d.village)}/${FRIENDS.length}`;
   return p.label;
 }
 /** 지도 옆 판 — 전체: 사이트맵 · 종류 탭: 장소 목록 · 고른 곳: 설명 */
@@ -722,6 +731,11 @@ function placeDetail(ctx: CanvasRenderingContext2D, L: BL, p: Place, d: BookData
     para(info.about, '#7a6656');
     para(v == null ? '최고 기록: 아직 없어요' : `최고 기록: ${info.best(v)}`, v == null ? '#b09a85' : '#3e9a45', 16, 'bold ');
     if (p.to === 'maze' && d.records.whale != null) para(`고래 배 속 미로: ${d.records.whale}초`, '#3f7fbf', 15, 'bold ');
+  } else if (p.kind === 'village' && p.to === 'dogtown') {
+    para(`강아지 주민 ${DOGS.length}마리가 저마다 일을 맡아요 — ${DOGS.map((g) => g.label.replace(/^\S+\s/, '')).join(' · ')}`, '#7a6656');
+    para(`길드 등급 ${rankOf(d.dog.guild.gp).name} · ${d.dog.guild.gp}점 · 마친 의뢰 ${d.dog.guild.done}건`, '#3e9a45', 16, 'bold ');
+    para(`배달 ${d.dog.posted} · 보물 ${d.dog.dug} · 구조 ${d.dog.rescued} · 망치질 ${d.dog.forged} · 훈련 ${d.dog.trained}`, '#9a7b62', 15, 'bold ');
+    para(`${shop.name}: 물건 ${shop.stock.length}가지 · 팔 땐 절반 값 · 요리 재료도`, '#3f7fbf', 15, 'bold ');
   } else if (p.kind === 'village') {
     para(`요리 가판대에서 요리하고, 친구 ${FRIENDS.length}에게 먹여 주거나 놀아 주며 친해져요. 가끔 먹고 싶은 요리를 부탁해요`, '#7a6656');
     para(`친해진 친구 ${friendsMade(d.village)}/${FRIENDS.length} · 요리법 ${knownRecipes(d.village).length}/${RECIPES.length}`, '#3e9a45', 16, 'bold ');

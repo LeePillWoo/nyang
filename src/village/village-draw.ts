@@ -7,17 +7,16 @@
 import { image } from '../shared/assets.ts';
 import { button, drawCoin, drawIcon, header, itemCell, toast, useLines } from '../bag/bag-draw.ts';
 import { count, ITEMS, type Bag } from '../bag/bag.ts';
-import { CAT_FPS, CAT_ROW } from '../shared/cat.ts';
 import CATS from '../data/village-cats.json' with { type: 'json' };
 import { drawEmote } from '../shared/emote.ts';
 import { drawLeave, drawPill, miniLayout, type MiniButton } from '../shared/mini-draw.ts';
-import { drawFrame, type Sheet } from '../shared/sheet.ts';
+import { type Sheet } from '../shared/sheet.ts';
 import { shortcut, type Shortcut } from '../bag/sources.ts';
-import { fitText, safe, wrapText } from '../shared/touch.ts';
+import { fitText, wrapText } from '../shared/touch.ts';
+import { bubble, cardLayout, closeX, drawCut, drawTownCat, drawTownGround, fitX, heartText, inR, panelLayout, sheetBg, signLabel, type Atlas, type PL, type R } from './town-draw.ts';
 import { drawToyGame, fromX, slotAt, toyLayout, type Pose } from './toys-draw.ts';
 import { isToy, makeToy, TOY_IDS, toyMove, toyPick, toyPress, TOYS, type ToyGame, type ToyId } from './toys.ts';
 import {
-  BLOCKS,
   C,
   canCook,
   digestIn,
@@ -51,18 +50,14 @@ import {
   type VillageState,
 } from './village.ts';
 
-type R = { x: number; y: number; w: number; h: number };
-const inR = (r: R, x: number, y: number) => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
-
 // ── 배경 · 주민 시트 ──
 const BG = image(VILLAGE.image);
-type CatAtlas = { name: string; file: string; anims: Record<string, { fps: number; loop: boolean; f: number[][] }> };
-const ATLAS = CATS as Record<string, CatAtlas>;
+const ATLAS = CATS as Record<string, Atlas>;
 export const villageReady = Promise.all([BG.ready, ...Object.values(ATLAS).map((a) => image(a.file).ready)]);
 /** 주민 그림 배율 — 시트 칸(181)에서 고양이가 약 96px: 치즈 키 C 의 1.3배 × 품종 size */
 const villagerScale = (f: Friend) => (C * 1.3 * f.size) / 96;
 /** 지금 동작의 컷 — 대기는 되풀이, 한 번 하는 동작은 마지막 컷에서 머물고, 잠은 3컷 뒤 숨쉬기 되풀이, 배고픔은 생각풍선 컷(1~4)을 오간다 */
-function frameOf(a: CatAtlas, p: Townie) {
+function frameOf(a: Atlas, p: Townie) {
   const an = a.anims[p.anim] ?? a.anims.idle;
   const n = an.f.length;
   const k = Math.floor(p.animT * an.fps);
@@ -83,80 +78,19 @@ function drawVillager(ctx: CanvasRenderingContext2D, f: Friend, p: Townie, x: nu
   ctx.ellipse(x, y, C * 0.36 * f.size, C * 0.13 * f.size, 0, 0, Math.PI * 2);
   ctx.fill();
   if (!im.complete || !im.naturalWidth) return y - C;
-  const [sx, sy, sw, sh, px, py] = frameOf(a, p);
-  ctx.save();
-  ctx.translate(x, y - z);
-  ctx.scale(p.flip, 1);
-  ctx.drawImage(im, sx, sy, sw, sh, -px * k, -py * k, sw * k, sh * k);
-  ctx.restore();
-  return y - z - (py - 34) * k;
+  const cut = frameOf(a, p);
+  drawCut(ctx, im, cut, x, y - z, k, p.flip);
+  return y - z - (cut[5] - 34) * k;
 }
 /** 친구의 한 컷 (놀이 창) — 발밑 (x, y) · 키 h(px) · 동작 줄 · 컷 · 보는 쪽 */
 const poseOf =
   (f: Friend): Pose =>
   (ctx, x, y, h, anim, frame, flip = 1) => {
     const a = ATLAS[f.sheet];
-    const im = image(a.file).img;
-    if (!im.complete || !im.naturalWidth) return;
     const an = a.anims[anim] ?? a.anims.idle;
-    const [sx, sy, sw, sh, px, py] = an.f[Math.max(0, Math.min(an.f.length - 1, frame))];
-    const k = (h / 96) * f.size;
-    ctx.save();
-    ctx.translate(x, y);
-    ctx.scale(flip, 1);
-    ctx.drawImage(im, sx, sy, sw, sh, -px * k, -py * k, sw * k, sh * k);
-    ctx.restore();
+    drawCut(ctx, image(a.file).img, an.f[Math.max(0, Math.min(an.f.length - 1, frame))], x, y, (h / 96) * f.size, flip);
   };
-/** 치즈 (발밑 x, y · 키 k px) — 필드 고양이 시트. 돌려주는 것: 정수리 높이 */
-function drawCat(ctx: CanvasRenderingContext2D, sh: Sheet, x: number, y: number, k: number, flip: number, moving: boolean, animT: number) {
-  const row = moving ? CAT_ROW.run : CAT_ROW.idle;
-  const col = Math.floor(animT * (moving ? CAT_FPS.run : CAT_FPS.idle)) % 6;
-  const size = (k * sh.base) / sh.bodyH;
-  ctx.fillStyle = 'rgba(60, 45, 30, 0.25)';
-  ctx.beginPath();
-  ctx.ellipse(x, y, k * 0.34, k * 0.12, 0, 0, Math.PI * 2);
-  ctx.fill();
-  drawFrame(ctx, sh, row, col, x, y, size, flip);
-  const f = sh.frames[row]?.[col];
-  const s = (size / sh.base) * (sh.rowScale[row] ?? 1);
-  return f ? y + f.oy * s : y - k;
-}
 
-/** 화면에 보이는 곳 (지도 px) */
-type View = { x0: number; y0: number; x1: number; y1: number };
-/** 가운데 x, 반폭 half 인 것을 화면 안으로 (가장자리 pad) */
-const fitX = (vw: View, x: number, half: number, pad: number) => Math.max(vw.x0 + half + pad, Math.min(vw.x1 - half - pad, x));
-/** 말풍선 — 머리 위(꼬리 끝 x, y)에. 화면 위로 넘치면 발밑(꼬리 끝 x, y2)에, 옆으로 넘치면 화면 안으로 당긴다 */
-function bubble(ctx: CanvasRenderingContext2D, vw: View, x: number, y: number, y2: number, text: string, maxW: number, px: number, alpha = 1) {
-  ctx.save();
-  ctx.globalAlpha *= alpha;
-  ctx.font = `bold ${px}px system-ui, sans-serif`;
-  const lines = wrapText(ctx, text, maxW);
-  const w = Math.max(...lines.map((l) => ctx.measureText(l).width)) + px * 1.2;
-  const h = lines.length * px * 1.3 + px * 0.8;
-  const cx = fitX(vw, x, w / 2, px * 0.3);
-  const up = y - px * 0.6 - h >= vw.y0 + px * 0.3;
-  const by = up ? y - px * 0.6 - h : y2 + px * 0.6;
-  const tx = Math.max(cx - w / 2 + px, Math.min(cx + w / 2 - px, x));
-  const [tip, base] = up ? [y, by + h] : [y2, by];
-  ctx.fillStyle = 'rgba(255, 252, 244, 0.97)';
-  ctx.strokeStyle = 'rgba(120, 85, 55, 0.5)';
-  ctx.lineWidth = Math.max(1, px * 0.1);
-  ctx.beginPath();
-  ctx.roundRect(cx - w / 2, by, w, h, px * 0.6);
-  ctx.moveTo(tx - px * 0.4, base);
-  ctx.lineTo(tx, tip);
-  ctx.lineTo(tx + px * 0.4, base);
-  ctx.fill();
-  ctx.stroke();
-  ctx.fillStyle = '#5b4a3f';
-  ctx.textAlign = 'center';
-  lines.forEach((l, i) => ctx.fillText(l, cx, by + px * 1.25 + i * px * 1.3));
-  ctx.restore();
-}
-
-/** 하트 줄 ♥♥♡♡♡ */
-const heartText = (n: number) => '♥'.repeat(n) + '♡'.repeat(5 - n);
 const PREF_MARK: Record<Pref, string> = { love: '❤', like: '👍', normal: '🙂', dislike: '💧' };
 
 // ── 화면 상태 (창 · 고른 것 · 알림 · 선물 카드) ──
@@ -193,64 +127,10 @@ export function resetVillageView() {
 
 /** 장면 그리기 (창은 drawVillagePanel). debug = 걷는 영역 · 막힌 곳 보기 (G 키) */
 export function drawVillage(ctx: CanvasRenderingContext2D, cw: number, ch: number, s: VillageState, save: VillageSave, cat: Sheet, v: { t: number; dt: number; touch: boolean; hover: MiniButton; debug?: boolean }) {
-  const dpr = Math.min(devicePixelRatio, 2);
-  const w = cw / dpr;
-  const h = ch / dpr;
-  const [W, H] = VILLAGE.size;
-  // 화면에서 고양이 키(CSS px) — 그림을 확대하기 전 크기 그대로 (휴대폰 · 짧은 변 < 500 은 조금 크게, 아주 큰 화면은 조금 더 크게)
-  // 2026-10-08 밤 사용자: "마을이 꽉 차 보이게 그림을 확대해서 크롭, 캐릭터는 지금 크기" — 그림 1px 이 catCss ÷ C 배로 보인다 (unit 이 작을수록 그림이 크다)
-  const catCss = VILLAGE.catCss * Math.min(1.4, Math.max(Math.min(w, h) < 500 ? 1.15 : 0.95, Math.min(w / W, h / H)));
-  const sc = catCss / C;
-  const vw = w / sc;
-  const vh = h / sc;
-  // 카메라: 필드처럼 고양이를 부드럽게 따라가고(CAM_EASE 8) 그림 밖은 안 보이게 — 넘치는 곳은 걸어가면 보인다
-  const cam = (villageView.cam ??= { x: s.cat.x, y: s.cat.y - C * 0.5 });
-  const k = 1 - Math.exp(-8 * v.dt);
-  cam.x += (s.cat.x - cam.x) * k;
-  cam.y += (s.cat.y - C * 0.5 - cam.y) * k;
-  const cx = vw >= W ? W / 2 : Math.min(W - vw / 2, Math.max(vw / 2, cam.x));
-  const cy = vh >= H ? H / 2 : Math.min(H - vh / 2, Math.max(vh / 2, cam.y));
-  const ox = w / 2 - cx * sc;
-  const oy = h / 2 - cy * sc;
-  Object.assign(villageView, { sc: sc * dpr, ox: ox * dpr, oy: oy * dpr });
-  // 화면에 보이는 곳 (지도 px) — 이름표 · 말풍선 · 표지가 화면 밖으로 잘리지 않게 안으로 당긴다
-  const seen: View = { x0: -ox / sc, y0: -oy / sc, x1: (w - ox) / sc, y1: (h - oy) / sc };
-  const pad = 4 / sc;
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.fillStyle = '#9fcf7a';
-  ctx.fillRect(0, 0, cw, ch);
-  ctx.setTransform(sc * dpr, 0, 0, sc * dpr, ox * dpr, oy * dpr);
-  ctx.imageSmoothingQuality = 'high';
-  if (BG.img.complete && BG.img.naturalWidth) ctx.drawImage(BG.img, 0, 0, W, H);
-  if (v.debug) {
-    ctx.strokeStyle = 'rgba(0,160,255,0.9)';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    VILLAGE.walk.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
-    ctx.closePath();
-    ctx.stroke();
-    ctx.strokeStyle = 'rgba(255,40,40,0.9)';
-    for (const b of BLOCKS) {
-      ctx.beginPath();
-      if (b.type === 'rect') ctx.rect(b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0);
-      else ctx.ellipse(b.x, b.y, b.rx, b.ry, 0, 0, Math.PI * 2);
-      ctx.stroke();
-    }
-  }
+  // 바닥 · 카메라 (town-draw) — 화면에 보이는 곳(seen)은 말풍선 · 표지가 화면 밖으로 잘리지 않게 안으로 당기는 데 쓴다
+  const { seen, pad, dpr, w, h } = drawTownGround(ctx, cw, ch, VILLAGE as unknown as Parameters<typeof drawTownGround>[3], BG.img, s.cat, villageView, v.dt, v.debug);
   // 요리 가판대 표지 — 요리집 앞 간판
-  const [kx, ky] = VILLAGE.kitchenSign;
-  const glow = 0.6 + 0.4 * Math.sin(v.t * 3);
-  ctx.font = `bold ${C * 0.42}px system-ui, sans-serif`;
-  const label = '🍳 요리 가판대';
-  const lw = ctx.measureText(label).width + C * 0.5;
-  const lx = fitX(seen, kx, lw / 2, pad);
-  ctx.fillStyle = `rgba(255, 246, 220, ${0.85 + 0.1 * glow})`;
-  ctx.beginPath();
-  ctx.roundRect(lx - lw / 2, ky - C * 0.36, lw, C * 0.68, C * 0.34);
-  ctx.fill();
-  ctx.fillStyle = '#c0582c';
-  ctx.textAlign = 'center';
-  ctx.fillText(label, lx, ky + C * 0.14);
+  signLabel(ctx, seen, pad, VILLAGE.kitchenSign[0], VILLAGE.kitchenSign[1], C, '🍳 요리 가판대', v.t);
 
   // 주민 · 고양이 (아래 것을 나중에)
   type Thing = { y: number; draw: () => void };
@@ -291,7 +171,7 @@ export function drawVillage(ctx: CanvasRenderingContext2D, cw: number, ch: numbe
   things.push({
     y: s.cat.y,
     draw: () => {
-      drawCat(ctx, cat, s.cat.x, s.cat.y, C, s.cat.flip, s.cat.moving, s.cat.animT);
+      drawTownCat(ctx, cat, s.cat.x, s.cat.y, C, s.cat.flip, s.cat.moving, s.cat.animT);
       drawEmote(ctx, s.cat.x, s.cat.y - C * 1.25, C * 0.8);
     },
   });
@@ -305,18 +185,7 @@ export function drawVillage(ctx: CanvasRenderingContext2D, cw: number, ch: numbe
   drawLeave(ctx, L, v.hover, v.touch);
 }
 
-// ── 창 ──
-export function panelLayout(w: number, h: number) {
-  const wide = w >= h;
-  const DW = wide ? 1000 : 540;
-  const DH = wide ? 560 : 1040;
-  const sf = safe();
-  const aw = w - sf.l - sf.r;
-  const ah = h - sf.t - sf.b;
-  const k = Math.min(1.25, (aw - 24) / DW, (ah - 24) / DH);
-  return { wide, DW, DH, k, ox: sf.l + (aw - DW * k) / 2, oy: sf.t + (ah - DH * k) / 2, close: { x: DW - 84, y: 8, w: 76, h: 76 } as R };
-}
-type PL = ReturnType<typeof panelLayout>;
+// ── 창 (틀은 town-draw) ──
 /** 친구 창 자리 */
 function friendLayout(L: PL) {
   const cols = L.wide ? 8 : 6;
@@ -345,15 +214,6 @@ function kitchenLayout(L: PL) {
   const cook: R = L.wide ? { x: 676, y: 470, w: 288, h: 56 } : { x: 290, y: 956, w: 214, h: 56 };
   const gos = [0, 1, 2].map((i): R => (L.wide ? { x: 676, y: 322 + i * 46, w: 288, h: 40 } : { x: 30, y: 870 + i * 46, w: 250, h: 40 }));
   return { cards, detail, cook, gos };
-}
-/** 요리 · 선물 카드 자리 */
-function cardLayout(L: PL) {
-  const w = L.wide ? 640 : 500;
-  const h = L.wide ? 500 : 760;
-  const card: R = { x: (L.DW - w) / 2, y: (L.DH - h) / 2, w, h };
-  const ok: R = { x: card.x + w / 2 - 130, y: card.y + h - 76, w: 260, h: 58 };
-  const bar: R = { x: card.x + 50, y: card.y + h - (L.wide ? 170 : 250), w: w - 100, h: 40 };
-  return { card, ok, bar };
 }
 /** 놀이 고르기: 놀이 셋 (가로 화면은 나란히 · 세로는 위아래) */
 function toysLayout(L: PL) {
@@ -671,24 +531,6 @@ export function drawVillagePanel(ctx: CanvasRenderingContext2D, w: number, h: nu
   const ty = P?.kind === 'kitchen' ? kitchenLayout(L).cook.y - 52 : friendLayout(L).ask.y;
   toast(ctx, { wide: false, DW: L.DW, DH: L.DH, detail: { x: 0, y: ty + 54, w: 0, h: 0 } }, villageView.msg, villageView.msgT);
   ctx.restore();
-}
-
-function sheetBg(ctx: CanvasRenderingContext2D, L: PL) {
-  ctx.fillStyle = '#fffaf0';
-  ctx.beginPath();
-  ctx.roundRect(0, 0, L.DW, L.DH, 28);
-  ctx.fill();
-}
-function closeX(ctx: CanvasRenderingContext2D, L: PL) {
-  const c = L.close;
-  ctx.fillStyle = 'rgba(120,85,55,0.14)';
-  ctx.beginPath();
-  ctx.arc(c.x + c.w / 2, c.y + c.h / 2, 28, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = '#5b4a3f';
-  ctx.font = 'bold 30px system-ui, sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillText('✕', c.x + c.w / 2, c.y + c.h / 2 + 11);
 }
 
 function drawFriend(ctx: CanvasRenderingContext2D, L: PL, i: number, s: VillageState, save: VillageSave, b: Bag, now: number) {

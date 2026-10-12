@@ -9,8 +9,8 @@
  * 친구 기록(VillageSave)은 main 이 localStorage 에 둔다. 시간은 now(ms)로 받아 node 에서 체크된다 (그리기는 village-draw.ts). 수치는 data/village.json.
  */
 import { count, ITEMS, obtain, take, type Bag } from '../bag/bag.ts';
-import field from '../data/field.json' with { type: 'json' };
 import data from '../data/village.json' with { type: 'json' };
+import { gapTo, makeTownCat, townC, V, walkableIn, walkCat, type TownCat, type TownDef } from './town.ts';
 import { isToy, TOY_IDS, TOYS, type ToyId } from './toys.ts';
 
 export const VILLAGE = data;
@@ -254,27 +254,13 @@ export function serve(save: VillageSave, bag: Bag, c: Cook) {
   return c.served;
 }
 
-// ── 마을 걷기 ──
+// ── 마을 걷기 (town.ts — 강아지마을과 같이 쓴다) ──
+const TOWN = data as unknown as TownDef;
 /** 고양이 키 (마을 그림 px) — 거리 · 말 거는 거리 · 치즈 크기가 이 배수 */
-export const C = field.catBody * data.unit;
-const V = field.vertical;
-/** 마을에서 걷는 빠르기 (px/초) — 필드와 같은 몸 길이/초 */
-export const WALK = field.speed * data.unit * 0.9;
-type Block = { type: 'ellipse'; x: number; y: number; rx: number; ry: number } | { type: 'rect'; x0: number; y0: number; x1: number; y1: number };
-export const BLOCKS = data.blocks as unknown as (Block & { name: string })[];
-/** 다각형 안인가 (짝홀) */
-function inPoly(x: number, y: number, poly: number[][]) {
-  let inside = false;
-  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-    const [xi, yi] = poly[i];
-    const [xj, yj] = poly[j];
-    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
-  }
-  return inside;
-}
-const blocked = (x: number, y: number, b: Block) => (b.type === 'rect' ? x >= b.x0 && x <= b.x1 && y >= b.y0 && y <= b.y1 : ((x - b.x) / b.rx) ** 2 + ((y - b.y) / b.ry) ** 2 <= 1);
+export const C = townC(TOWN);
+export const BLOCKS = TOWN.blocks;
 /** 걸을 수 있는 곳: 마을 안(울타리 · 강 안쪽)이고 막힌 곳(집 · 분수 · 텃밭 · 연못 …)이 아닌 곳 */
-export const walkable = (x: number, y: number) => inPoly(x, y, data.walk) && !BLOCKS.some((b) => blocked(x, y, b));
+export const walkable = (x: number, y: number) => walkableIn(TOWN, x, y);
 export type Target = { kind: 'friend'; i: number } | { kind: 'kitchen' };
 /** 주민 동작 (시트 행) */
 export type Anim = 'idle' | 'solo_play' | 'angry' | 'affection' | 'hungry' | 'bored' | 'sulk' | 'sleep';
@@ -288,7 +274,7 @@ export const reactAnim = (pref: Pref): Anim => (pref === 'dislike' ? 'sulk' : pr
 /** 마을 주민 — 자기 자리(걷는 시트가 없다)에서 고양이가 오면 돌아보고, 심심하면 혼자 논다. say 는 머리 위 말풍선 */
 export type Townie = { x: number; y: number; flip: number; anim: Anim; animT: number; idleT: number; hop: number; say: string; sayT: number };
 export type VillageState = {
-  cat: { x: number; y: number; flip: number; moving: boolean; animT: number };
+  cat: TownCat;
   /** 곁에서 누른 친구 · 가판대 — 다음 프레임 처음에 연다 (누른 때 열면 프레임 처음에 지워졌다) */
   talk: Target | null;
   townies: Townie[];
@@ -301,9 +287,8 @@ export type VillageState = {
 };
 const idleEvery = (rng: () => number) => data.idle.every[0] + rng() * (data.idle.every[1] - data.idle.every[0]);
 export function makeVillage(rng: () => number = Math.random): VillageState {
-  const [x, y] = data.start;
   return {
-    cat: { x, y, flip: 1, moving: false, animT: 0 },
+    cat: makeTownCat(TOWN),
     talk: null,
     townies: FRIENDS.map((f) => ({ x: f.at[0], y: f.at[1], flip: f.at[0] < data.center[0] ? 1 : -1, anim: 'idle', animT: rng() * 3, idleT: idleEvery(rng), hop: 0, say: '', sayT: 0 })),
     near: null,
@@ -319,7 +304,7 @@ export function setAnim(p: Townie, a: Anim) {
   p.animT = 0;
 }
 /** 고양이에게서 (x, y) 까지 (고양이 키 배, 세로는 펴서) */
-const gap = (s: VillageState, x: number, y: number) => Math.hypot(x - s.cat.x, (y - s.cat.y) / V) / C;
+const gap = (s: VillageState, x: number, y: number) => gapTo(TOWN, s.cat, x, y);
 /** 대상의 자리 — 친구는 서 있는 곳, 가판대는 요리집 앞줄(kitchen 두 점)에서 고양이와 가장 가까운 점
  *  (2026-10-12 사용자 — 바짝 붙었는데 안 열렸다: 한 점이라 앞이 넓은 요리집의 화분 앞 · 건물 밑 끝에선 멀었다) */
 export const targetAt = (s: VillageState, t: Target): [number, number] => {
@@ -328,35 +313,17 @@ export const targetAt = (s: VillageState, t: Target): [number, number] => {
   const k = Math.max(0, Math.min(1, ((s.cat.x - x0) * (x1 - x0) + (s.cat.y - y0) * (y1 - y0)) / ((x1 - x0) ** 2 + (y1 - y0) ** 2)));
   return [x0 + (x1 - x0) * k, y0 + (y1 - y0) * k];
 };
-/** 걸어서 (ux, uy) 쪽으로 한 걸음 — 막히면 ±30° · 60° · 90° 로 비켜 간다. 움직였으면 true */
-function stepToward(s: VillageState, ux: number, uy: number, dt: number) {
-  const c = s.cat;
-  const d = WALK * dt;
-  const base = Math.atan2(uy, ux);
-  for (const k of [0, 0.5, -0.5, 1, -1, 1.5, -1.5]) {
-    const a = base + k;
-    const nx = c.x + Math.cos(a) * d;
-    const ny = c.y + Math.sin(a) * d * V;
-    if (!walkable(nx, ny)) continue;
-    [c.x, c.y] = [nx, ny];
-    if (Math.abs(Math.cos(a)) > 0.2) c.flip = Math.sign(Math.cos(a));
-    return true;
-  }
-  return false;
-}
 
 /** 한 프레임. mx, my = 화면 기준 -1..1 (WASD · 조이스틱), act = E · Space (가까운 것에 말 걸기). save · now 가 있으면 주민 바탕 동작(잠 · 배고픔)을 거기서 본다 */
 export function updateVillage(s: VillageState, input: { mx: number; my: number; act: boolean }, dt: number, save?: VillageSave, now = 0) {
   s.t += dt;
   s.open = null;
   const c = s.cat;
-  c.animT += dt;
   if (s.talk) {
     s.open = s.talk;
     s.talk = null;
   }
-  const len = Math.hypot(input.mx, input.my);
-  c.moving = len > 0 && stepToward(s, input.mx / len, input.my / len, dt);
+  walkCat(TOWN, c, input.mx, input.my, dt);
   // 주민: 자기 자리에서 고양이가 가까이 오면 돌아본다. 한 번 하는 동작이 끝나면 바탕 동작으로, 대기 중 심심하면 혼자 논다
   s.townies.forEach((p, i) => {
     p.animT += dt;

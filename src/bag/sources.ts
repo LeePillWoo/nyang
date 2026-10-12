@@ -53,7 +53,7 @@ const chance = (kind: string, id: string) => dropTable(kind).find(([v]) => v ===
 export type Shortcut = { warp: Warp; why: string };
 /**
  * 아이템을 얻으러 갈 가장 좋은 포탈 (열린 구역 안). from = 지금 자리(필드 지도 px) — 같은 종류면 가까운 곳.
- * 상점 물건 → 상점, 생선 → 가까운 낚시터, 던전 드롭 → 그 몬스터가 가장 잘 떨어뜨리는 열린 던전, 숲 재료 → 숲 미니게임장(도토리는 다람쥐 잡기), 건질 것 → 그 낚시터
+ * 상점 물건 → 강아지마을(고등어 상점), 생선 → 가까운 낚시터, 던전 드롭 → 그 몬스터가 가장 잘 떨어뜨리는 열린 던전, 숲 재료 → 숲 미니게임장(도토리는 다람쥐 잡기), 건질 것 → 그 낚시터
  */
 export function shortcut(id: string, from: number[] = FIELD.warps.find((w) => w.to === 'village')?.at ?? FIELD.start): Shortcut | null {
   const s = SOURCES[id];
@@ -61,7 +61,7 @@ export function shortcut(id: string, from: number[] = FIELD.warps.find((w) => w.
   const open = openWarps();
   const nearest = (list: Warp[]) => list.sort((a, b) => dist(a, from) - dist(b, from))[0];
   if (s.shop) {
-    const w = open.find((v) => v.to === 'shop');
+    const w = open.find((v) => v.to === 'dogtown');
     if (w) return { warp: w, why: `${shop.name}에서 팔아요` };
   }
   if (s.fish) {

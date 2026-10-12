@@ -8,8 +8,10 @@ import {
   buy,
   count,
   equipAt,
+  forgeLevel,
   isEquip,
   ITEMS,
+  itemStats,
   PAGE,
   removeAt,
   sellAt,
@@ -307,8 +309,8 @@ export function bagTap(w: number, h: number, x: number, y: number, b: Bag, env: 
   return null;
 }
 
-/** 칸 하나: 바탕(희귀도 테두리) · 아이콘 · 개수 */
-export function itemCell(ctx: CanvasRenderingContext2D, r: R, id: string | null, n: number, on: boolean, label = '', labelColor = '#9a7b62') {
+/** 칸 하나: 바탕(희귀도 테두리) · 아이콘 · 개수 · 강화 단계(up, 왼쪽 위 +N) */
+export function itemCell(ctx: CanvasRenderingContext2D, r: R, id: string | null, n: number, on: boolean, label = '', labelColor = '#9a7b62', up = 0) {
   const d = id ? ITEMS[id] : null;
   ctx.fillStyle = d ? '#ffffff' : 'rgba(120,85,55,0.08)';
   ctx.beginPath();
@@ -330,6 +332,15 @@ export function itemCell(ctx: CanvasRenderingContext2D, r: R, id: string | null,
     ctx.strokeText(String(n), r.x + r.w - 6, ny);
     ctx.fillStyle = '#5b4a3f';
     ctx.fillText(String(n), r.x + r.w - 6, ny);
+  }
+  if (id && up > 0) {
+    ctx.font = 'bold 15px system-ui, sans-serif';
+    ctx.textAlign = 'left';
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = 'rgba(255,255,255,0.95)';
+    ctx.strokeText(`+${up}`, r.x + 6, r.y + 18);
+    ctx.fillStyle = '#d4574a';
+    ctx.fillText(`+${up}`, r.x + 6, r.y + 18);
   }
   if (label) {
     ctx.textAlign = 'center';
@@ -386,7 +397,7 @@ export function drawBag(ctx: CanvasRenderingContext2D, w: number, h: number, b: 
 
   const pick = bagView.pick;
   // 장비 칸
-  SLOTS.forEach((slot, i) => itemCell(ctx, L.slots[i], b.equip[slot] ?? null, 1, pick?.at === 'slot' && pick.slot === slot, SLOT_NAME[slot]));
+  SLOTS.forEach((slot, i) => itemCell(ctx, L.slots[i], b.equip[slot] ?? null, 1, pick?.at === 'slot' && pick.slot === slot, SLOT_NAME[slot], undefined, forgeLevel(b.fp[slot])));
 
   // 능력치: 기본 + 장비·먹은 것 (더해진 만큼 초록)
   const st = stats(b);
@@ -416,7 +427,7 @@ export function drawBag(ctx: CanvasRenderingContext2D, w: number, h: number, b: 
   bagView.page = Math.min(bagView.page, pages(b) - 1);
   L.cells.forEach((r, c) => {
     const i = bagView.page * PAGE + c;
-    if (i < b.slots.length) itemCell(ctx, r, b.slots[i]?.id ?? null, b.slots[i]?.n ?? 0, pick?.at === 'bag' && pick.i === i);
+    if (i < b.slots.length) itemCell(ctx, r, b.slots[i]?.id ?? null, b.slots[i]?.n ?? 0, pick?.at === 'bag' && pick.i === i, '', undefined, forgeLevel(b.slots[i]?.fp));
   });
   pager(ctx, L, b);
 
@@ -475,8 +486,10 @@ function detailBox(ctx: CanvasRenderingContext2D, D: R, empty: string | null) {
  * 아이템 설명: 아이콘 · 이름 · 종류 · 능력치·효과 + extra 줄 · 설명 (bottom 위까지).
  * 가로 화면(좁은 칸)은 위에서 아래로 쌓고, 세로 화면은 아이콘 오른쪽에 글
  */
-function itemInfo(ctx: CanvasRenderingContext2D, D: R, wide: boolean, id: string, extra: [string, string][], bottom: number) {
+function itemInfo(ctx: CanvasRenderingContext2D, D: R, wide: boolean, id: string, extra: [string, string][], bottom: number, fp = 0) {
   const d = ITEMS[id];
+  const lv = forgeLevel(fp);
+  const st = itemStats(id, fp);
   const r = rareOf(d);
   const icon = wide ? { x: D.x + D.w / 2, y: D.y + 54, s: 84 } : { x: D.x + 64, y: D.y + 64, s: 96 };
   ctx.fillStyle = '#ffffff';
@@ -492,13 +505,13 @@ function itemInfo(ctx: CanvasRenderingContext2D, D: R, wide: boolean, id: string
   let y = wide ? D.y + 136 : D.y + 44;
   ctx.textAlign = wide ? 'center' : 'left';
   ctx.fillStyle = '#5b4a3f';
-  fitText(ctx, d.name, tx, y, tw, 24, 'bold ');
+  fitText(ctx, lv ? `${d.name} +${lv}` : d.name, tx, y, tw, 24, 'bold ');
   y += 26;
   ctx.fillStyle = r.color;
-  fitText(ctx, `${TYPE_NAME[d.type]}${d.rare && d.rare > 1 ? ' · ' + r.name : ''}`, tx, y, tw, 16, 'bold ');
+  fitText(ctx, `${TYPE_NAME[d.type]}${d.rare && d.rare > 1 ? ' · ' + r.name : ''}${lv ? ` · 대장간 강화 +${lv}` : ''}`, tx, y, tw, 16, 'bold ');
   y += 28;
   const lines: [string, string][] = [];
-  if (d.stats) for (const k of STAT_KEYS) if (d.stats[k]) lines.push([statText(k, d.stats[k]!), d.stats[k]! > 0 ? '#3e9a45' : '#d4574a']);
+  for (const k of STAT_KEYS) if (st[k]) lines.push([statText(k, st[k]!), st[k]! > 0 ? '#3e9a45' : '#d4574a']);
   for (const l of useLines(d)) lines.push([l, '#3f7fbf']);
   for (const [text, color] of [...lines, ...extra]) {
     ctx.fillStyle = color;
@@ -529,12 +542,16 @@ function drawDetail(ctx: CanvasRenderingContext2D, L: ReturnType<typeof bagLayou
   // 장비를 고르면 지금 낀 것과 비교
   const extra: [string, string][] = [];
   const d = ITEMS[id];
-  const now = isEquip(id) && bagView.pick?.at === 'bag' ? b.equip[d.type as Slot] : undefined;
+  const p = bagView.pick!;
+  const fp = p.at === 'bag' ? b.slots[p.i]?.fp : b.fp[p.slot];
+  const now = isEquip(id) && p.at === 'bag' ? b.equip[d.type as Slot] : undefined;
   if (now) {
-    const diff = STAT_KEYS.map((k) => [k, (d.stats?.[k] ?? 0) - (ITEMS[now].stats?.[k] ?? 0)] as const).filter(([, v]) => v);
+    const a = itemStats(id, fp);
+    const was = itemStats(now, b.fp[d.type as Slot]);
+    const diff = STAT_KEYS.map((k) => [k, (a[k] ?? 0) - (was[k] ?? 0)] as const).filter(([, v]) => v);
     extra.push([`지금 ${ITEMS[now].name}보다 ` + (diff.length ? diff.map(([k, v]) => statText(k, v)).join(' · ') : '같아요'), '#9a7b62']);
   }
-  itemInfo(ctx, L.detail, L.wide, id, extra, L.main.y - 8);
+  itemInfo(ctx, L.detail, L.wide, id, extra, L.main.y - 8, fp);
   const label = mainLabel(b);
   if (label) button(ctx, L.main, label, 'main');
   if (bagView.pick?.at === 'bag') button(ctx, L.drop, bagView.sure ? '정말 버릴까요?' : '버리기', bagView.sure ? 'warn' : 'soft');
@@ -579,7 +596,7 @@ export function header(ctx: CanvasRenderingContext2D, L: { DW: number; close: R 
   ctx.fillText('✕', c.x + c.w / 2, c.y + c.h / 2 + 11);
 }
 
-// ── 고등어 상점 ── 필드 강아지마을 포탈(to: "shop"). 사기 = 상점 물건(data/shop.json stock)을 값에, 팔기 = 가방 물건을 절반 값에.
+// ── 고등어 상점 ── 강아지마을 고등어 아저씨에게 말을 걸면 (2026-10-12 — 전엔 필드 포탈 to: "shop"). 사기 = 상점 물건(data/shop.json stock)을 값에, 팔기 = 가방 물건을 절반 값에.
 // 화면은 가방 창과 같은 틀: 제목·냥코인·✕ · 사기/팔기 탭 · 칸 (값 표시) · 고른 것 설명과 버튼
 export const shopView = { mode: 'buy' as 'buy' | 'sell', pick: null as number | null, sure: false, msg: '', msgT: 0 };
 export function resetShopView() {
@@ -689,7 +706,8 @@ export function drawShop(ctx: CanvasRenderingContext2D, w: number, h: number, b:
   items.forEach((id, c) => {
     const i = slotOf(c);
     const n = buyMode ? 0 : (b.slots[i]?.n ?? 0);
-    itemCell(ctx, L.cells[c], id, n, shopView.pick === i, id ? `${buyMode ? ITEMS[id].price : sellPrice(id)}냥` : '', '#c98a1c');
+    const fp = buyMode ? 0 : b.slots[i]?.fp;
+    itemCell(ctx, L.cells[c], id, n, shopView.pick === i, id ? `${buyMode ? ITEMS[id].price : sellPrice(id, fp)}냥` : '', '#c98a1c', forgeLevel(fp));
   });
   if (!buyMode) pager(ctx, L, b);
   // 고른 것
@@ -698,13 +716,14 @@ export function drawShop(ctx: CanvasRenderingContext2D, w: number, h: number, b:
   detailBox(ctx, L.detail, id ? null : buyMode ? '사고 싶은 물건을 누르세요' : '팔 물건을 누르세요');
   if (id && i !== null) {
     const n = b.slots[i]?.n ?? 0;
-    const extra: [string, string][] = [[buyMode ? `값 ${ITEMS[id].price}냥 · 가진 것 ${count(b, id)}개` : `팔면 ${sellPrice(id)}냥 · 도감엔 남아요`, '#c98a1c']];
-    itemInfo(ctx, L.detail, L.wide, id, extra, L.main.y - 8);
+    const fp = buyMode ? 0 : b.slots[i]?.fp;
+    const extra: [string, string][] = [[buyMode ? `값 ${ITEMS[id].price}냥 · 가진 것 ${count(b, id)}개` : `팔면 ${sellPrice(id, fp)}냥 · 도감엔 남아요`, '#c98a1c']];
+    itemInfo(ctx, L.detail, L.wide, id, extra, L.main.y - 8, fp);
     if (buyMode) {
       button(ctx, L.main, `사기 ${ITEMS[id].price}냥`, 'main');
       if (!isEquip(id)) button(ctx, L.drop, `5개 사기 ${ITEMS[id].price * 5}냥`, 'soft');
     } else {
-      button(ctx, L.main, shopView.sure ? '정말 팔까요?' : `1개 팔기 +${sellPrice(id)}냥`, shopView.sure ? 'warn' : 'main');
+      button(ctx, L.main, shopView.sure ? '정말 팔까요?' : `1개 팔기 +${sellPrice(id, fp)}냥`, shopView.sure ? 'warn' : 'main');
       if (!isEquip(id) && n > 1) button(ctx, L.drop, `모두 팔기 +${sellPrice(id) * n}냥`, 'soft');
     }
   }

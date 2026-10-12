@@ -6,6 +6,10 @@ import icons from '../data/item-icons.json' with { type: 'json' };
 import {
   addItem,
   BAG_SIZE,
+  FORGE,
+  forgeLevel,
+  itemStats,
+  MAX_FP,
   PAGE,
   count,
   dropTable,
@@ -229,6 +233,34 @@ const seeded = (seed: number) => () => {
     assert.ok(s.salvage?.length, `${k} 건질 것`);
     for (const [id] of s.salvage as [string, number][]) assert.ok(ITEMS[id], `${k} 건질 것 ${id}`);
   }
+}
+
+// 대장간 강화 점수(fp, 2026-10-12): 장비를 따라다닌다 — 끼기 · 벗기 · 저장 왕복 · 파는 값 · 능력치 (+1 마다 max(단계, 기본 × 25% × 단계), 가방 칸은 그대로)
+{
+  const b = makeBag();
+  const id = b.equip.weapon!;
+  const base = ITEMS[id].stats!.atk!;
+  assert.equal(itemStats(id, 0).atk, base);
+  assert.equal(itemStats(id, 3).atk, base + Math.max(1, Math.round(base * FORGE.bonus)), '+1');
+  assert.equal(itemStats(id, MAX_FP).atk, base + Math.max(FORGE.max, Math.round(base * FORGE.bonus * FORGE.max)), '+5');
+  assert.equal(itemStats('equipment_31', MAX_FP).bag, ITEMS.equipment_31.stats!.bag, '가방 칸은 강화로 늘지 않는다');
+  b.fp.weapon = 6;
+  const atk = stats(b).atk;
+  assert.equal(unequip(b, 'weapon'), null);
+  const at = b.slots.findIndex((s) => s?.id === id);
+  assert.equal(b.slots[at]!.fp, 6, '벗으면 가방 칸에 강화 점수 그대로');
+  assert.equal(b.fp.weapon, undefined);
+  assert.ok(sellPrice(id, 6) > sellPrice(id), '강화한 장비는 비싸게 팔린다');
+  obtain(b, 'equipment_02');
+  assert.equal(equipAt(b, b.slots.findIndex((s) => s?.id === 'equipment_02')), null);
+  assert.equal(equipAt(b, b.slots.findIndex((s) => s?.id === id)), null, '다시 끼면');
+  assert.equal(b.fp.weapon, 6, '강화 점수가 따라온다');
+  assert.equal(stats(b).atk, atk);
+  assert.equal(b.slots.find((s) => s?.id === 'equipment_02')!.fp, undefined, '바꿔 낀 장비는 강화 안 됨 그대로');
+  const back = fromSave(JSON.parse(JSON.stringify(b)));
+  assert.equal(back.fp.weapon, 6, '저장 왕복');
+  assert.equal(fromSave({ ...JSON.parse(JSON.stringify(b)), fp: { weapon: 999 } }).fp.weapon, MAX_FP, '이상한 점수는 +5 까지');
+  assert.equal(forgeLevel(MAX_FP + 9), FORGE.max);
 }
 
 console.log('bag.check: ok');

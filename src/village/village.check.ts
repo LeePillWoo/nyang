@@ -511,7 +511,7 @@ const mixed = (seed: number) => {
     assert.ok(go && !warpLocked(go.warp) && go.warp.to, `${ITEMS[id].name} 가지러 갈 곳 (${go?.warp.label} — ${go?.why})`);
   }
   assert.equal(placeKind(shortcut('cook_fish')!.warp.to), 'fish', `생선은 가까운 낚시터 (${shortcut('cook_fish')!.warp.label})`);
-  assert.equal(shortcut('cook_milk')!.warp.to, 'shop', '우유는 상점');
+  assert.equal(shortcut('cook_milk')!.warp.to, 'dogtown', '우유는 강아지마을 고등어 상점');
   assert.ok(['dungeon', 'mini'].includes(placeKind(shortcut('materials_05')!.warp.to)), '도토리는 던전이나 다람쥐 잡기');
   const by = (id: string) => FIELD.warps.find((w) => w.id === id)!;
   assert.equal(by('stone_bridge').to, '', '돌다리는 던전에서 뺐다');

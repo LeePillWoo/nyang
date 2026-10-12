@@ -49,6 +49,7 @@ import {
   sfxRustle,
   sfxChirp,
   sfxBonk,
+  sfxAnvil,
   unlockAudio,
 } from './shared/audio.ts';
 import { cardAt, cardRects, drawCards, drawResult, resultButtonAt, resultPoint, skillFxReady, type ResultButton } from './dungeon/skills-draw.ts';
@@ -85,10 +86,37 @@ import { drawTimber, timberFx } from './mini/timber-draw.ts';
 import { chaseFx, chaseReady, chaseView, drawChase } from './mini/chase-draw.ts';
 import { burn, drawVillage, drawVillagePanel, finishPlay, openVillagePanel, resetVillageView, toyX, villageKey, villagePoints, villageReady, villageTap, villageView, type VillageAct } from './village/village-draw.ts';
 import { updateToy, type ToyEvent } from './village/toys.ts';
-import { FRIENDS, fromVillageSave, hello, makeVillage, talkTo, targetAtPoint, tickRequests, updateCook, updateVillage, type VillageSave, type VillageState } from './village/village.ts';
+import { FRIENDS, fromVillageSave, hello, makeVillage, setAnim, talkTo, targetAtPoint, tickRequests, updateCook, updateVillage, type VillageSave, type VillageState } from './village/village.ts';
+import {
+  dogKey,
+  dogPoints,
+  dogTap,
+  dogtownReady,
+  dogView,
+  drawDogPanel,
+  drawDogtown,
+  drawFieldMarks,
+  drawMiniMarks,
+  drawRope,
+  hammering,
+  hammerStep,
+  openDogPanel,
+  resetDogView,
+  ropePoints,
+  ropeTap,
+  type DogAct,
+  type FieldMark,
+  type RopeRes,
+  type RopeTap,
+} from './village/dogtown-draw.ts';
+import { deliver, dig, digSpot, dogAtPoint, dogOf, DOGS, dogTalkTo, fromDogSave, makeDogtown, rescueDone, rescueSpot, setDogAnim, spotNear, tickRescue, updateDogtown, type Call, type DogSave, type DogtownState } from './village/dogtown.ts';
+import { noteGuild, type GuildEvent } from './village/guild.ts';
+import { makeRope, updateRope, type Rope } from './village/rope.ts';
+import { drawTraining, dummyAt, dummyPoint, resetTrainFx, trainFx, trainingReady } from './mini/training-draw.ts';
+import { makeTraining, TRAIN, updateTraining, type Dir, type TrainEvent, type TrainState } from './mini/training.ts';
 import { CHASE, makeChase, updateChase, type ChaseEvent, type ChaseState } from './mini/chase.ts';
 import { makeTimber, TIMBER, updateTimber, type Side, type TimberEvent, type TimberState } from './mini/timber.ts';
-import { buttonAt, controls, drawControls, followStick, onStick, safe, stickBase, stickVector, ui, type ButtonId } from './shared/touch.ts';
+import { buttonAt, controls, drawControls, fitText, followStick, onStick, safe, stickBase, stickVector, ui, type ButtonId } from './shared/touch.ts';
 
 const canvas = document.createElement('canvas');
 const ctx = canvas.getContext('2d')!;
@@ -133,6 +161,14 @@ let jumpQueued = false;
 const chops: Side[] = [];
 /** 마을: E · Space (이번 프레임에 말 걸기) */
 let villageAct = false;
+/** 강아지마을: E · Space (이번 프레임에 말 걸기) */
+let dogAct = false;
+/** 훈련장 — 이번 프레임에 친 방향들 · 구르기 */
+const punches: Dir[] = [];
+let rollQueued = false;
+/** 구조 로프 (필드에서 ❗ 자리에 닿으면) — 당기는 동안 필드는 멈춘다. 이번 프레임에 누른 쪽들 */
+let rope: { r: Rope; call: Call; res: RopeRes } | null = null;
+const pulls: (-1 | 1)[] = [];
 /** 가방 · 상점 창을 옆으로 밀어 쪽 넘기기 */
 let panelSwipe: { id: number; x: number; y: number } | null = null;
 addEventListener('keydown', (e) => {
@@ -155,6 +191,16 @@ addEventListener('keydown', (e) => {
   if (scene === 'village' && (villageView.panel || villageView.gifts.length)) {
     keys.add(e.code); // 놀이(깃털)는 누르고 있는 키로 움직인다
     if (!e.repeat) onVillageAct(villageKey(e.code, village, vsave, bag, Date.now()));
+    return;
+  }
+  // 강아지마을 창 (주민 · 망치질) — 열려 있으면 키를 먹는다
+  if (scene === 'dogtown' && dogView.panel) {
+    if (!e.repeat) onDogAct(dogKey(e.code, dogtown, dsave, bag, Date.now()));
+    return;
+  }
+  // 구조 로프 (필드) — A · ← / D · → 번갈아, 끝나면 Enter · Esc
+  if (rope) {
+    if (!e.repeat) ropeKey(e.code);
     return;
   }
   // 결과창: Enter · Space · E · Esc = 필드로, R = 다시 도전 (다른 키는 먹는다)
@@ -188,6 +234,17 @@ addEventListener('keydown', (e) => {
   if (scene === 'village') {
     if (e.code === 'Escape') backToField();
     else if (!e.repeat && (e.code === 'KeyE' || e.code === 'Space' || e.code === 'Enter')) villageAct = true;
+  }
+  if (scene === 'dogtown') {
+    if (e.code === 'Escape') backToField();
+    else if (!e.repeat && (e.code === 'KeyE' || e.code === 'Space' || e.code === 'Enter')) dogAct = true;
+  }
+  if (scene === 'training') {
+    const dir = ({ KeyW: 0, ArrowUp: 0, KeyD: 1, ArrowRight: 1, KeyS: 2, ArrowDown: 2, KeyA: 3, ArrowLeft: 3 } as Record<string, Dir>)[e.code];
+    if (e.code === 'Escape') leaveTraining();
+    else if (e.code === 'KeyR' && !e.repeat) restartMini();
+    else if (!e.repeat && dir !== undefined) punches.push(dir);
+    else if (!e.repeat && e.code === 'Space') rollQueued = true;
   }
   if (scene === 'timber') {
     if (e.code === 'Escape') backToField();
@@ -231,6 +288,8 @@ const miniDone = () =>
       ? timber.phase === 'done' && timber.doneT >= TIMBER.cardDelay // 장작 패기는 맞는 모습을 보여 준 뒤
       : scene === 'chase'
         ? chase.phase === 'done' && chase.doneT >= CHASE.cardDelay
+      : scene === 'training'
+        ? training.phase === 'done' && training.doneT >= TRAIN.cardDelay
       : sand.phase === 'done' && sand.doneT >= SAND.cardDelay; // 샌드보드는 결승 뒤 미끄러지다 카드가 뜬 뒤부터
 /** 고래 배 속 미로 — 결과 카드에 다시 버튼이 없다 */
 const inWhale = () => scene === 'maze' && maze.theme === 'whale';
@@ -254,10 +313,11 @@ const pressing = new Map<number, ButtonId>();
 const ctl = () => controls(innerWidth, innerHeight, scene, touchOn);
 
 // ── 창: 물고기 도감 (필드 버튼 · 낚시터 도감 판 · B) · 가방 (필드·던전 버튼 · I). 열려 있는 동안 게임은 멈춘다
-// 'dex' = 도감 (물고기 · 몬스터 · 아이템), 'shop' = 고등어 상점 (필드 강아지마을 포탈)
+// 'dex' = 도감 (물고기 · 몬스터 · 아이템), 'shop' = 고등어 상점 (강아지마을 고등어 아저씨)
 let panel: 'dex' | 'bag' | 'shop' | null = null;
-const dexAllowed = () => !fadeTo && (scene !== 'fishing' || dexReady(fishing));
-const bagAllowed = () => !fadeTo && (scene === 'field' || scene === 'dungeon' || (scene === 'village' && !villageView.panel && !villageView.gifts.length));
+const dexAllowed = () => !fadeTo && !rope && (scene !== 'fishing' || dexReady(fishing));
+const bagAllowed = () =>
+  !fadeTo && !rope && (scene === 'field' || scene === 'dungeon' || (scene === 'village' && !villageView.panel && !villageView.gifts.length) || (scene === 'dogtown' && !dogView.panel));
 function openPanel(p: 'dex' | 'bag' | 'shop') {
   if (p === 'dex') scene === 'fishing' ? openBook('fish', fishing.spotId) : scene === 'dungeon' ? openBook('monster', groupOf(dungeon.enemies[0]?.kind ?? 'sword')) : openBook();
   if (p === 'bag') resetBagView();
@@ -345,6 +405,7 @@ canvas.addEventListener('pointerdown', (e) => {
     else if (r === 'travel' && bookView.go) travelTo(bookView.go);
     return;
   }
+  if (rope) return ropeAction(ropeTap(innerWidth, innerHeight, p.x, p.y, rope.r));
   if (scene === 'dungeon' && dungeon.result) {
     const b = resultButtonAt(innerWidth, innerHeight, p.x, p.y, Object.keys(dungeon.run.skills).length);
     if (b === 'leave') backToField();
@@ -399,6 +460,33 @@ canvas.addEventListener('pointerdown', (e) => {
     }
     if (!stick && onStick(c, p.x, p.y)) return void grabStick(c, e.pointerId, p);
     return villageTalk(p);
+  }
+  if (scene === 'dogtown') {
+    if (dogView.panel) return onDogAct(dogTap(innerWidth, innerHeight, p.x, p.y, dogtown, dsave, bag, Date.now()));
+    if (miniButtonAt(innerWidth, innerHeight, p.x, p.y, false) === 'leave') return backToField();
+    const c = ctl();
+    const b = buttonAt(c, p.x, p.y);
+    if (b) {
+      pressing.set(e.pointerId, b.id);
+      if (b.id === 'bag' && bagAllowed()) openPanel('bag');
+      return;
+    }
+    if (!stick && onStick(c, p.x, p.y)) return void grabStick(c, e.pointerId, p);
+    return dogTalk(p);
+  }
+  if (scene === 'training') {
+    const btn = miniButtonAt(innerWidth, innerHeight, p.x, p.y, miniDone());
+    if (btn === 'leave') return leaveTraining();
+    if (btn === 'again') return restartMini();
+    const b = buttonAt(ctl(), p.x, p.y);
+    if (b) {
+      pressing.set(e.pointerId, b.id);
+      if (b.id === 'dash') rollQueued = true;
+      return;
+    }
+    const d = dummyAt(innerWidth, innerHeight, p.x, p.y);
+    if (d !== null) punches.push(d);
+    return;
   }
   if (scene === 'timber') {
     const btn = miniButtonAt(innerWidth, innerHeight, p.x, p.y, miniDone());
@@ -477,7 +565,7 @@ canvas.addEventListener('pointermove', (e) => {
     canvas.style.cursor = fishHover ? 'pointer' : '';
     return;
   }
-  if (scene === 'maze' || scene === 'sandboard' || scene === 'timber' || scene === 'chase' || scene === 'village') {
+  if (scene === 'maze' || scene === 'sandboard' || scene === 'timber' || scene === 'chase' || scene === 'village' || scene === 'dogtown' || scene === 'training') {
     miniHover = miniButtonAt(innerWidth, innerHeight, p.x, p.y, miniDone(), inWhale());
     if (e.pointerType === 'mouse') canvas.style.cursor = miniHover ? 'pointer' : '';
     return;
@@ -510,6 +598,7 @@ function release(e: PointerEvent) {
     const w = tap && scene === 'field' ? portalAt(at.x, at.y) : null;
     if (w) warpTo(w);
     if (tap && scene === 'village') villageTalk(at); // 조이스틱 자리라도 톡 누르면 곁에 있는 친구 · 가판대에 말 걸기
+    if (tap && scene === 'dogtown') dogTalk(at);
   }
   if (panelSwipe?.id === e.pointerId) {
     const q = pos(e);
@@ -586,7 +675,7 @@ let dungeon: Dungeon;
 // ?maze · ?sandboard 면 그 미니게임에서 바로 시작한다 (검증용)
 const startRoom = query.get('dungeon') || 'alley';
 const startSpot = query.get('fishing') || 'lake_island_fishing';
-let scene: 'field' | 'dungeon' | 'fishing' | 'maze' | 'sandboard' | 'timber' | 'chase' | 'village' = query.has('dungeon')
+let scene: 'field' | 'dungeon' | 'fishing' | 'maze' | 'sandboard' | 'timber' | 'chase' | 'village' | 'dogtown' | 'training' = query.has('dungeon')
   ? 'dungeon'
   : query.has('fishing')
     ? 'fishing'
@@ -600,15 +689,21 @@ let scene: 'field' | 'dungeon' | 'fishing' | 'maze' | 'sandboard' | 'timber' | '
             ? 'chase'
             : query.has('village')
               ? 'village'
-              : 'field';
+              : query.has('dogtown')
+                ? 'dogtown'
+                : query.has('training')
+                  ? 'training'
+                  : 'field';
 let field: FieldState = makeFieldState(FIELD.start);
 // 지금 들어가 있는 던전·낚시터·미니게임 (나오면 그 포탈 앞으로)
-let roomId = scene === 'fishing' ? startSpot : scene === 'maze' || scene === 'sandboard' || scene === 'timber' || scene === 'chase' || scene === 'village' ? scene : startRoom;
+let roomId = scene === 'fishing' ? startSpot : scene === 'maze' || scene === 'sandboard' || scene === 'timber' || scene === 'chase' || scene === 'village' || scene === 'dogtown' || scene === 'training' ? scene : startRoom;
 let maze: MazeState = makeMaze();
 let sand: SandState = makeSandboard();
 let timber: TimberState = makeTimber();
 let chase: ChaseState = makeChase();
 let village: VillageState = makeVillage();
+let dogtown: DogtownState = makeDogtown();
+let training: TrainState = makeTraining();
 
 // 고양이마을 친구 기록 — 하트 · 입맛 · 부탁 · 아는 요리법. ponytail: localStorage (저장 M2 때 세이브로)
 const VILLAGE_KEY = 'nyang.village.v1';
@@ -622,6 +717,23 @@ const vsave: VillageSave = (() => {
 function saveVillage() {
   try {
     localStorage.setItem(VILLAGE_KEY, JSON.stringify(vsave));
+  } catch {
+    // 이번 판만
+  }
+}
+
+// 강아지마을 기록 — 길드(점수 · 의뢰) · 배달 · 보물 · 구조 · 대장간 · 훈련. ponytail: localStorage (저장 M2 때 세이브로)
+const DOG_KEY = 'nyang.dogtown.v1';
+const dsave: DogSave = (() => {
+  try {
+    return fromDogSave(JSON.parse(localStorage.getItem(DOG_KEY) ?? 'null'), Date.now());
+  } catch {
+    return fromDogSave(null, Date.now());
+  }
+})();
+function saveDog() {
+  try {
+    localStorage.setItem(DOG_KEY, JSON.stringify(dsave));
   } catch {
     // 이번 판만
   }
@@ -689,19 +801,20 @@ const bookData = (): BookData => ({
   sheet: (k) => sheets[k] ?? (enemySheet(k), null),
   records,
   village: vsave,
+  dog: dsave,
   here: [field.x, field.y],
   travel: canTravel() ? travelTo : undefined,
 });
 
-// 미니게임 기록 — 미로 최단 시간(초) · 고래 배 속 최단 시간(초) · 샌드보드 최고 점수 · 장작 패기 최고 토막 · 다람쥐 잡기 최고 점수
+// 미니게임 기록 — 미로 최단 시간(초) · 고래 배 속 최단 시간(초) · 샌드보드 최고 점수 · 장작 패기 최고 토막 · 다람쥐 잡기 최고 점수 · 훈련장 최고 점수
 const REC_KEY = 'nyang.minigames.v1';
-const records: { maze: number | null; whale: number | null; sandboard: number | null; timber: number | null; chase: number | null } = (() => {
+const records: { maze: number | null; whale: number | null; sandboard: number | null; timber: number | null; chase: number | null; training: number | null } = (() => {
   const num = (x: unknown) => (typeof x === 'number' && Number.isFinite(x) && x >= 0 ? x : null);
   try {
-    const v = JSON.parse(localStorage.getItem(REC_KEY) ?? '{}') as Partial<Record<'maze' | 'whale' | 'sandboard' | 'timber' | 'chase', unknown>>;
-    return { maze: num(v.maze), whale: num(v.whale), sandboard: num(v.sandboard), timber: num(v.timber), chase: num(v.chase) };
+    const v = JSON.parse(localStorage.getItem(REC_KEY) ?? '{}') as Partial<Record<'maze' | 'whale' | 'sandboard' | 'timber' | 'chase' | 'training', unknown>>;
+    return { maze: num(v.maze), whale: num(v.whale), sandboard: num(v.sandboard), timber: num(v.timber), chase: num(v.chase), training: num(v.training) };
   } catch {
-    return { maze: null, whale: null, sandboard: null, timber: null, chase: null };
+    return { maze: null, whale: null, sandboard: null, timber: null, chase: null, training: null };
   }
 })();
 function saveRecords() {
@@ -774,6 +887,25 @@ if (trace)
       get village() { return village; },
       villageSave: vsave,
       villageView,
+      get dogtown() { return dogtown; },
+      dogSave: dsave,
+      dogView,
+      /** 강아지마을 지도 좌표 (x, y) 의 화면 위치 (CSS px) */
+      dogScreen: (x: number, y: number) => {
+        const d = Math.min(devicePixelRatio, 2);
+        return { x: (dogView.ox + x * dogView.sc) / d, y: (dogView.oy + y * dogView.sc) / d };
+      },
+      /** 주민 i 앞 걸을 수 있는 자리 (마을 그림 px) */
+      dogSpot: (i: number) => spotNear(i),
+      /** 강아지마을 창에서 누를 곳 (CSS px) */
+      dogPoints: () => dogPoints(innerWidth, innerHeight),
+      get training() { return training; },
+      /** 훈련장 허수아비 가운데 (CSS px) */
+      dummyPoint: (d: Dir) => dummyPoint(innerWidth, innerHeight, d),
+      get rope() { return rope; },
+      ropePoints: () => ropePoints(innerWidth, innerHeight),
+      /** 화면 위 알림 (기다리는 것까지) */
+      get banners() { return banners.map((b) => b.text); },
       /** 마을 지도 좌표 (x, y) 의 화면 위치 (CSS px) */
       villageScreen: (x: number, y: number) => {
         const d = Math.min(devicePixelRatio, 2);
@@ -879,7 +1011,10 @@ if (trace)
 
 /** 숲에서 나온 것 → 가방 (못 넣으면 full — 그리기가 보고 떨어뜨린다) · 잡힌 다람쥐가 내놓은 냥코인 */
 function fieldLoot(e: FieldEvent) {
-  if (e.type === 'forage') e.full = obtain(bag, e.id) > 0;
+  if (e.type === 'forage') {
+    e.full = obtain(bag, e.id) > 0;
+    guildEvent({ type: 'forage' });
+  }
   else if (e.type === 'squirrel' && e.what === 'caught' && e.stash) {
     bag.coins += e.stash.coins;
     e.full = e.stash.items.map((id) => obtain(bag, id)).some((left) => left > 0);
@@ -915,6 +1050,7 @@ function dungeonSound(e: DungeonEvent) {
     sfxPop();
     monDex[e.kind] = (monDex[e.kind] ?? 0) + 1; // 몬스터 도감
     saveMonDex();
+    guildEvent({ type: 'kill', elite: e.elite });
   }
   else if (e.type === 'hurt') sfxHurt();
   else if (e.type === 'loot') (e.coin ? sfxCoin : sfxPickup)();
@@ -925,7 +1061,10 @@ function dungeonSound(e: DungeonEvent) {
   else if (e.type === 'level') sfxLevel();
   else if (e.type === 'wave') sfxWave(e.clear);
   else if (e.type === 'spawn') once(e.elite ? 'elite' : 'spawn', () => sfxSpawn(e.elite));
-  else if (e.type === 'result' && e.win) sfxLevel();
+  else if (e.type === 'result' && e.win) {
+    sfxLevel();
+    guildEvent({ type: 'clear' });
+  }
 }
 /** 같은 소리가 한꺼번에 몰리지 않게 (70ms 에 한 번) */
 const lastSfx = new Map<string, number>();
@@ -990,6 +1129,7 @@ function fishingEvent(e: FishEvent) {
         e.catch.isNew = !bag.found[e.catch.kind];
         e.catch.full = obtain(bag, e.catch.kind) > 0;
         saveBag();
+        guildEvent({ type: 'salvage' });
         say(e.catch.full ? 'frustration' : e.catch.isNew ? 'treasure_temptation' : 'pride', 2.4);
       } else {
         say(e.catch.isNew ? 'delight' : 'pride', 2.4);
@@ -999,6 +1139,7 @@ function fishingEvent(e: FishEvent) {
         const left = obtain(bag, 'cook_fish', n);
         Object.assign(e.catch, { food: n - left, foodFull: left > 0 });
         saveBag();
+        guildEvent({ type: 'fish', big: !!e.catch.big });
       }
       break;
     case 'fail':
@@ -1068,7 +1209,7 @@ function fieldMood(dt: number, now: number) {
   // 포탈 위: 낚시터면 군침, 던전이면 의욕, 아직 연결 전이면 갸웃
   const w = FIELD.warps.find((v) => inWarp(v, field.x, field.y));
   if (w && w.id !== mood.portal)
-    say(SPOTS[w.to] ? 'hunger' : w.to === 'shop' || w.to === 'village' ? 'delight' : w.to === 'maze' ? 'idea' : w.to === 'sandboard' ? 'rhythm' : w.to === 'timber' ? 'exertion' : w.to === 'chase' ? 'suspicion' : w.to ? 'determination' : 'question', 1.6);
+    say(SPOTS[w.to] ? 'hunger' : w.to === 'dogtown' || w.to === 'village' ? 'delight' : w.to === 'maze' ? 'idea' : w.to === 'sandboard' ? 'rhythm' : w.to === 'timber' ? 'exertion' : w.to === 'chase' ? 'suspicion' : w.to ? 'determination' : 'question', 1.6);
   mood.portal = w?.id ?? '';
   // 미개방 구역으로 밀면 갸웃 (2.5초에 한 번)
   if (field.events.some((e) => e.type === 'locked') && now - mood.lockT > 2.5) {
@@ -1233,12 +1374,50 @@ const enterVillage = () =>
     quiet();
     say('delight', 1.6);
     if (!vsave.met) {
-      Object.assign(village.townies[0], { say: '어서 오렴, 치즈! 요리 가판대에서 요리해서 친구들에게 먹여 주렴. 재료는 고등어 상점에도 있단다', sayT: 7 });
+      Object.assign(village.townies[0], { say: '어서 오렴, 치즈! 요리 가판대에서 요리해서 친구들에게 먹여 주렴. 재료는 강아지마을 고등어 상점에도 있단다', sayT: 7 });
       vsave.met = true;
       saveVillage();
     }
     sayHelp();
   });
+/** 강아지마을 — 광장 그림 · 주민 시트를 먼저. from = 그 주민 앞에서 (훈련장에서 돌아올 때 교관 앞) */
+const enterDogtown = (from = -1) =>
+  goTo(async () => {
+    step('강아지마을');
+    await dogtownReady;
+    scene = 'dogtown';
+    roomId = 'dogtown';
+    canvas.style.cursor = '';
+    dogtown = makeDogtown(Math.random, from);
+    resetDogView();
+    tickRescue(dsave, Date.now(), Math.random);
+    miniHover = null;
+    quiet();
+    say('delight', 1.6);
+    if (!dsave.met) {
+      note('🐶 강아지마을 — 모험가 길드에서 의뢰를 받고, 대장간 · 고등어 상점 · 우체국 · 탐험가 · 훈련장 · 구조대도 들러 봐요');
+      dsave.met = true;
+      saveDog();
+    }
+    sayHelp();
+  });
+/** 강아지마을 훈련장 — 교관 시트를 먼저. 나오면 교관 앞으로 */
+const enterTraining = () =>
+  goTo(async () => {
+    step('훈련장');
+    await trainingReady();
+    scene = 'training';
+    roomId = 'training';
+    canvas.style.cursor = '';
+    training = makeTraining();
+    punches.length = 0;
+    resetTrainFx();
+    miniHover = null;
+    quiet();
+    say('determination', 1.6);
+    sayHelp();
+  });
+const leaveTraining = () => enterDogtown(dogOf('training'));
 /** 숲 미니게임장 다람쥐 잡기 — 다람쥐 시트를 먼저 불러온다 */
 const enterChase = () =>
   goTo(async () => {
@@ -1258,6 +1437,11 @@ const restartMini = () =>
   goTo(() => {
     if (scene === 'maze') maze = makeMaze();
     else if (scene === 'chase') chase = makeChase();
+    else if (scene === 'training') {
+      training = makeTraining();
+      punches.length = 0;
+      resetTrainFx();
+    }
     else if (scene === 'timber') {
       timber = makeTimber();
       chops.length = 0;
@@ -1266,17 +1450,15 @@ const restartMini = () =>
     quiet();
     sayHelp();
   });
-/** 포탈 → 던전 · 낚시터 · 미니게임, 또는 상점 창 (장면은 그대로 — 한 번 벗어났다 와야 다시 열린다) */
+/** 포탈 → 던전 · 낚시터 · 미니게임 · 마을 */
 const enterPortal = (to: string) => {
   if (to === 'maze') return enterMaze();
   if (to === 'sandboard') return enterSandboard();
   if (to === 'timber') return enterTimber();
   if (to === 'chase') return enterChase();
   if (to === 'village') return enterVillage();
-  if (to !== 'shop') return SPOTS[to] ? enterFishing(to) : enterDungeon(to);
-  field.armed = false;
-  field.dwell = 0;
-  if (bagAllowed()) openPanel('shop');
+  if (to === 'dogtown') return enterDogtown();
+  return SPOTS[to] ? enterFishing(to) : enterDungeon(to);
 };
 /** 미로 사건 → 보상 · 소리 · 감정 · 기록 */
 function mazeEvent(e: MazeEvent) {
@@ -1294,6 +1476,7 @@ function mazeEvent(e: MazeEvent) {
     say('delight', 3);
     const key = maze.theme === 'whale' ? 'whale' : 'maze';
     if (records[key] === null || e.secs < records[key]) records[key] = Math.round(e.secs * 10) / 10;
+    if (key === 'maze') guildEvent({ type: 'maze' });
     saveRecords();
     saveBag();
   }
@@ -1322,11 +1505,223 @@ function stepVillage(dt: number) {
   }
   villageNear = near;
   if (!busy && village.open) {
+    const post = village.open.kind === 'friend' ? handOver(`cat:${FRIENDS[village.open.i].id}`) : { ok: false, msg: '' };
+    if (post.ok && village.open.kind === 'friend') setAnim(village.townies[village.open.i], 'affection');
     openVillagePanel(village.open, village, vsave, bag);
+    if (post.msg) Object.assign(villageView, { msg: post.msg, msgT: 3 });
     if (village.open.kind === 'friend') village.townies[village.open.i].hop = 0.5;
     sfxPickup();
     help.classList.add('choosing');
   }
+}
+/** 다른 장면의 일 → 길드 의뢰 진행 (다 되면 화면 위 알림) */
+function guildEvent(ev: GuildEvent) {
+  const done = noteGuild(dsave.guild, ev, bag);
+  if (done.length) note(`📜 의뢰 완료: ${done.join(' · ')} — 강아지마을 모험가 길드에 보고해요`);
+  saveDog();
+}
+/** 배달 받는 이(to)에게 말을 걸었다 — 맡은 배달이 있으면 가방 물건을 건넨다. 돌려주는 것: 건넸나 · 알림 글 (없으면 '') — 부르는 쪽이 열린 창의 알림 줄에 */
+function handOver(to: string) {
+  const d = deliver(dsave, bag, to, Date.now());
+  if (!d) return { ok: false, msg: '' };
+  if (d.ok) {
+    sfxCoin();
+    guildEvent({ type: 'post' });
+    saveBag();
+  }
+  saveDog();
+  return { ok: d.ok, msg: d.ok ? `📦 배달 완료! 냥코인 +${d.coins}${d.fast ? ' (빠른 배달 덤)' : ''}` : `📦 배달: ${d.why}` };
+}
+/** 강아지마을 한 프레임: 창이 열려 있으면 고양이는 서 있고(주민은 그대로) 망치질만 */
+function stepDogtown(dt: number) {
+  const busy = !!dogView.panel;
+  const now = Date.now();
+  updateDogtown(dogtown, busy ? { mx: 0, my: 0, act: false } : { ...input(), act: dogAct }, dt, { save: dsave, bag, now });
+  dogAct = false;
+  if (hammering()) onDogAct(hammerStep(dogtown, dsave, bag, dt));
+  tickRescue(dsave, now, Math.random);
+  if (!busy && dogtown.open >= 0) {
+    const i = dogtown.open;
+    const post = handOver(`dog:${DOGS[i].id}`);
+    if (post.ok) setDogAnim(dogtown.dogs[i], 'affection');
+    dogtown.dogs[i].hop = 0.5;
+    sfxPickup();
+    onDogAct(openDogPanel(i, dogtown, dsave, bag, now));
+    if (post.msg) dogView.panel ? Object.assign(dogView, { msg: post.msg, msgT: 3 }) : note(post.msg);
+    if (dogView.panel) help.classList.add('choosing');
+  }
+}
+/** 강아지마을 장면을 눌렀다 (CSS px) — 곁에 있는 주민에게 말 걸기만 (걷기는 WASD · 조이스틱으로만) */
+function dogTalk(p: Pt) {
+  const d = Math.min(devicePixelRatio, 2);
+  dogTalkTo(dogtown, dogAtPoint(dogtown, (p.x * d - dogView.ox) / dogView.sc, (p.y * d - dogView.oy) / dogView.sc));
+}
+/** 강아지마을 창에서 한 일 → 소리 · 감정 · 저장 · 장면 */
+function onDogAct(a: DogAct) {
+  if (!a) return;
+  if (a.kind === 'shop') {
+    if (bagAllowed()) openPanel('shop');
+  } else if (a.kind === 'train') {
+    dogView.panel = null;
+    enterTraining();
+  } else if (a.kind === 'turnin') {
+    sfxCoin();
+    if (a.res.rankUp) sfxLevel();
+    say(a.res.rankUp ? 'pride' : 'delight', 1.6);
+    saveBag();
+    saveDog();
+  } else if (a.kind === 'paid') {
+    sfxCoin();
+    saveBag();
+  } else if (a.kind === 'strike') sfxAnvil(a.good);
+  else if (a.kind === 'forged') {
+    (a.up ? sfxLevel : a.stars >= 2 ? sfxCatch : sfxFull)();
+    say(a.up ? 'pride' : a.stars >= 2 ? 'delight' : 'sweat', 1.4);
+    guildEvent({ type: 'forge' });
+    saveBag();
+  } else if (a.kind === 'post' || a.kind === 'map' || a.kind === 'rescue') {
+    sfxPickup();
+    if (a.kind === 'rescue') say('determination', 1.4);
+    saveBag();
+    saveDog();
+  } else if (a.kind === 'fail') sfxFull();
+  if (!dogView.panel) help.classList.remove('choosing');
+}
+/** 필드: 보물 ✕ 자리에 잠깐 서 있으면 판다 · 구조 ❗ 자리에 닿으면 로프 카드 (벗어났다 와야 다시) */
+const DIG_TIME = 0.8;
+let digT = 0;
+let rescueArmed = true;
+function fieldQuests(dt: number) {
+  const C = FIELD.catBody;
+  const near = (at: number[], r: number) => Math.hypot(field.x - at[0], (field.y - at[1]) / FIELD.vertical) < C * r;
+  const sp = digSpot(dsave);
+  if (sp && field.mode !== 'boat' && near(sp.at, 0.9)) {
+    digT += dt;
+    if (digT >= DIG_TIME) {
+      digT = 0;
+      const got = dig(dsave, bag, Math.random);
+      if (got) {
+        sfxCatch();
+        say('treasure_temptation', 2.2);
+        fieldFx(got.items.map((id) => ({ type: 'forage', id, x: sp.at[0], y: sp.at[1], full: got.full.includes(id) }) as FieldEvent));
+        note(`🧭 보물을 팠어요! 냥코인 +${got.coins}${got.items.length ? ' · ' + got.items.map((id) => ITEMS[id].name).join(' · ') : ''}`);
+        guildEvent({ type: 'treasure' });
+        saveBag();
+      }
+    }
+  } else digT = 0;
+  const call = rescueSpot(dsave);
+  const on = !!call && field.mode !== 'boat' && near(call.at, 1.2);
+  if (on && rescueArmed && call) {
+    rescueArmed = false;
+    rope = { r: makeRope(call.kind), call, res: null };
+    pulls.length = 0;
+    keys.clear();
+    stick = null;
+    quiet();
+    say('determination', 1.4);
+    help.classList.add('choosing');
+  }
+  if (!on) rescueArmed = true;
+}
+/** 필드에 그릴 표시 — 보물 ✕ (파는 중이면 고리) · 나선 구조 ❗ */
+function fieldMarks(): FieldMark[] {
+  const out: FieldMark[] = [];
+  const sp = digSpot(dsave);
+  if (sp) out.push({ x: sp.at[0], y: sp.at[1], kind: 'dig', k: digT / DIG_TIME });
+  const call = rescueSpot(dsave);
+  if (call) out.push({ x: call.at[0], y: call.at[1], kind: 'rescue', k: 0 });
+  return out;
+}
+/** 로프 한 프레임 — 당긴 소리 · 구조하면 보상 */
+function stepRope(dt: number) {
+  if (!rope) return;
+  const r = rope.r;
+  updateRope(r, pulls.splice(0), dt);
+  for (const e of r.events) {
+    if (e.type === 'pull') once('pull', sfxDrag);
+    else if (e.type === 'slip') sfxFull();
+    else if (e.type === 'fail') {
+      sfxFull();
+      say('fatigue', 1.6);
+    } else if (e.type === 'done') {
+      rope.res = rescueDone(dsave, bag, r.stars, Date.now(), Math.random);
+      sfxCatch();
+      say('pride', 2.4);
+      guildEvent({ type: 'rescue' });
+      saveBag();
+    }
+  }
+}
+const closeRope = () => {
+  rope = null;
+  help.classList.remove('choosing');
+};
+function ropeAction(t: RopeTap) {
+  if (!rope || !t) return;
+  if (t === 'left' || t === 'right') pulls.push(t === 'left' ? -1 : 1);
+  else if (t === 'retry') rope.r = makeRope(rope.call.kind);
+  else closeRope();
+}
+function ropeKey(code: string) {
+  if (!rope) return;
+  const ph = rope.r.phase;
+  const go = code === 'Enter' || code === 'NumpadEnter' || code === 'Space' || code === 'KeyE';
+  if (ph === 'done') return void ((go || code === 'Escape') && closeRope());
+  if (ph === 'fail') return void (go || code === 'KeyR' ? ropeAction('retry') : code === 'Escape' && closeRope());
+  if (code === 'KeyA' || code === 'ArrowLeft') pulls.push(-1);
+  else if (code === 'KeyD' || code === 'ArrowRight') pulls.push(1);
+  else if (code === 'Escape') closeRope();
+}
+/** 훈련장 사건 → 소리 · 감정 · 보상 · 기록 */
+function trainEvent(e: TrainEvent) {
+  if (e.type === 'hit') sfxHit(e.quick);
+  else if (e.type === 'whiff') sfxFull();
+  else if (e.type === 'bonus') sfxLevel();
+  else if (e.type === 'warn') sfxThrow();
+  else if (e.type === 'roll') sfxJump();
+  else if (e.type === 'dodge') sfxCast();
+  else if (e.type === 'bonk') {
+    sfxBonk();
+    sfxHurt();
+    say('dizzy', 1.2);
+  } else if (e.type === 'hurry') sfxWave(false);
+  else if (e.type === 'done') {
+    sfxCatch();
+    say(e.why === 'time' ? 'pride' : 'frustration', 2.4);
+    bag.coins += e.coins;
+    if (records.training === null || e.score > records.training) records.training = e.score;
+    dsave.trained++;
+    guildEvent({ type: 'train', score: e.score });
+    saveRecords();
+    saveBag();
+  }
+}
+/** 화면 위 알림 (의뢰 완료 · 보물 · 처음 온 마을) — 차례로 몇 초씩. 창(가방 · 도감 · 상점 · 마을 창 · 로프)이 열려 있는 동안은 기다렸다가 닫히면 뜬다 */
+const banners: { text: string; t: number }[] = [];
+const note = (text: string) => void banners.push({ text, t: 4 });
+const anyPanel = () => !!panel || !!rope || (scene === 'village' && (!!villageView.panel || villageView.gifts.length > 0)) || (scene === 'dogtown' && !!dogView.panel);
+function drawBanner() {
+  const banner = banners[0];
+  if (!banner || anyPanel()) return;
+  banner.t -= lastDt;
+  if (banner.t <= 0) return void banners.shift();
+  const s = pxRatio();
+  const k = ui(innerWidth, innerHeight);
+  ctx.setTransform(s, 0, 0, s, 0, 0);
+  ctx.globalAlpha = Math.min(1, banner.t / 0.4);
+  ctx.font = `bold ${Math.round(15 * k)}px system-ui, sans-serif`;
+  const w = Math.min(innerWidth - 24, ctx.measureText(banner.text).width + 36 * k);
+  const h = 38 * k;
+  const y = Math.max(safe().t + 120 * k, innerHeight * 0.22);
+  ctx.fillStyle = 'rgba(70,52,42,0.92)';
+  ctx.beginPath();
+  ctx.roundRect(innerWidth / 2 - w / 2, y, w, h, h / 2);
+  ctx.fill();
+  ctx.fillStyle = '#fff6d8';
+  ctx.textAlign = 'center';
+  fitText(ctx, banner.text, innerWidth / 2, y + h / 2 + 5 * k, w - 24 * k, Math.round(15 * k), 'bold ');
+  ctx.globalAlpha = 1;
 }
 /** 놀이 사건 → 소리 */
 function toySound(e: ToyEvent) {
@@ -1365,6 +1760,7 @@ function onVillageAct(a: VillageAct) {
   } else if (a.kind === 'served') {
     (a.cook.stars === 3 ? sfxCatch : a.cook.stars === 2 ? sfxPickup : sfxFull)();
     say(a.cook.stars === 3 ? 'pride' : a.cook.stars === 2 ? 'delight' : 'sweat', 1.4);
+    if (a.cook.served) guildEvent({ type: 'cook', n: a.cook.served });
     saveBag();
     saveVillage();
   } else if (a.kind === 'gift') sfxPickup();
@@ -1400,6 +1796,7 @@ function chaseEvent(e: ChaseEvent) {
     bag.coins += e.coins;
     if (e.acorns) obtain(bag, 'materials_05', e.acorns);
     if (records.chase === null || e.points > records.chase) records.chase = e.points;
+    guildEvent({ type: 'chase', score: e.points });
     saveRecords();
     saveBag();
   }
@@ -1421,6 +1818,7 @@ function timberEvent(e: TimberEvent) {
     bag.coins += e.coins;
     if (e.logs) obtain(bag, 'materials_01', e.logs);
     if (records.timber === null || e.score > records.timber) records.timber = e.score;
+    guildEvent({ type: 'timber', score: e.score });
     saveRecords();
     saveBag();
   }
@@ -1472,6 +1870,7 @@ function sandEvent(e: SandEvent) {
       else sfxCatch();
       say(e.fell ? 'frustration' : e.clean ? 'pride' : 'relief', 3);
       if (records.sandboard === null || e.score > records.sandboard) records.sandboard = e.score;
+      if (!e.fell) guildEvent({ type: 'sand', clean: e.clean });
       saveRecords();
       saveBag();
       break;
@@ -1486,7 +1885,7 @@ const warpTo = (w: Warp) =>
     say('surprise', 1.2);
   });
 /** 바로 가기가 되는 장면 — 필드 · 마을 · 낚시터 (던전 · 미니게임은 판이 날아간다) */
-const canTravel = () => !fadeTo && (scene === 'field' || scene === 'village' || scene === 'fishing');
+const canTravel = () => !fadeTo && !rope && (scene === 'field' || scene === 'village' || scene === 'dogtown' || scene === 'fishing');
 /** 도감 지도의 "이동" · 가판대의 모자란 재료 바로가기 (2026-10-08 사용자 요청) — 그 포탈 앞(back)으로. 필드가 아니면 필드로 나온다 */
 const travelTo = (id: string) => {
   const w = FIELD.warps.find((v) => v.id === id);
@@ -1494,6 +1893,7 @@ const travelTo = (id: string) => {
   if (panel) closePanel();
   villageView.panel = null;
   villageView.gifts.length = 0;
+  dogView.panel = null;
   help.classList.remove('choosing');
   goTo(() => {
     scene = 'field';
@@ -1556,7 +1956,8 @@ function frame(now: number) {
 
   // 덮이는 동안·도감을 보는 동안은 멈춘다
   if (!fadeTo && !panel) {
-    if (scene === 'field') {
+    if (scene === 'field' && rope) stepRope(dt);
+    else if (scene === 'field') {
       const { mx, my } = input();
       stepLook(dt, mx !== 0 || my !== 0);
       const w = updateField(field, mx, my, dt, terrainAt);
@@ -1564,6 +1965,7 @@ function frame(now: number) {
       field.events.forEach(fieldSound);
       fieldFx(field.events);
       fieldMood(dt, now / 1000);
+      fieldQuests(dt);
       if (w) enterPortal(w.to);
       if (field.whale.phase === 'gulped') enterWhale(); // 고래가 삼켰다 (덮개가 내려오는 중이면 다음 프레임에 다시)
     } else if (scene === 'fishing') {
@@ -1588,6 +1990,12 @@ function frame(now: number) {
       sand.events.forEach(sandEvent);
     } else if (scene === 'village') {
       stepVillage(dt);
+    } else if (scene === 'dogtown') {
+      stepDogtown(dt);
+    } else if (scene === 'training') {
+      updateTraining(training, { punches: punches.splice(0), roll: rollQueued }, dt);
+      training.events.forEach(trainEvent);
+      trainFx(training, training.events, innerWidth, innerHeight);
     } else if (scene === 'chase') {
       updateChase(chase, input(), dt);
       chase.events.forEach(chaseEvent);
@@ -1605,6 +2013,7 @@ function frame(now: number) {
       if (out === 'exit') backToField();
     }
     jumpQueued = false;
+    rollQueued = false;
     tickEmote(dt);
     tickBuffs(bag, dt);
   }
@@ -1612,6 +2021,8 @@ function frame(now: number) {
   else if (scene === 'fishing') drawFishing(ctx, canvas.width, canvas.height, fishing, { t: last / 1000, dt: lastDt, hover: fishHover, touch: touchOn });
   else if (scene === 'maze') drawMaze(ctx, canvas.width, canvas.height, maze, catSheet, { t: last / 1000, dt: lastDt, touch: touchOn, hover: miniHover, best: records[maze.theme === 'whale' ? 'whale' : 'maze'] });
   else if (scene === 'village') drawVillage(ctx, canvas.width, canvas.height, village, vsave, catSheet, { t: last / 1000, dt: lastDt, touch: touchOn, hover: miniHover, debug });
+  else if (scene === 'dogtown') drawDogtown(ctx, canvas.width, canvas.height, dogtown, dsave, bag, catSheet, { t: last / 1000, dt: lastDt, touch: touchOn, hover: miniHover, now: Date.now(), debug });
+  else if (scene === 'training') drawTraining(ctx, canvas.width, canvas.height, training, catSheet, { t: last / 1000, dt: lastDt, touch: touchOn, hover: miniHover, best: records.training });
   else if (scene === 'chase') drawChase(ctx, canvas.width, canvas.height, chase, { cat: catSheet, squirrel: sheets.acorn_squirrel }, { t: last / 1000, dt: lastDt, touch: touchOn, hover: miniHover, best: records.chase });
   else if (scene === 'timber') drawTimber(ctx, canvas.width, canvas.height, timber, { axe: axeSheet, cat: catSheet }, { t: last / 1000, dt: lastDt, touch: touchOn, hover: miniHover, best: records.timber });
   else if (scene === 'sandboard')
@@ -1626,6 +2037,7 @@ function frame(now: number) {
   else
     drawDungeon(ctx, canvas.width, canvas.height, dungeon, catSheet, { t: last / 1000, dt: lastDt, fps, grid: debug, trace: trace ? traceDraw : undefined, touch: touchOn });
   drawOverlay();
+  drawBanner();
   drawFade();
   requestAnimationFrame(frame);
 }
@@ -1635,6 +2047,9 @@ function drawFieldScene() {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   drawField(ctx, canvas.width, canvas.height, field, { cat: catSheet, axe: axeSheet, boat: boatSheet, snow: snowSheet, squirrel: sheets.acorn_squirrel }, last / 1000, lastDt, showTerrain, look);
+  const marks = fieldMarks();
+  ctx.setTransform(fieldView.sc, 0, 0, fieldView.sc, fieldView.ox, fieldView.oy);
+  drawFieldMarks(ctx, marks, FIELD.catBody, last / 1000);
   const s = pxRatio();
   const k = ui(innerWidth, innerHeight);
   const sf = safe();
@@ -1653,6 +2068,7 @@ function drawFieldScene() {
     const sc = fieldView.sc;
     const view = { x: -fieldView.ox / sc, y: -fieldView.oy / sc, w: canvas.width / sc, h: canvas.height / sc };
     drawMinimap(ctx, mapRect(), field, view, mapHover, last / 1000);
+    drawMiniMarks(ctx, marks.map((m) => ((p) => ({ x: p[0], y: p[1], kind: m.kind }))(toMini(mapRect(), m.x, m.y))), last / 1000);
   }
 }
 
@@ -1663,6 +2079,8 @@ function drawOverlay() {
   if (panel === 'dex') return drawBook(ctx, innerWidth, innerHeight, bookData(), last / 1000);
   if (panel === 'shop') return drawShop(ctx, innerWidth, innerHeight, bag, SHOP, lastDt);
   if (panel === 'bag') return drawBag(ctx, innerWidth, innerHeight, bag, lastDt);
+  if (rope) return drawRope(ctx, innerWidth, innerHeight, rope.r, rope.call, rope.res, last / 1000, touchOn);
+  if (scene === 'dogtown' && dogView.panel) return drawDogPanel(ctx, innerWidth, innerHeight, dogtown, dsave, bag, last / 1000, lastDt, Date.now(), touchOn);
   if (scene === 'village' && (villageView.panel || villageView.gifts.length))
     return drawVillagePanel(ctx, innerWidth, innerHeight, village, vsave, bag, catSheet, last / 1000, lastDt, Date.now(), touchOn);
   const c = ctl();
@@ -1685,7 +2103,7 @@ function drawFade() {
 
 const help = document.getElementById('help')!;
 const HELP = {
-  field: 'WASD 이동 · 숲은 도끼로 (부스럭거리는 수풀엔 무언가 · 다람쥐는 쫓아가 잡기), 물은 배로 · 이정표 앞 포탈에 잠시 서 있으면 던전 · 바다에서 배를 멈추고 있으면… 고래? · 지도 끌기·미니맵으로 둘러보기, 포탈 클릭 = 워프 · 강아지마을은 고등어 상점 · I 가방 · B 도감 · M 미니맵 · T 지형 보기',
+  field: 'WASD 이동 · 숲은 도끼로 (부스럭거리는 수풀엔 무언가 · 다람쥐는 쫓아가 잡기), 물은 배로 · 이정표 앞 포탈에 잠시 서 있으면 던전 · 바다에서 배를 멈추고 있으면… 고래? · 지도 끌기·미니맵으로 둘러보기, 포탈 클릭 = 워프 · 강아지마을엔 모험가 길드 · 대장간 · 상점 · 미니맵의 ✕ 보물 · ❗ 구조 · I 가방 · B 도감 · M 미니맵 · T 지형 보기',
   dungeon: 'WASD 이동 · 냥펀치는 저절로 (몬스터가 가까이 오면) · Space 구르기 · 웨이브 8번을 버티면 클리어 · 생선뼈를 모으면 레벨 업 → 기술 카드 (1·2·3) · I 가방 · 빛나는 칸에 3초 서 있으면 나가기',
   maze: 'WASD 이동 · 횃불이 닿는 길만 보여요 · 냥코인을 줍고 막다른 길 끝의 보물 상자를 찾아 출구로 · 빠를수록 탈출 보너스 · R 새 미로 · Esc 돌아가기',
   whale: '고래에게 삼켜졌다! WASD 이동 · 플랑크톤 빛이 닿는 길만 보여요 · 냥코인과 진주 조개를 찾아 숨구멍으로 · 빠를수록 보너스 · Esc 포기 (그래도 뱉어 줘요)',
@@ -1693,9 +2111,11 @@ const HELP = {
   timber: 'A · ← 왼쪽에서, D · → 오른쪽에서 패요 · 가지가 내 쪽으로 내려오면 콩! · 팰수록 시간이 늘지만 점점 빨리 줄어요 · R 다시 · Esc 돌아가기',
   chase: 'WASD 이동 · 눈이 반짝이는 나무 구멍 · 부스럭거리는 수풀에서 다람쥐가 튀어나와요 · 쫓아가 닿으면 잡기 (황금 다람쥐 3점) · 도토리에 맞으면 잠깐 멍 · 60초 · R 다시 · Esc 돌아가기',
   village: 'WASD 이동 · 친구나 요리 가판대 앞에서 E (또는 누르기) · 재료로 요리해서 친구에게 먹여 주면 친해져요 · 부탁(!)을 들어주면 냥코인 · I 가방 · Esc 돌아가기',
+  dogtown: 'WASD 이동 · 강아지 주민 앞에서 E (또는 누르기) · 길드 의뢰 · 대장간 강화 · 고등어 상점 · 우체국 배달 · 탐험가 보물 지도 · 훈련장 · 구조대 · I 가방 · Esc 돌아가기',
+  training: '빛나는 허수아비 쪽 방향키(WASD · ←↑→↓)로 쳐요 · 빨리 칠수록 딱!(2점) · 공이 굴러오면 닿기 직전에 Space 로 구르기 · R 다시 · Esc 마을로',
 };
 const HELP_TOUCH = {
-  field: '왼쪽 조이스틱으로 이동 · 숲은 도끼로, 물은 배로 · 포탈에 잠시 서 있으면 던전·낚시터 (강아지마을은 상점) · 화면을 끌어 둘러보고 포탈을 누르면 워프',
+  field: '왼쪽 조이스틱으로 이동 · 숲은 도끼로, 물은 배로 · 포탈에 잠시 서 있으면 던전·낚시터·마을 · 화면을 끌어 둘러보고 포탈을 누르면 워프',
   dungeon: '조이스틱 이동 · 냥펀치는 저절로 · 구르기 버튼 · 생선뼈로 레벨 업 → 기술 카드를 눌러 골라요 · 빛나는 칸에 3초 서 있으면 나가기',
   maze: '조이스틱으로 이동 · 횃불이 닿는 길만 보여요 · 냥코인과 보물 상자를 찾아 출구로',
   whale: '고래에게 삼켜졌다! 조이스틱으로 이동 · 냥코인과 진주 조개를 찾아 숨구멍으로',
@@ -1703,6 +2123,8 @@ const HELP_TOUCH = {
   timber: '◀ ▶ 버튼이나 화면 왼쪽·오른쪽을 눌러 그쪽에서 패요 · 가지가 내 쪽으로 내려오면 콩!',
   chase: '조이스틱으로 쫓아가 다람쥐를 잡아요 · 황금 다람쥐는 3점 · 60초',
   village: '조이스틱으로 다가가 친구나 요리 가판대를 누르면 말을 걸어요 · 요리해서 먹여 주면 친해져요',
+  dogtown: '조이스틱으로 다가가 주민을 누르면 말을 걸어요 · 길드 의뢰 · 대장간 · 상점 · 우체국 · 탐험가 · 훈련장 · 구조대',
+  training: '빛나는 허수아비를 눌러 쳐요 · 공이 굴러오면 닿기 직전에 구르기 버튼',
 };
 function sayHelp() {
   const t = scene === 'fishing' ? fishingHelp(fishing, touchOn) : (touchOn ? HELP_TOUCH : HELP)[inWhale() ? 'whale' : scene];
@@ -1735,6 +2157,12 @@ const step = (t: string) => {
     await villageReady;
     tickRequests(vsave, Date.now());
   }
+  if (scene === 'dogtown') {
+    step('강아지마을');
+    await dogtownReady;
+    tickRescue(dsave, Date.now(), Math.random);
+  }
+  if (scene === 'training') await trainingReady();
   if (scene === 'fishing') {
     step('낚시터');
     await fishingReady(startSpot);

@@ -63,7 +63,9 @@ const TAGS = {
   터치: '휴대폰 터치 UI · 도감 · 화면 크기별 촬영',
   도감: '도감 (터치 · 상점 · 지도 구간)',
   가방: '드롭 · 줍기 · 장착 · 먹기 · 휴대폰 가방 버튼',
-  상점: '고등어 상점 · 건지기 · 도감 갈래',
+  상점: '고등어 상점(강아지마을 고등어 아저씨) · 건지기 · 도감 갈래',
+  강아지마을: '강아지마을 포탈 · 길드 · 대장간 망치질 · 합치기 · 우체국 배달 · 탐험가 보물 · 구조 로프 · 미용실 · 훈련장 · 휴대폰',
+  훈련: '훈련장 (강아지마을 교관 — 키 · 휴대폰)',
   미니게임: '미개방 구역 · 미로 · 샌드보드 · 고래',
   미개방: '개방 구역 가장자리 · 잠긴 포탈',
   고래: '바다 고래 · 배 속 미로',
@@ -111,7 +113,7 @@ async function open(where = 'dungeon', room = '', view = null, extra = '') {
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
   const q =
-    where === 'dungeon' ? '&dungeon' + (room ? '=' + room : '') : where === 'fishing' ? '&fishing' + (room ? '=' + room : '') : ['maze', 'sandboard', 'timber', 'chase', 'village'].includes(where) ? '&' + where : '';
+    where === 'dungeon' ? '&dungeon' + (room ? '=' + room : '') : where === 'fishing' ? '&fishing' + (room ? '=' + room : '') : ['maze', 'sandboard', 'timber', 'chase', 'village', 'dogtown', 'training'].includes(where) ? '&' + where : '';
   await page.goto(base + '?trace' + q + extra, { waitUntil: 'load' });
   await page.waitForFunction(() => window.__sheets, { timeout: 60000 });
   return { page, errors };
@@ -947,7 +949,7 @@ try {
     await page.close();
   }
 
-  // 3-8) 상점 · 건지기 · 도감: 강아지마을 포탈에 서면 고등어 상점 → 사기 1개 · 5개 · 팔기(모두) · 닫으면 그 자리에서 다시 안 열린다 →
+  // 3-8) 상점 · 건지기 · 도감: 강아지마을 포탈 → 마을 → 고등어 아저씨 곁에서 E → 고등어 상점 → 사기 1개 · 5개 · 팔기(모두) · 닫으면 마을 그대로 →
   //  낚시: 가라앉은 물건을 물리고 감으면 건져서 가방에 (물고기 도감엔 안 센다) → 던전에서 쓰러뜨리면 몬스터 도감 → B 로 도감
   //  (던전에선 몬스터 갈래) · 갈래·탭·칸 누르기 · 휴대폰 세로. 화면은 tools/out/shop-*.png · book-*.png · fishing-salvage.png
   const S_SHOP = sec('상점 · 건지기 · 도감', '상점', '도감');
@@ -957,10 +959,15 @@ try {
     await page.reload({ waitUntil: 'load' });
     await page.waitForFunction(() => window.__sheets, { timeout: 60000 });
     await page.evaluate(() => (__game.bag.coins = 500));
-    const shopWarp = FIELD.warps.find((w) => w.to === 'shop');
+    const shopWarp = FIELD.warps.find((w) => w.to === 'dogtown');
     await page.evaluate((at) => Object.assign(__game.field, { x: at[0], y: at[1], camX: at[0], camY: at[1], armed: true, mode: 'walk' }), shopWarp.at);
+    await page.waitForFunction(() => __game.scene === 'dogtown', { timeout: 8000 }).catch(() => {});
+    await sleep(600);
+    await page.evaluate(() => ([__game.dogtown.cat.x, __game.dogtown.cat.y] = __game.dogSpot(2)));
+    await page.waitForFunction(() => __game.dogtown.near === 2, { timeout: 3000 }).catch(() => {});
+    await page.keyboard.press('KeyE');
     const opened = await page.waitForFunction(() => __game.shopOpen, { timeout: 4000 }).then(() => true, () => false);
-    check(opened, `${shopWarp.label} 포탈에 서 있으면 고등어 상점이 열린다`);
+    check(opened, `${shopWarp.label} 포탈 → 마을 → 고등어 아저씨 곁에서 E → 고등어 상점`);
     const scr = () => page.evaluate(() => __game.shopScreen());
     const click = async (p) => {
       await page.mouse.move(p.x, p.y);
@@ -983,8 +990,8 @@ try {
     const sold = await page.evaluate(() => ({ coins: __game.bag.coins, found: __game.bag.found.curios_01 }));
     check((await potions()) === 0 && sold.coins === bought + 6 * 15 && sold.found === 6, `모두 팔기 → 반값 6 × 15냥 = ${sold.coins - bought} · 도감엔 6개 그대로`);
     await page.keyboard.press('Escape');
-    await sleep(1500);
-    check(!(await page.evaluate(() => __game.shopOpen)), '닫으면 포탈 위에 있어도 다시 안 열린다 (한 번 벗어났다 와야)');
+    await sleep(300);
+    check(!(await page.evaluate(() => __game.shopOpen)) && (await page.evaluate(() => __game.scene)) === 'dogtown', 'Esc 로 닫으면 강아지마을 그대로');
     check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
     await page.close();
   }
@@ -1045,20 +1052,383 @@ try {
     await page.close();
   }
   if (S_SHOP) for (const [name, view] of [['phone-portrait', { width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true }], ['phone', PHONE]]) {
-    const { page, errors } = await open('field', '', view, '&touch');
+    const { page, errors } = await open('dogtown', '', view, '&touch');
     await page.keyboard.press('KeyB');
     await tap(page, (await page.evaluate(() => __game.dexScreen())).chips[1]);
     await tap(page, (await page.evaluate(() => __game.dexScreen())).cells[0]);
     await sleep(500);
     await page.screenshot({ path: fsPath(new URL(`book-${name}.png`, OUT)) });
     await tap(page, (await page.evaluate(() => __game.dexScreen())).close);
-    const shopWarp = FIELD.warps.find((w) => w.to === 'shop');
-    await page.evaluate((at) => Object.assign(__game.field, { x: at[0], y: at[1], camX: at[0], camY: at[1], armed: true, mode: 'walk' }), shopWarp.at);
+    await page.evaluate(() => ([__game.dogtown.cat.x, __game.dogtown.cat.y] = __game.dogSpot(2)));
+    await sleep(500);
+    await tap(page, await page.evaluate(() => ((d) => __game.dogScreen(d.x, d.y - 30))(__game.dogtown.dogs[2])));
     await page.waitForFunction(() => __game.shopOpen, { timeout: 4000 }).catch(() => {});
     await tap(page, (await page.evaluate(() => __game.shopScreen())).cells[3]);
     await sleep(200);
     await page.screenshot({ path: fsPath(new URL(`shop-${name}.png`, OUT)) });
     check(errors.length === 0, `${name}: 도감·상점 화면 · 페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
+    await page.close();
+  }
+
+  // 3-8b) 강아지마을 (2026-10-12, 실제 키 · 마우스 · 터치): 강아지마을 포탈 → 마을 (처음 오면 알림) → 멀리 있는 주민을 클릭해도 걷지 않는다 →
+  //  대장(길드): 다 된 의뢰 보고하기 버튼 → 냥코인 · 점수 · 새 의뢰 · ↑ Enter 로 납품 의뢰 보고(통나무를 가져간다) · R 바꾸기 →
+  //  고등어 아저씨 곁 E → 상점 창 (사기 · 팔기 — 아래 상점 구간) → 무쇠(대장간) Enter → 망치질: 고리가 금색 원에 닿을 때 Space × 3 → ★★★ → 무기 +1 · 공격 오름 →
+  //  가방의 같은 장비 둘 합치기 → 우체(우체국) 맡기 → 받는 이(버나드)에게 말을 걸면 배달 완료 · 냥코인 → 킁킁(탐험가) 냄새 맡기 → ✕ 자리 →
+  //  버나드(구조대) 출동! → 뽀송(미용실) 준비 중 → 교관(훈련장) 훈련 시작 → 빛나는 허수아비를 방향키로 · 공은 Space 로 피해 끝까지 → 결과 카드 → 마을로(교관 앞) →
+  //  Esc 로 필드 → ✕ 자리에 걸어 들어가 서 있으면 보물 · ❗ 자리에 걸어 들어가면 로프 카드 → A · D 번갈아 → 구조 ★★★ → 고양이마을 친구에게 배달 →
+  //  새로 고쳐도 길드 점수 · 기록 그대로. 휴대폰: 조이스틱으로 다가가 주민을 눌러 창 · 길드 버튼 · 망치질(누르기) · 훈련장(허수아비 누르기 · 구르기 버튼) · 로프(◀ ▶ 버튼).
+  //  화면 dog-*.png · touch-dog*.png · screen-dog-portrait*.png · training-*.png · rope-*.png
+  const S_DOG = sec('강아지마을 · 길드 · 대장간 · 우체국 · 탐험가 · 구조대 · 훈련장', '강아지마을', '훈련');
+  const DOGTOWN = readJson('../src/data/dogtown.json');
+  const DOGS = DOGTOWN.dogs;
+  const TRAIN_TIME = 45;
+  if (S_DOG) {
+    const { page, errors } = await open('field');
+    await page.evaluate(() => ['nyang.dogtown.v1', 'nyang.bag.v1', 'nyang.village.v1'].forEach((k) => localStorage.removeItem(k)));
+    await page.reload({ waitUntil: 'load' });
+    await page.waitForFunction(() => window.__sheets, { timeout: 60000 });
+    await page.evaluate(() => (__game.bag.coins = 3000));
+    const w = FIELD.warps.find((v) => v.to === 'dogtown');
+    check(!!w && inOpen(w.at[0], w.at[1]), `${w?.label} 포탈이 열린 구역에 있고 강아지마을로 이어진다`);
+    await page.evaluate((at) => Object.assign(__game.field, { x: at[0], y: at[1], camX: at[0], camY: at[1], armed: true, mode: 'walk' }), w.at);
+    const inTown = await page.waitForFunction(() => __game.scene === 'dogtown', { timeout: 8000 }).then(() => true, () => false);
+    await sleep(800);
+    const first = await page.evaluate(() => ({ met: __game.dogSave.met, banner: __game.banners.join(' / '), n: __game.dogtown.dogs.length, cat: __game.dogScreen(__game.dogtown.cat.x, __game.dogtown.cat.y) }));
+    check(inTown && first.met && first.banner.includes('강아지마을') && first.n === 8 && Math.abs(first.cat.x - VIEW.width / 2) < 60, `${w?.label} 포탈에 서 있으면 강아지마을 · 처음 오면 알림 · 주민 ${first.n} · 카메라가 고양이를 따라간다`);
+    await page.screenshot({ path: fsPath(new URL('dog-start.png', OUT)) });
+    const go = async (i) => {
+      await page.evaluate((i) => ([__game.dogtown.cat.x, __game.dogtown.cat.y] = __game.dogSpot(i)), i);
+      await page.waitForFunction((i) => __game.dogtown.near === i, { timeout: 3000 }, i).catch(() => {});
+      await sleep(250);
+    };
+    const panel = () => page.evaluate(() => __game.dogView.panel);
+    const DP = () => page.evaluate(() => __game.dogPoints());
+    const coins = () => page.evaluate(() => __game.bag.coins);
+    // 멀리 있는 주민을 클릭해도 걷지 않는다 (걷기는 WASD · 조이스틱으로만)
+    const c0 = await page.evaluate(() => [__game.dogtown.cat.x, __game.dogtown.cat.y]);
+    await click2(page, await page.evaluate(() => ((d) => __game.dogScreen(d.x, d.y - 20))(__game.dogtown.dogs[7])));
+    await sleep(600);
+    const c1 = await page.evaluate(() => [__game.dogtown.cat.x, __game.dogtown.cat.y]);
+    check(Math.hypot(c1[0] - c0[0], c1[1] - c0[1]) < 1 && !(await panel()), '멀리 있는 주민을 클릭해도 걷지 않는다');
+    // ── 길드: 의뢰 셋 (납품 통나무 · 던전 정복(다 됨) · 몬스터 퇴치) ──
+    await page.evaluate(() => {
+      __game.dogSave.guild.quests = [{ id: 'logs', p: 0 }, { id: 'hunt', p: 3 }, { id: 'clear', p: 1 }];
+      const b = __game.bag;
+      b.slots[b.slots.findIndex((s) => !s)] = { id: 'materials_01', n: 6 };
+    });
+    await go(0);
+    await click2(page, await page.evaluate(() => ((d) => __game.dogScreen(d.x, d.y - 30))(__game.dogtown.dogs[0])));
+    const atGuild = await page.waitForFunction(() => __game.dogView.panel?.kind === 'dog' && __game.dogView.panel.i === 0, { timeout: 3000 }).then(() => true, () => false);
+    await sleep(200);
+    await page.screenshot({ path: fsPath(new URL('dog-guild.png', OUT)) });
+    const k0 = await coins();
+    await click2(page, (await DP()).quests[2]); // 던전 정복 — 보고하기
+    await sleep(150);
+    const g1 = await page.evaluate(() => ({ gp: __game.dogSave.guild.gp, done: __game.dogSave.guild.done, ids: __game.dogSave.guild.quests.map((q) => q.id) }));
+    const clearQ = DOGTOWN.guild.quests.find((q) => q.id === 'clear');
+    check(atGuild && (await coins()) === k0 + clearQ.coins && g1.gp === clearQ.gp && g1.done === 1 && !g1.ids.includes('clear') && g1.ids.length === 3, `대장 곁에서 클릭 → 길드 창 · 다 된 의뢰 보고하기 → 냥코인 +${clearQ.coins} · 점수 ${g1.gp} · 새 의뢰 (${g1.ids.join(' · ')})`);
+    // 키: ↑ 로 통나무 납품 의뢰를 고르고 Enter
+    await page.keyboard.press('ArrowUp');
+    await page.keyboard.press('ArrowUp');
+    await page.keyboard.press('ArrowUp');
+    const sel = await page.evaluate(() => __game.dogView.sel);
+    await page.keyboard.press('Enter');
+    await sleep(150);
+    const logs = await page.evaluate(() => __game.bag.slots.reduce((t, s) => t + (s?.id === 'materials_01' ? s.n : 0), 0));
+    const g2 = await page.evaluate(() => __game.dogSave.guild);
+    check(sel === 0 && logs === 1 && g2.done === 2 && g2.gp === clearQ.gp + DOGTOWN.guild.quests.find((q) => q.id === 'logs').gp, `↑ Enter → 통나무 납품 보고 (길드가 5개 가져간다 → ${logs}개 남음) · 점수 ${g2.gp}`);
+    const before = g2.quests.map((q) => q.id);
+    const k1 = await coins();
+    await page.keyboard.press('KeyR');
+    await sleep(100);
+    const after = await page.evaluate(() => __game.dogSave.guild.quests.map((q) => q.id));
+    check((await coins()) === k1 - DOGTOWN.guild.reroll && after[0] !== before[0] && after[1] === before[1], `R → 고른 의뢰만 바꾼다 (냥코인 -${DOGTOWN.guild.reroll})`);
+    await page.keyboard.press('Escape');
+    // ── 고등어 상점: 고등어 아저씨 곁에서 E ──
+    await go(2);
+    await page.keyboard.press('KeyE');
+    const shopOpen = await page.waitForFunction(() => __game.shopOpen, { timeout: 3000 }).then(() => true, () => false);
+    await page.keyboard.press('Escape');
+    await sleep(150);
+    check(shopOpen && !(await page.evaluate(() => __game.shopOpen)) && (await page.evaluate(() => __game.scene)) === 'dogtown', '고등어 아저씨 곁에서 E → 고등어 상점 창 · Esc 로 닫으면 마을 그대로');
+    // ── 대장간: 끼고 있는 무기 강화 (망치질) · 합치기 ──
+    await page.evaluate(() => {
+      const b = __game.bag;
+      b.slots[b.slots.findIndex((s) => !s)] = { id: 'equipment_13', n: 1 };
+      b.slots[b.slots.findIndex((s) => !s)] = { id: 'equipment_13', n: 1 };
+    });
+    await go(1);
+    await page.keyboard.press('KeyE');
+    await page.waitForFunction(() => __game.dogView.panel?.kind === 'dog' && __game.dogView.panel.i === 1, { timeout: 3000 }).catch(() => {});
+    await sleep(200);
+    await page.screenshot({ path: fsPath(new URL('dog-forge.png', OUT)) });
+    const k2 = await coins();
+    await page.keyboard.press('Enter'); // 강화 — 무기가 먼저 골라져 있다
+    const hammer = await page.waitForFunction(() => __game.dogView.panel?.kind === 'hammer', { timeout: 2000 }).then(() => true, () => false);
+    const paid = k2 - (await coins());
+    await sleep(300);
+    await page.screenshot({ path: fsPath(new URL('dog-hammer.png', OUT)) });
+    for (let n = 0; n < 3; n++) {
+      // 고리가 금색 원(target)에 닿기 조금 전에 누른다 (누르는 데 한 프레임쯤 걸린다)
+      await page.waitForFunction(() => ((h) => h?.phase === 'hit' && h.r - 0.3 < 0.025)(__game.dogView.panel?.h), { polling: 'raf', timeout: 5000 }).catch(() => {});
+      await page.keyboard.press('Space');
+      await page.waitForFunction((n) => (__game.dogView.panel?.h?.results.length ?? 0) > n, { timeout: 2000 }, n).catch(() => {});
+    }
+    await sleep(300);
+    const hm = await page.evaluate(() => ({ res: __game.dogView.panel?.res, results: __game.dogView.panel?.h?.results, fp: __game.bag.fp.weapon, forged: __game.dogSave.forged }));
+    await page.screenshot({ path: fsPath(new URL('dog-hammer-done.png', OUT)) });
+    check(hammer && paid === DOGTOWN.forge.coins[0] + 2 * 4 && hm.res?.stars >= 2 && hm.fp === hm.res.stars && hm.forged === 1, `Enter → 강화 값 ${paid}냥 (모자란 거친 돌은 사서) → 망치질 Space × 3 (${hm.results?.join(' · ')}) → ${'★'.repeat(hm.res?.stars ?? 0)} 강화 점수 ${hm.fp}`);
+    await page.keyboard.press('Enter'); // 결과 → 대장간
+    // 합치기: 가방의 잎사귀 모자 둘 → 칸을 눌러 고르고 합치기 (대장간 칸 = 끼고 있는 장비 먼저, 그다음 가방의 장비)
+    const hatPos = await page.evaluate(() => {
+      const worn = ['weapon', 'head', 'body', 'accessory', 'rod', 'tool'].filter((s) => __game.bag.equip[s]).length;
+      const kept = __game.bag.slots.flatMap((s, i) => (s && /^equipment_/.test(s.id) ? [{ i, id: s.id }] : []));
+      return worn + kept.findIndex((k) => k.id === 'equipment_13');
+    });
+    await click2(page, (await DP()).cells[hatPos]);
+    const k3 = await coins();
+    await click2(page, (await DP()).join);
+    await sleep(150);
+    const hats = await page.evaluate(() => __game.bag.slots.filter((s) => s?.id === 'equipment_13'));
+    check(hats.length === 1 && hats[0].fp === 3 && (await coins()) === k3 - DOGTOWN.forge.merge, `가방의 잎사귀 모자 둘을 골라 합치기 → 하나 (+1) · 냥코인 -${DOGTOWN.forge.merge}`);
+    await page.keyboard.press('Escape');
+    // ── 우체국: 맡기 → 받는 이(버나드)에게 말을 걸면 배달 ──
+    await go(3);
+    await page.keyboard.press('KeyE');
+    await page.waitForFunction(() => __game.dogView.panel?.kind === 'dog' && __game.dogView.panel.i === 3, { timeout: 3000 }).catch(() => {});
+    await sleep(200);
+    await page.screenshot({ path: fsPath(new URL('dog-post.png', OUT)) });
+    await click2(page, (await DP()).take);
+    await sleep(100);
+    const parcel = await page.evaluate(() => {
+      const p = __game.dogSave.parcels[0];
+      if (!p) return null;
+      p.to = 'dog:bernard';
+      const b = __game.bag;
+      b.slots[b.slots.findIndex((s) => !s)] = { id: p.item, n: p.n };
+      return p;
+    });
+    await page.keyboard.press('Escape');
+    const k4 = await coins();
+    await go(6);
+    await page.keyboard.press('KeyE');
+    await sleep(300);
+    const posted = await page.evaluate(() => ({ posted: __game.dogSave.posted, parcels: __game.dogSave.parcels.length, banner: __game.dogView.msg, anim: __game.dogtown.dogs[6].anim }));
+    check(!!parcel && posted.anim === 'affection' && posted.posted === 1 && posted.parcels === 0 && (await coins()) === k4 + Math.round(parcel.coins * 1.5) && posted.banner.includes('배달 완료'), `우체국 맡기 → 버나드 곁에서 E → 배달 완료 · 빠른 배달 덤 (냥코인 +${(await coins()) - k4})`);
+    // ── 구조대: 요청이 들어오면 출동! ──
+    await page.keyboard.press('Escape');
+    await page.evaluate(() => (__game.dogSave.callAt = 0));
+    await sleep(200);
+    await page.keyboard.press('KeyE');
+    await sleep(300);
+    await page.screenshot({ path: fsPath(new URL('dog-rescue.png', OUT)) });
+    await click2(page, (await DP()).one);
+    await sleep(100);
+    const call = await page.evaluate(() => __game.dogSave.call);
+    check(call?.on === true, '구조 요청이 들어오면 버나드 창의 출동! → 필드에 ❗');
+    await page.keyboard.press('Escape');
+    // ── 탐험가: 냄새 맡기 → ✕ 자리 ──
+    await go(4);
+    await page.keyboard.press('KeyE');
+    await sleep(300);
+    await click2(page, (await DP()).two[1]);
+    await sleep(100);
+    const dig = await page.evaluate(() => __game.dogSave.dig);
+    await page.screenshot({ path: fsPath(new URL('dog-explorer.png', OUT)) });
+    check(dig !== null, `킁킁 창의 냄새 맡기 → 필드에 보물 ✕ (${DOGTOWN.explorer.spots[dig]?.hint})`);
+    await page.keyboard.press('Escape');
+    // ── 미용실: 준비 중 ──
+    await go(7);
+    await page.keyboard.press('KeyE');
+    await sleep(300);
+    await page.screenshot({ path: fsPath(new URL('dog-salon.png', OUT)) });
+    await click2(page, (await DP()).one);
+    check((await panel()) === null, '뽀송 미용실은 준비 중 — 기다릴게요로 닫힌다');
+    // ── 훈련장: 교관 → 훈련 시작 → 허수아비를 방향키로 · 공은 Space → 끝 → 결과 → 마을로 ──
+    await go(5);
+    await page.keyboard.press('KeyE');
+    await sleep(300);
+    await click2(page, (await DP()).one);
+    const inTrain = await page.waitForFunction(() => __game.scene === 'training', { timeout: 8000 }).then(() => true, () => false);
+    await sleep(300);
+    await page.screenshot({ path: fsPath(new URL('training-ready.png', OUT)) });
+    const KEY = ['KeyW', 'KeyD', 'KeyS', 'KeyA'];
+    let dodged = 0;
+    let started = false;
+    for (let i = 0; i < 400; i++) {
+      const s = await page.evaluate(() => ((t) => ({ phase: t.phase, lit: t.lit, ball: t.ball && { t: t.ball.t, done: t.ball.done }, t: t.t }))(__game.training));
+      if (s.phase === 'done') break;
+      if (s.lit && (s.phase === 'ready' || s.lit.t > 0.12)) await page.keyboard.press(KEY[s.lit.dir]);
+      if (!started && s.phase === 'play') {
+        started = true;
+        await page.evaluate((T) => Object.assign(__game.training, { t: T - 12, nextBall: 0.5 }), TRAIN_TIME); // 끝 12초만 (공은 곧)
+      }
+      if (s.ball && !s.ball.done && s.ball.t > 1.45 && s.ball.t < 1.62) await page.keyboard.press('Space');
+      if (s.ball?.done === 'dodge') dodged = 1;
+      if (i === 60) await page.screenshot({ path: fsPath(new URL('training-play.png', OUT)) });
+      await sleep(30);
+    }
+    await page.waitForFunction(() => __game.training.phase === 'done' && __game.training.doneT > 1, { timeout: 15000 }).catch(() => {});
+    const tr = await page.evaluate(() => ({ score: __game.training.score, hearts: __game.training.hearts, coins: __game.training.coins, why: __game.training.why, rec: __game.records.training, trained: __game.dogSave.trained }));
+    await page.screenshot({ path: fsPath(new URL('training-done.png', OUT)) });
+    check(inTrain && tr.why === 'time' && tr.score > 10 && tr.hearts >= 2 && tr.rec === tr.score && tr.trained === 1, `교관 → 훈련 시작 → 방향키로 허수아비 · Space 로 공 피하기${dodged ? ' (피했다!)' : ''} → ${tr.score}점 · 하트 ${tr.hearts} · 냥코인 ${tr.coins} · 기록`);
+    await click2(page, (await page.evaluate(() => __game.miniScreen())).back); // 마을로
+    const back = await page.waitForFunction(() => __game.scene === 'dogtown', { timeout: 8000 }).then(() => true, () => false);
+    await sleep(400);
+    check(back && (await page.evaluate(() => __game.dogtown.near)) === 5, '결과 카드의 마을로 → 강아지마을 교관 앞');
+    // ── 필드: ✕ 자리에서 보물 · ❗ 자리에서 로프 ──
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => __game.scene === 'field', { timeout: 8000 }).catch(() => {});
+    await sleep(500);
+    const spot = DOGTOWN.explorer.spots[dig];
+    await page.evaluate((at) => Object.assign(__game.field, { x: at[0] + 34, y: at[1], camX: at[0], camY: at[1], mode: 'walk' }), spot.at);
+    await sleep(300);
+    await page.screenshot({ path: fsPath(new URL('field-dig-mark.png', OUT)) });
+    const k5 = await coins();
+    await page.keyboard.down('KeyA');
+    await page.waitForFunction((x) => __game.field.x < x + 8, { timeout: 3000 }, spot.at[0]).catch(() => {});
+    await page.keyboard.up('KeyA');
+    const dug = await page.waitForFunction(() => __game.dogSave.dug === 1, { timeout: 4000 }).then(() => true, () => false);
+    await sleep(400);
+    await page.screenshot({ path: fsPath(new URL('field-dig.png', OUT)) });
+    check(dug && (await coins()) - k5 >= DOGTOWN.explorer.coins[0] && (await page.evaluate(() => __game.dogSave.dig)) === null, `필드의 ✕ 자리로 걸어 들어가 서 있으면 보물 (냥코인 +${(await coins()) - k5})`);
+    const cs = DOGTOWN.rescue.calls[call.i];
+    await page.evaluate((at) => Object.assign(__game.field, { x: at[0] + 45, y: at[1], camX: at[0], camY: at[1], mode: 'walk' }), cs.at);
+    await sleep(300);
+    await page.keyboard.down('KeyA');
+    const roped = await page.waitForFunction(() => __game.rope, { timeout: 4000 }).then(() => true, () => false);
+    await page.keyboard.up('KeyA');
+    await sleep(300);
+    await page.screenshot({ path: fsPath(new URL('rope-start.png', OUT)) });
+    for (let i = 0; i < 40 && (await page.evaluate(() => __game.rope?.r.phase)) !== 'done'; i++) {
+      await page.keyboard.press(i % 2 ? 'KeyA' : 'KeyD');
+      await sleep(60);
+    }
+    await sleep(300);
+    const rp = await page.evaluate(() => ({ phase: __game.rope?.r.phase, stars: __game.rope?.r.stars, rescued: __game.dogSave.rescued, call: __game.dogSave.call }));
+    await page.screenshot({ path: fsPath(new URL('rope-done.png', OUT)) });
+    await page.keyboard.press('Enter');
+    await sleep(150);
+    check(roped && rp.phase === 'done' && rp.stars === 3 && rp.rescued === 1 && rp.call === null && !(await page.evaluate(() => __game.rope)), `❗ 자리로 걸어 들어가면 로프 카드 → A · D 번갈아 → 구조 ${'★'.repeat(rp.stars ?? 0)} → Enter 로 닫기`);
+    // 고양이마을 친구에게 배달 — 친구 창을 열면 건넨다
+    await page.evaluate(() => {
+      const friend = Object.keys(__game.villageSave.friends)[1];
+      __game.dogSave.parcels = [{ item: 'materials_01', n: 1, to: 'cat:' + friend, coins: 30, at: Date.now() }];
+      const b = __game.bag;
+      b.slots[b.slots.findIndex((s) => !s)] = { id: 'materials_01', n: 1 };
+    });
+    const vw = FIELD.warps.find((v) => v.to === 'village');
+    await page.evaluate((at) => Object.assign(__game.field, { x: at[0], y: at[1], camX: at[0], camY: at[1], armed: true, mode: 'walk' }), vw.at);
+    await page.waitForFunction(() => __game.scene === 'village', { timeout: 8000 }).catch(() => {});
+    await sleep(600);
+    await page.evaluate(() => ((t) => Object.assign(__game.village.cat, { x: t.x + 36, y: t.y + 14 }))(__game.village.townies[1]));
+    await sleep(600);
+    await page.keyboard.press('KeyE');
+    await sleep(300);
+    const catPost = await page.evaluate(() => ({ posted: __game.dogSave.posted, banner: __game.villageView.msg, panel: __game.villageView.panel?.kind }));
+    check(catPost.posted === 2 && catPost.banner.includes('배달 완료') && catPost.panel === 'friend', '고양이마을 친구에게 말을 걸면 맡은 배달을 건넨다');
+    await page.keyboard.press('Escape');
+    // 새로 고쳐도 그대로
+    const saved = await page.evaluate(() => JSON.stringify(__game.dogSave));
+    await page.reload({ waitUntil: 'load' });
+    await page.waitForFunction(() => window.__sheets, { timeout: 60000 });
+    const re = await page.evaluate(() => JSON.stringify(__game.dogSave));
+    check(re === saved, '새로 고쳐도 강아지마을 기록(길드 · 배달 · 보물 · 구조 · 대장간 · 훈련) 그대로');
+    check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
+    await page.close();
+  }
+  if (S_DOG) for (const [name, view] of [['phone', PHONE], ['portrait', { width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true }]]) {
+    // 휴대폰: 조이스틱으로 대장 곁까지 → 누르면 창 → 바꾸기 버튼 → ✕ · 무쇠 망치질(누르기) · 훈련장(허수아비 누르기 · 구르기 버튼) · 로프(◀ ▶)
+    const { page, errors } = await open('dogtown', '', view, '&touch');
+    await sleep(600);
+    await page.evaluate(() => (__game.bag.coins = 1000));
+    await page.screenshot({ path: fsPath(new URL(`touch-dog-${name}.png`, OUT)) });
+    // 대장 아래 조금 떨어진 자리에서 조이스틱을 위로 밀고 있다가 곁에 닿으면 뗀다
+    await page.evaluate(() => ((p) => Object.assign(__game.dogtown.cat, { x: p[0], y: p[1] + 60 }))(__game.dogSpot(0)));
+    await sleep(600);
+    const js = { x: view.width * 0.22, y: view.height * 0.8 };
+    const hold = await page.touchscreen.touchStart(js.x, js.y);
+    await page.touchscreen.touchMove(js.x, js.y - 30);
+    await page.touchscreen.touchMove(js.x + 4, js.y - 60);
+    const reached = await page.waitForFunction(() => __game.dogtown.near === 0, { timeout: 6000 }).then(() => true, () => false);
+    await hold.end();
+    await sleep(300);
+    await tap(page, await page.evaluate(() => ((d) => __game.dogScreen(d.x, d.y - 30))(__game.dogtown.dogs[0])));
+    const opened = await page.waitForFunction(() => __game.dogView.panel?.kind === 'dog', { timeout: 3000 }).then(() => true, () => false);
+    await sleep(200);
+    await page.screenshot({ path: fsPath(new URL(`touch-dog-guild-${name}.png`, OUT)) });
+    const q0 = await page.evaluate(() => __game.dogSave.guild.quests[1].id);
+    await tap(page, (await page.evaluate(() => __game.dogPoints())).quests[1]);
+    const q1 = await page.evaluate(() => __game.dogSave.guild.quests[1].id);
+    await tap(page, (await page.evaluate(() => __game.dogPoints())).close);
+    check(reached && opened && q0 !== q1 && !(await page.evaluate(() => __game.dogView.panel)), `${name}: 조이스틱으로 대장 곁까지 → 누르면 길드 창 · 바꾸기 버튼 · ✕`);
+    // 무쇠: 강화 버튼 → 망치질은 화면 누르기
+    await page.evaluate(() => ([__game.dogtown.cat.x, __game.dogtown.cat.y] = __game.dogSpot(1)));
+    await sleep(500);
+    await tap(page, await page.evaluate(() => ((d) => __game.dogScreen(d.x, d.y - 30))(__game.dogtown.dogs[1])));
+    await sleep(300);
+    await page.screenshot({ path: fsPath(new URL(`touch-dog-forge-${name}.png`, OUT)) });
+    await tap(page, (await page.evaluate(() => __game.dogPoints())).up);
+    await sleep(200);
+    for (let n = 0; n < 3; n++) {
+      await page.waitForFunction(() => ((h) => h?.phase === 'hit' && h.r - 0.3 < 0.03)(__game.dogView.panel?.h), { polling: 'raf', timeout: 5000 }).catch(() => {});
+      await tap(page, (await page.evaluate(() => __game.dogPoints())).card);
+      await page.waitForFunction((n) => (__game.dogView.panel?.h?.results.length ?? 0) > n, { timeout: 2000 }, n).catch(() => {});
+    }
+    await sleep(300);
+    const hm = await page.evaluate(() => __game.dogView.panel?.res);
+    await page.screenshot({ path: fsPath(new URL(`touch-dog-hammer-${name}.png`, OUT)) });
+    await tap(page, (await page.evaluate(() => __game.dogPoints())).ok);
+    await tap(page, (await page.evaluate(() => __game.dogPoints())).close);
+    check(hm?.stars >= 2, `${name}: 강화 버튼 → 망치질을 화면 누르기로 ${'★'.repeat(hm?.stars ?? 0)}`);
+    // 훈련장: 허수아비 누르기 · 구르기 버튼
+    await page.evaluate(() => ([__game.dogtown.cat.x, __game.dogtown.cat.y] = __game.dogSpot(5)));
+    await sleep(400);
+    await tap(page, await page.evaluate(() => ((d) => __game.dogScreen(d.x, d.y - 30))(__game.dogtown.dogs[5])));
+    await sleep(300);
+    await tap(page, (await page.evaluate(() => __game.dogPoints())).one);
+    await page.waitForFunction(() => __game.scene === 'training', { timeout: 8000 }).catch(() => {});
+    await sleep(300);
+    await page.screenshot({ path: fsPath(new URL(`touch-training-${name}.png`, OUT)) });
+    let hits = 0;
+    for (let i = 0; i < 6; i++) {
+      const lit = await page.evaluate(() => __game.training.lit);
+      if (!lit) {
+        await sleep(200);
+        continue;
+      }
+      await tap(page, await page.evaluate((d) => __game.dummyPoint(d), lit.dir));
+      await sleep(250);
+      hits = await page.evaluate(() => __game.training.hits);
+    }
+    const dash = (await page.evaluate(() => __game.controls)).buttons.find((b) => b.id === 'dash');
+    await tap(page, dash);
+    await sleep(80);
+    const rolled = await page.evaluate(() => __game.training.rollT < 0.45);
+    check(hits >= 3 && !!dash && rolled, `${name}: 허수아비를 눌러 ${hits}번 · 구르기 버튼`);
+    check(errors.length === 0, `${name}: 페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
+    await page.close();
+  }
+  if (S_DOG) {
+    // 로프 (휴대폰 세로): ◀ ▶ 버튼을 번갈아
+    const view = { width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true };
+    const { page, errors } = await open('field', '', view, '&touch');
+    await page.evaluate(() => (__game.dogSave.call = { i: 1, on: true }));
+    const cs = DOGTOWN.rescue.calls[1];
+    await page.evaluate((at) => Object.assign(__game.field, { x: at[0], y: at[1], camX: at[0], camY: at[1], mode: 'walk' }), cs.at);
+    await page.waitForFunction(() => __game.rope, { timeout: 4000 }).catch(() => {});
+    await sleep(300);
+    await page.screenshot({ path: fsPath(new URL('screen-rope-portrait.png', OUT)) });
+    const RP = await page.evaluate(() => __game.ropePoints());
+    for (let i = 0; i < 40 && (await page.evaluate(() => __game.rope?.r.phase)) !== 'done'; i++) {
+      await tap(page, i % 2 ? RP.left : RP.right);
+      await sleep(50);
+    }
+    await sleep(200);
+    const ph = await page.evaluate(() => __game.rope?.r.phase);
+    await page.screenshot({ path: fsPath(new URL('screen-rope-portrait-done.png', OUT)) });
+    await tap(page, RP.ok);
+    check(ph === 'done' && !(await page.evaluate(() => __game.rope)) && errors.length === 0, `휴대폰 세로: 로프 ◀ ▶ 버튼을 번갈아 → 구조 · 좋아요 · 페이지 에러 ${errors.length}건`);
     await page.close();
   }
 

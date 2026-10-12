@@ -17,13 +17,14 @@ const SCENES = ['field', 'dungeon', 'fishing', 'village', 'mini'];
 const EXCEPTIONS = {
   'mini/chase-draw.ts → field/squirrel-draw.ts': '다람쥐 잡기는 필드 숲 다람쥐 · 도토리 그리기를 그대로 쓴다',
 };
-const ORDER = ['collide', 'enemy', 'field', 'dungeon', 'fishing', 'bag', 'maze', 'sandboard', 'timber', 'chase', 'village', 'skills'];
+const ORDER = ['collide', 'enemy', 'field', 'dungeon', 'fishing', 'bag', 'maze', 'sandboard', 'timber', 'chase', 'training', 'village', 'dogtown', 'skills'];
 /** 한글 별명 → 체크 이름 (field.check 는 지형 · 다리 · 고래 · 숲까지, skills.check 는 웨이브까지) */
 const ALIAS = {
   충돌: 'collide', 몬스터: 'enemy', 적: 'enemy', 펀치: 'enemy',
   필드: 'field', 지형: 'field', 다리: 'field', 고래: 'field', 숲: 'field', 도끼: 'field',
   던전: 'dungeon', 낚시: 'fishing', 가방: 'bag', 상점: 'bag', 미로: 'maze', 샌드보드: 'sandboard',
   장작: 'timber', 다람쥐: 'chase', 마을: 'village', 놀이: 'village', 요리: 'village', 기술: 'skills', 웨이브: 'skills',
+  훈련: 'training', 강아지마을: 'dogtown', 길드: 'dogtown', 대장간: 'dogtown', 우체국: 'dogtown', 탐험가: 'dogtown', 구조대: 'dogtown',
 };
 
 /** src 아래 .ts 전부 (assets · data 는 뺀다) — 'shared/sheet.ts' 꼴 */
