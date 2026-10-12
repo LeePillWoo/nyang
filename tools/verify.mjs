@@ -1084,7 +1084,7 @@ try {
   const TRAIN_TIME = 45;
   if (S_DOG) {
     const { page, errors } = await open('field');
-    await page.evaluate(() => ['nyang.dogtown.v1', 'nyang.bag.v1', 'nyang.village.v1'].forEach((k) => localStorage.removeItem(k)));
+    await page.evaluate(() => ['nyang.dogtown.v1', 'nyang.bag.v1', 'nyang.village.v1', 'nyang.cosmetics.v1'].forEach((k) => localStorage.removeItem(k)));
     await page.reload({ waitUntil: 'load' });
     await page.waitForFunction(() => window.__sheets, { timeout: 60000 });
     await page.evaluate(() => (__game.bag.coins = 3000));
@@ -1237,13 +1237,31 @@ try {
     await page.screenshot({ path: fsPath(new URL('dog-explorer.png', OUT)) });
     check(dig !== null, `킁킁 창의 냄새 맡기 → 필드에 보물 ✕ (${DOGTOWN.explorer.spots[dig]?.hint})`);
     await page.keyboard.press('Escape');
-    // ── 미용실: 준비 중 ──
+    // ── 미용실 (2026-10-13 꾸미기 소품): 탭 → 소품 칸 → 입어 보기 → 사고 입기 · 키로 목 탭(4) → ← → → Enter 사고 입기 · 다시 Enter 면 벗기 ──
     await go(7);
     await page.keyboard.press('KeyE');
     await sleep(300);
+    const SP = (await DP()).salon;
+    await click2(page, SP.tabs[0]);
+    await click2(page, SP.cells[2]);
+    await sleep(300);
     await page.screenshot({ path: fsPath(new URL('dog-salon.png', OUT)) });
-    await click2(page, (await DP()).one);
-    check((await panel()) === null, '뽀송 미용실은 준비 중 — 기다릴게요로 닫힌다');
+    const kc = await coins();
+    await click2(page, SP.main);
+    const hat = await page.evaluate(() => ({ pick: __game.dogView.cosPick, worn: __game.closet.worn.head, owned: __game.closet.owned.length }));
+    await page.keyboard.press('Digit4');
+    await page.keyboard.press('ArrowRight');
+    await page.keyboard.press('Enter');
+    const neck = await page.evaluate(() => __game.closet.worn.neck);
+    await sleep(300);
+    await page.screenshot({ path: fsPath(new URL('dog-salon-worn.png', OUT)) });
+    await page.keyboard.press('Enter');
+    const off = await page.evaluate(() => __game.closet.worn.neck);
+    await page.keyboard.press('Enter');
+    check(!!hat.pick && hat.worn === hat.pick && hat.owned === 1 && kc - (await coins()) > 0 && !!neck && off === undefined && (await page.evaluate(() => __game.closet.worn.neck)) === neck, `미용실: 모자 탭 → 칸 → 사고 입기 (${hat.pick}) · 키 4 → → → Enter 로 목 소품 · 다시 Enter 면 벗기`);
+    await page.keyboard.press('Escape');
+    await sleep(400);
+    await page.screenshot({ path: fsPath(new URL('dog-worn-town.png', OUT)) });
     // ── 훈련장: 교관 → 훈련 시작 → 허수아비를 방향키로 · 공은 Space → 끝 → 결과 → 마을로 ──
     await go(5);
     await page.keyboard.press('KeyE');
@@ -1329,11 +1347,11 @@ try {
     check(catPost.posted === 2 && catPost.banner.includes('배달 완료') && catPost.panel === 'friend', '고양이마을 친구에게 말을 걸면 맡은 배달을 건넨다');
     await page.keyboard.press('Escape');
     // 새로 고쳐도 그대로
-    const saved = await page.evaluate(() => JSON.stringify(__game.dogSave));
+    const saved = await page.evaluate(() => JSON.stringify(__game.dogSave) + JSON.stringify([__game.closet.owned, Object.entries(__game.closet.worn).sort()]));
     await page.reload({ waitUntil: 'load' });
     await page.waitForFunction(() => window.__sheets, { timeout: 60000 });
-    const re = await page.evaluate(() => JSON.stringify(__game.dogSave));
-    check(re === saved, '새로 고쳐도 강아지마을 기록(길드 · 배달 · 보물 · 구조 · 대장간 · 훈련) 그대로');
+    const re = await page.evaluate(() => JSON.stringify(__game.dogSave) + JSON.stringify([__game.closet.owned, Object.entries(__game.closet.worn).sort()]));
+    check(re === saved, '새로 고쳐도 강아지마을 기록(길드 · 배달 · 보물 · 구조 · 대장간 · 훈련) · 옷장(꾸미기 소품) 그대로');
     check(errors.length === 0, `페이지 에러 ${errors.length}건${errors.length ? ': ' + errors[0] : ''}`);
     await page.close();
   }
@@ -2441,13 +2459,13 @@ try {
     const w0 = await page.evaluate(() => ({ n: __game.dungeon.enemies.length, q: __game.dungeon.wave.queue.length, total: __game.dungeon.wave.total }));
     check(w0.n + w0.q === WAVE_DATA.counts[0] && w0.total === WAVE_DATA.counts.length, `웨이브 1: 방 몬스터 ${w0.n} + 가장자리에서 ${w0.q} (웨이브 ${w0.total}개)`);
     await page.evaluate(() => setInterval(() => (__game.dungeon.P.invT = 1), 50)); // 이 검사에선 안 다친다
-    // 나온 그 프레임에서 잰다 (전체 검증 중엔 page.evaluate 가 늦어 몬스터가 이미 다가와 있었다)
-    const fresh = await page
-      .waitForFunction((n) => { const d = __game.dungeon; return d.enemies.length > n && d.enemies.slice(n).map((e) => Math.hypot(e.x - d.P.x, e.z - d.P.z)); }, { timeout: 6000, polling: 'raf' }, w0.n)
+    // 규칙: 예고(바닥 소용돌이) 자리를 고를 때 고양이와 minDist 밖 — 그 순간을 잰다 (0.8초 예고 동안 고양이가 밀리면 나오는 순간엔 가까울 수 있다)
+    const marks = await page
+      .waitForFunction(() => { const d = __game.dungeon; return d.wave.marks.length > 0 && d.wave.marks.map((m) => Math.hypot(m.x - d.P.x, m.z - d.P.z)); }, { timeout: 6000, polling: 'raf' })
       .then((h) => h.jsonValue(), () => null);
-    const spawned = !!fresh;
-    const far = !!fresh && fresh.every((dist) => dist > 3.5);
-    check(spawned && far, '가장자리에서 예고 뒤 몬스터가 더 나온다 (고양이 가까이는 아니다)');
+    const spawned = await page.waitForFunction((n) => __game.dungeon.enemies.length > n, { timeout: 6000 }, w0.n).then(() => true, () => false);
+    const far = !!marks && marks.every((dist) => dist > WAVE_DATA.minDist - 0.6); // 자리 흔들기(±0.4) · 벽 밀어내기만큼
+    check(spawned && far, `가장자리에서 예고 뒤 몬스터가 더 나온다 (예고 자리는 고양이와 ${marks?.map((v) => v.toFixed(1)).join(' · ')}m — ${WAVE_DATA.minDist}m 밖)`);
     await page.screenshot({ path: fsPath(new URL('dungeon-wave.png', OUT)) });
     // 자동 냥펀치로 쓰러뜨려 생선뼈 → 레벨 업 카드
     for (let i = 0; i < 40 && !(await page.evaluate(() => !!__game.dungeon.choose)); i++) {

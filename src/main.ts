@@ -88,6 +88,8 @@ import { chaseFx, chaseReady, chaseView, drawChase } from './mini/chase-draw.ts'
 import { burn, drawVillage, drawVillagePanel, finishPlay, openVillagePanel, resetVillageView, toyX, villageKey, villagePoints, villageReady, villageTap, villageView, type VillageAct } from './village/village-draw.ts';
 import { updateToy, type ToyEvent } from './village/toys.ts';
 import { FRIENDS, fromVillageSave, hello, makeVillage, setAnim, talkTo, targetAtPoint, tickRequests, updateCook, updateVillage, type VillageSave, type VillageState } from './village/village.ts';
+import { fromWardrobe, type Wardrobe } from './shared/cosmetics.ts';
+import { setCosmetics } from './shared/cosmetics-draw.ts';
 import {
   dogKey,
   dogPoints,
@@ -103,6 +105,7 @@ import {
   hammerStep,
   openDogPanel,
   resetDogView,
+  setSalon,
   ropePoints,
   ropeTap,
   type DogAct,
@@ -758,6 +761,23 @@ function saveDog() {
   }
 }
 
+// 옷장 (미용실 꾸미기 소품 — 가진 것 · 걸친 것). ponytail: localStorage (저장 M2 때 세이브로)
+const CLOSET_KEY = 'nyang.cosmetics.v1';
+const closet: Wardrobe = (() => {
+  try {
+    return fromWardrobe(JSON.parse(localStorage.getItem(CLOSET_KEY) ?? 'null'));
+  } catch {
+    return fromWardrobe(null);
+  }
+})();
+function saveCloset() {
+  try {
+    localStorage.setItem(CLOSET_KEY, JSON.stringify(closet));
+  } catch {
+    // 이번 판만
+  }
+}
+
 // 낚시 도감 — ponytail: 브라우저 localStorage. 저장(IndexedDB, M2)을 붙이면 세이브의 fishDex 로 옮긴다 (GDD 10장)
 const DEX_KEY = 'nyang.fishDex.v1';
 function loadDex(): Dex {
@@ -911,6 +931,8 @@ if (trace)
       villageView,
       get dogtown() { return dogtown; },
       dogSave: dsave,
+      /** 옷장 (꾸미기 소품) */
+      closet,
       dogView,
       /** 강아지마을 지도 좌표 (x, y) 의 화면 위치 (CSS px) */
       dogScreen: (x: number, y: number) => {
@@ -1606,6 +1628,10 @@ function onDogAct(a: DogAct) {
     if (a.kind === 'rescue') say('determination', 1.4);
     saveBag();
     saveDog();
+  } else if (a.kind === 'cos') {
+    sfxPickup();
+    saveBag();
+    saveCloset();
   } else if (a.kind === 'fail') sfxFull();
   if (!dogView.panel) help.classList.remove('choosing');
 }
@@ -2164,6 +2190,8 @@ const step = (t: string) => {
   await Promise.all([dungeonReady, fieldReady, emotesReady, itemIconsReady, coinReady]);
   step('고양이 시트');
   catSheet = await loadCat();
+  setCosmetics(catSheet, closet); // 걸친 꾸미기 소품을 치즈 위에
+  setSalon(closet, catSheet);
   step('도끼·배·눈길 시트');
   [axeSheet, boatSheet, snowSheet] = await Promise.all([loadAxe(), loadBoat(), loadSnow()]);
   step('지형');

@@ -4,6 +4,7 @@
 import { AXE_FPS, AXE_ROW, CAT_ROW } from '../shared/cat.ts';
 import { drawEmote } from '../shared/emote.ts';
 import { drawCard, drawLeave, drawPill, miniLayout, type MiniButton } from '../shared/mini-draw.ts';
+import { drawWorn } from '../shared/cosmetics-draw.ts';
 import { drawFrame, type Sheet } from '../shared/sheet.ts';
 import { TIMBER, type Seg, type Side, type TimberEvent, type TimberState } from './timber.ts';
 
@@ -290,6 +291,7 @@ export function drawTimber(ctx: CanvasRenderingContext2D, cw: number, ch: number
   if (hit) {
     const cat = sheets.cat;
     drawFrame(ctx, cat, CAT_ROW.hurt, Math.min(5, Math.floor(s.doneT * 10)), x, L.gy, (L.catH * cat.base) / cat.bodyH, flip);
+    drawWorn(ctx, cat, CAT_ROW.hurt, Math.min(5, Math.floor(s.doneT * 10)), x, L.gy, (L.catH * cat.base) / cat.bodyH, flip);
   } else {
     const axe = sheets.axe;
     const swing = s.phase !== 'ready' && s.chopT < 0.24;

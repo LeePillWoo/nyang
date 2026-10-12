@@ -27,6 +27,7 @@ import {
   type Warp,
   type Whale,
 } from './field.ts';
+import { drawWorn } from '../shared/cosmetics-draw.ts';
 import { drawFrame, type Sheet } from '../shared/sheet.ts';
 import { drawAcorn, drawSquirrel } from './squirrel-draw.ts';
 
@@ -772,7 +773,10 @@ export function drawField(
   const q0 = (size / sheet.base) * (rs ?? sheet.rowScale[row] ?? 1);
   const mid = fr ? { x: s.x + s.flip * (fr.ox + fr.sw / 2) * q0, y: s.y + bob + (fr.oy + fr.sh / 2) * q0 } : { x: s.x, y: s.y };
   const ride = boatWithWhale(s.whale, mid.x, mid.y);
-  if (ride === null || !fr) drawFrame(ctx, sheet, row, col, s.x, s.y + bob, size, s.flip, rs);
+  if (ride === null || !fr) {
+    drawFrame(ctx, sheet, row, col, s.x, s.y + bob, size, s.flip, rs);
+    drawWorn(ctx, sheet, row, col, s.x, s.y + bob, size, s.flip, rs); // 걷기(기본 시트)일 때만 꾸미기 소품
+  }
   else if (ride !== 'hide') {
     const q = q0 * ride.scale;
     ctx.save();

@@ -251,6 +251,41 @@ for (const [kind, label] of [['cats', '마을 고양이'], ['dogs', '마을 강�
   console.log(`  ${label} 좌표  src/data/village-${kind}.json (${Object.keys(res).length}마리)`);
 }
 
+// 미용실 꾸미기 소품 art/cosmetics/salon/atlas.json → src/data/cosmetics.json (2026-10-13)
+//   몸에 걸치는 것만 (머리 · 얼굴 · 목 · 옷 · 등 · 무늬 — 꼬리 · 발 · 미용 도구 · 미용실 가구는 뺀다).
+//   id → { name, slot, sheet(확장자 없이), r: 그림이 있는 범위 [x, y, w, h], hint: [x, y, 너비] (치즈 컷 범위에 대한 비율 — 가운데 · 너비), head: 머리까지 덮는 옷,
+//          up: 두 발 자세 짝 { sheet, r, hint } }. tabs: 미용실 탭 [이름, [id …]]
+{
+  const src = path.join(ART, 'cosmetics/salon/atlas.json');
+  const out = path.join(ROOT, 'src/data/cosmetics.json');
+  if (fs.existsSync(src) && (all || !fs.existsSync(out) || fs.statSync(src).mtimeMs > fs.statSync(out).mtimeMs)) {
+    const atlas = JSON.parse(fs.readFileSync(src, 'utf8').replace(/^﻿/, ''));
+    const WEAR = ['head', 'face', 'neck', 'body', 'back', 'marking'];
+    const items = {};
+    const tabs = [];
+    const TAB = { '01_hats_daily': '모자', '02_hats_roles': '모자', '03_head_ribbons_flowers': '머리 장식', '04_head_playful': '머리 장식', '05_face': '얼굴', '06_neck': '목', '07_clothes_daily': '옷', '08_clothes_theme': '옷', '09_back': '등', '11_markings': '무늬' };
+    for (const sh of atlas.sheets) {
+      const file = sh.file.replace(/.png$/, '');
+      for (const it of sh.items) {
+        if (!WEAR.includes(it.slot)) continue;
+        const h = it.placementHint;
+        const one = { sheet: file, r: it.bboxAlpha32, hint: [h.x, h.y, h.width] };
+        if (it.variant === 'upright') {
+          if (items[it.id]) items[it.id].up = one;
+          continue;
+        }
+        items[it.id] = { name: it.name, slot: it.slot, ...one, ...(it.includesHeadPiece ? { head: 1 } : {}) };
+        const name = TAB[sh.id];
+        let t = tabs.find((x) => x[0] === name);
+        if (!t) tabs.push((t = [name, []]));
+        t[1].push(it.id);
+      }
+    }
+    fs.writeFileSync(out, JSON.stringify({ items, tabs }).replace(/\},"/g, '},\n"') + '\n');
+    console.log(`  꾸미기 소품  src/data/cosmetics.json (${Object.keys(items).length}개 · 탭 ${tabs.length})`);
+  }
+}
+
 // 기술 이펙트 art/effects/skills_8x8/atlas.json → src/data/skill-fx.json (8×8 균등 격자, 칸 128px)
 //   sheets: 시트 id → 경로, anims: 동작 id → [시트, 행, fps, 반복 0/1, 바닥 0/1, 오른쪽 방향 0/1], beam: 레이저 빔 칸 안 이어 붙일 범위
 const SKILL_FX = path.join(ART, 'effects/skills_8x8/atlas.json');

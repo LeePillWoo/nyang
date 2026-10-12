@@ -103,7 +103,14 @@
   · **버나드 — 구조대**: 처음 들른 뒤 `first`(20)초, 그 뒤 구조할 때마다 `every`(150)초 뒤 구조 요청(`rescue.calls` 4가지 — 나무 위 새끼 고양이 · 떠내려가는 배 · 구덩이 강아지) →
     출동! → 필드 · 미니맵에 ❗ → 그 자리에 들어가면 **로프 카드**(src/village/rope.ts — A · ← / D · → 를 번갈아 24번, 10초 안에, 같은 쪽 두 번은 미끄러짐 · 남은 시간 4초 ★★★ · 2초 ★★) →
     냥코인 40~70 · 가끔 말린 지도. 놓치면 다시 당기기 · 나중에(그 자리를 벗어났다 와야 다시). 휴대폰은 ◀ ▶ 버튼 · 화면 반쪽.
-  · **뽀송 — 미용실**: 준비 중 (사용자: 리소스와 꾸미기가 오면 연다) — 창은 "곧 문을 열어요"만.
+  · **뽀송 — 미용실 · 꾸미기 소품**(2026-10-13 사용자 소품 시트 `art/cosmetics/salon` — 15장 · 150그림, 털 염색은 하지 않기로): 몸에 걸치는 100개만 쓴다
+    (머리 40 · 얼굴 10 · 목 10 · 옷 20(네 발 · 두 발 짝) · 등 10 · 무늬 10 — 꼬리 · 발 · 미용 도구 · 미용실 가구는 아직 안 씀). 좌표는 atlas.json → tools/assets.mjs → `src/data/cosmetics.json`
+    (소품마다 그림 범위 · 칸 · hint · 두 발 짝 `up` · 머리까지 덮는 옷 `head`, 미용실 탭 7). 로직 src/shared/cosmetics.ts(옷장 — 칸마다 하나, 사기 · 입기/벗기 · 모두 벗기, 값은 칸마다 `COS_PRICE`),
+    그리기 src/shared/cosmetics-draw.ts `drawWorn` — **치즈 기본 시트(cat_action_sheet)로 그리는 곳마다**(마을 둘 · 필드 걷기 · 던전 · 미로 · 훈련장 · 다람쥐 잡기 · 장작 패기 맞음) 그 컷 위에 얹는다.
+    자리: 소품 hint 는 "기준 컷(대기 첫 컷)의 그림 범위 비율"이라, 컷마다 머리(위쪽 32% 띠에서 가장 넓은 가로줄 — 꼬리 · 붙은 앞발은 빠짐)를 재서 그 컷이 기준 컷이었다면 범위가 어땠을지로 되짚는다
+    (꼬리가 뻗은 컷에서 소품이 커지고 밀리던 것을 막음), 칸별 보정 `TWEAK`(얼굴 · 목 — tools/out/cos-peek.mjs 로 컷 24개에 대 보고 고름). 냥펀치 줄은 옷의 두 발 짝, **구르기 줄 · 도끼 · 배 · 눈밭 · 낚시 · 샌드보드 시트에선 안 보인다**
+    (그 시트들용 자리는 따로 재야 한다). 머리까지 덮는 옷이면 모자는 안 그린다. 미용실 창: 탭 7 · 소품 칸 5×4 · 고르면 모습 원의 치즈가 입어 본 모습 · 사고 입기 / 입기 / 벗기 · 모두 벗기
+    (키: 1~7 탭 · 방향키 · Enter · X). 옷장은 localStorage `nyang.cosmetics.v1` (`fromWardrobe`), 검증 훅 `__game.closet` · `dogPoints().salon`.
   **미션 창**(src/bag/quest-draw.ts, 2026-10-13 사용자 — "도감 밑에 미션 버튼 · 아이템 구하기 같은 건 워프 지점으로 바로 가는 버튼"): 필드 📖 도감 밑(마을은 🎒 가방 밑) 📜 미션 버튼 · Q 키 →
   길드 의뢰 셋 · 맡은 배달 · 보물 ✕ · 구조 ❗ 를 한 창에, 줄마다 📍 바로가기(`travelTo` — 납품 · 배달 물건은 sources.ts `shortcut`, 던전 · 낚시 의뢰는 가까운 열린 던전 · 낚시터, 미니게임은 그 포탈,
   다 된 의뢰 · 구조 요청은 강아지마을, 보물 · 구조 자리는 가장 가까운 열린 포탈). 배달은 그만두기 · 시간이 지나면 빨간 실패. 검증 훅 `__game.questPoints()` · `questsOpen`.
@@ -502,6 +509,8 @@ src/shared/collide.ts     원-AABB 그리드 충돌
 src/shared/cat.ts         고양이 시트 행 배정 (기본 · 도끼 · 배 · 눈/모래)
 src/shared/fx.ts          이펙트 시트 3장 규격·이름표(FX)·그리기 (그림은 그리는 쪽이 불러온다)
 src/shared/audio.ts       합성 타격음
+src/shared/cosmetics.ts   꾸미기 소품 옷장 (칸 · 사기 · 입기/벗기 · 머리까지 덮는 옷 · 저장) — node 로 체크된다
+src/shared/cosmetics-draw.ts 치즈 기본 시트 컷 위에 걸친 소품 (컷마다 머리를 재서 맞춤 · 두 발 짝 · 구르기엔 숨김) · 소품 아이콘
 src/data/          village.json · village-cats.json(만들어지는 파일 — 주민 시트 좌표) · dogtown.json(강아지마을 — 걷는 땅 · 주민 · 길드 · 대장간 · 우체국 · 탐험가 · 구조대) · village-dogs.json(만들어지는 파일) · waves.json · skills.json · skill-fx.json(만들어지는 파일) · sandboard-atlas.json(만들어지는 파일) · enemies.json · rooms.json · player.json · field.json (필드 + 포탈) · emotions.json · fish.json · fishing.json · fishing-atlas.json · items.json · drops.json · item-icons.json · shop.json
 src/assets/        art/ 와 같은 구조의 WebP + world/masks/ (지형 마스크)
 docs/signposts.json 필드 이정표 41곳 좌표 (사용자 제공 원본)

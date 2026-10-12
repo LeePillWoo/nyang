@@ -9,7 +9,10 @@ import DOG_SHEETS from '../data/village-dogs.json' with { type: 'json' };
 import { image } from '../shared/assets.ts';
 import { drawEmote } from '../shared/emote.ts';
 import { drawLeave, drawPill, miniLayout, type MiniButton } from '../shared/mini-draw.ts';
-import { type Sheet } from '../shared/sheet.ts';
+import { CAT_FPS, CAT_ROW } from '../shared/cat.ts';
+import { buyCos, COS, COS_SLOT_NAME, COS_TABS, cosPrice, takeOffAll, wearCos, type CosSlot, type Wardrobe } from '../shared/cosmetics.ts';
+import { drawCosIcon, drawWorn } from '../shared/cosmetics-draw.ts';
+import { drawFrame, type Sheet } from '../shared/sheet.ts';
 import { fitText, wrapText } from '../shared/touch.ts';
 import {
   acceptOrder,
@@ -88,6 +91,9 @@ export const dogView = {
   sel: 0,
   msg: '',
   msgT: 0,
+  /** 미용실: 보는 탭 · 고른 소품 (입어 보기) */
+  cosTab: 0,
+  cosPick: null as string | null,
   /** 화면 카메라 · 캔버스 변환 (검증용 — town-draw 가 채운다) */
   cam: null as { x: number; y: number } | null,
   sc: 1,
@@ -95,6 +101,13 @@ export const dogView = {
   oy: 0,
 };
 const dsay = (msg: string) => Object.assign(dogView, { msg, msgT: 2.6 });
+/** 옷장 (미용실) · 치즈 시트 (모습 원에 입어 보기) — main 이 처음에 한 번 */
+let closet: Wardrobe = { owned: [], worn: {} };
+let catSheet: Sheet | null = null;
+export function setSalon(w: Wardrobe, cat: Sheet) {
+  closet = w;
+  catSheet = cat;
+}
 export function resetDogView() {
   Object.assign(dogView, { panel: null, line: '', sel: 0, msg: '', msgT: 0, cam: null });
 }
@@ -112,7 +125,7 @@ export function drawDogtown(
 ) {
   const { seen, pad, dpr, w, h } = drawTownGround(ctx, cw, ch, DOGTOWN as unknown as Parameters<typeof drawTownGround>[3], BG.img, s.cat, dogView, v.dt, v.debug);
   // 시설 간판 (미용실은 회색 — 준비 중)
-  DOGS.forEach((d) => signLabel(ctx, seen, pad, d.sign[0], d.sign[1], DC, d.label, v.t, d.job === 'salon' ? '#9a8a9a' : '#c0582c'));
+  DOGS.forEach((d) => signLabel(ctx, seen, pad, d.sign[0], d.sign[1], DC, d.label, v.t, '#c0582c'));
   type Thing = { y: number; draw: () => void };
   const things: Thing[] = s.dogs.map((p, i) => ({
     y: p.y,
@@ -201,6 +214,20 @@ function simpleLayout(A: R, wide: boolean, n: number) {
   return { S, btns, foot: by + (wide || n === 1 ? 80 : 150) };
 }
 
+/** 미용실: 탭 일곱 · 소품 칸 (5 × 4) · 고른 소품 설명 · 사기/입기/벗기 · 모두 벗기 */
+function salonLayout(A: R, wide: boolean) {
+  const n = COS_TABS.length;
+  const tw = A.w / n;
+  const tabs = COS_TABS.map((_, k): R => ({ x: A.x + k * tw + 2, y: A.y, w: tw - 4, h: 40 }));
+  const cs = wide ? 66 : 86;
+  const step = cs + (wide ? 6 : 8);
+  const cells = Array.from({ length: 20 }, (_, k): R => ({ x: A.x + (k % 5) * step, y: A.y + 50 + Math.floor(k / 5) * step, w: cs, h: cs }));
+  const gy = A.y + 50 + 4 * step;
+  const D: R = wide ? { x: A.x + 5 * step + 12, y: A.y + 50, w: A.w - 5 * step - 12, h: A.h - 50 } : { x: A.x, y: gy + 4, w: A.w, h: A.y + A.h - gy - 4 };
+  const main: R = wide ? { x: D.x + 14, y: D.y + D.h - 124, w: D.w - 28, h: 54 } : { x: D.x, y: D.y + D.h - 60, w: D.w * 0.6 - 6, h: 54 };
+  const off: R = wide ? { x: D.x + 14, y: D.y + D.h - 60, w: D.w - 28, h: 48 } : { x: D.x + D.w * 0.6 + 6, y: main.y, w: D.w * 0.4 - 6, h: 54 };
+  return { tabs, cells, D, main, off };
+}
 /** 창에서 누를 곳 가운데 (CSS px) — 검증용 */
 export function dogPoints(w: number, h: number) {
   const L = panelLayout(w, h);
@@ -222,6 +249,7 @@ export function dogPoints(w: number, h: number) {
     other: mid(P.other),
     drops: P.drops.map(mid),
     one: mid(S1.btns[0]),
+    salon: ((Z) => ({ tabs: Z.tabs.map(mid), cells: Z.cells.map(mid), main: mid(Z.main), off: mid(Z.off) }))(salonLayout(D.area, L.wide)),
     two: S2.btns.map(mid),
     ok: mid(C.ok),
     card: mid(C.card),
@@ -242,6 +270,8 @@ export type DogAct =
   | { kind: 'map' }
   | { kind: 'rescue' }
   | { kind: 'fail' }
+  /** 미용실에서 사거나 입었다 (옷장 저장) */
+  | { kind: 'cos' }
   | { kind: 'pick' }
   | null;
 /** 주민 창 열기 — 고등어 아저씨는 상점 창 (main) */
@@ -251,6 +281,7 @@ export function openDogPanel(i: number, s: DogtownState, save: DogSave, bag: Bag
   dogView.line = dogLine(save, bag, i, now, s.rng);
   dogView.sel = 0;
   dogView.msgT = 0;
+  dogView.cosPick = null;
   if (DOGS[i].job === 'post') postOffer(save, s.rng);
   return { kind: 'pick' };
 }
@@ -321,9 +352,24 @@ function doSimple(n: number, s: DogtownState, save: DogSave, bag: Bag, i: number
   if (job === 'explorer') return doMap(n === 0 ? 'map' : 'sniff', s, save, bag, i, now);
   if (job === 'training') return { kind: 'train' };
   if (job === 'rescue') return save.call && !save.call.on ? doRescue(s, save, i) : null;
-  if (job === 'salon') return closeDog();
+  if (job === 'salon') return cosMain();
   return null;
 }
+/** 미용실 큰 버튼: 안 가졌으면 사기 · 가졌으면 입기 / 벗기 */
+function cosMain(): DogAct {
+  const id = dogView.cosPick;
+  if (!id) return fail('소품을 먼저 골라요');
+  if (!closet.owned.includes(id)) {
+    const why = buyCos(closet, bagRef, id);
+    if (why) return fail(why);
+    dsay(`${COS[id].name}을(를) 샀어요! (-${cosPrice(id)}냥)`);
+  }
+  wearCos(closet, id);
+  dogView.line = closet.worn[COS[id].slot] === id ? '어머, 정말 잘 어울려요!' : '벗었어요. 다른 것도 입어 볼래요?';
+  return { kind: 'cos' };
+}
+/** 미용실 살 때 냥코인을 뺄 가방 (dogTap · dogKey 가 넣는다) */
+let bagRef: { coins: number } = { coins: 0 };
 const closeDog = (): DogAct => ((dogView.panel = null), { kind: 'close' });
 /** 망치질 한 프레임 (main) — 두드릴 때마다 무쇠가 망치질, 다 되면 별만큼 강화 점수 */
 export function hammerStep(s: DogtownState, save: DogSave, bag: Bag, dt: number): DogAct {
@@ -395,6 +441,16 @@ export function dogTap(w: number, h: number, x: number, y: number, s: DogtownSta
     if (inR(Q.other, px, py)) return nextOffer(save, s.rng), { kind: 'post' };
     const k = Q.drops.findIndex((r, j) => save.parcels[j] && inR(r, px, py));
     if (k >= 0) return dsay(failedOrder(save.parcels[k], now) ? '실패한 배달을 지웠어요' : '배달을 그만뒀어요'), dropOrder(save, k), { kind: 'post' };
+  } else if (job === 'salon') {
+    bagRef = bag;
+    const Z = salonLayout(A, L.wide);
+    const t = Z.tabs.findIndex((r) => inR(r, px, py));
+    if (t >= 0) return Object.assign(dogView, { cosTab: t, cosPick: null }), { kind: 'pick' };
+    const ids = COS_TABS[dogView.cosTab][1];
+    const c = Z.cells.findIndex((r, k) => ids[k] && inR(r, px, py));
+    if (c >= 0) return (dogView.cosPick = ids[c]), { kind: 'pick' };
+    if (inR(Z.main, px, py)) return cosMain();
+    if (inR(Z.off, px, py)) return takeOffAll(closet), (dogView.line = '모두 벗었어요. 산뜻하네요!'), { kind: 'cos' };
   } else {
     const n = job === 'explorer' ? 2 : 1;
     const S = simpleLayout(A, L.wide, n);
@@ -431,6 +487,18 @@ export function dogKey(code: string, s: DogtownState, save: DogSave, bag: Bag, n
   } else if (job === 'post') {
     if (go) return doTake(s, save, i, now);
     if (code === 'KeyN') return nextOffer(save, s.rng), { kind: 'post' };
+  } else if (job === 'salon') {
+    bagRef = bag;
+    const ids = COS_TABS[dogView.cosTab][1];
+    const n = /^(?:Digit|Numpad)([1-7])$/.exec(code)?.[1];
+    if (n && COS_TABS[Number(n) - 1]) return Object.assign(dogView, { cosTab: Number(n) - 1, cosPick: null }), { kind: 'pick' };
+    const step = d(['ArrowLeft', 'KeyA'], ['ArrowRight', 'KeyD']) || d(['ArrowUp', 'KeyW'], ['ArrowDown', 'KeyS']) * 5;
+    if (step) {
+      const k = Math.max(0, Math.min(ids.length - 1, (dogView.cosPick ? ids.indexOf(dogView.cosPick) : -step) + step));
+      return (dogView.cosPick = ids[k]), { kind: 'pick' };
+    }
+    if (go) return cosMain();
+    if (code === 'KeyX') return takeOffAll(closet), { kind: 'cos' };
   } else if (go) return doSimple(job === 'explorer' && !count(bag, DOGTOWN.explorer.map) ? 1 : 0, s, save, bag, i, now);
   return null;
 }
@@ -495,7 +563,14 @@ function drawDogSheet(ctx: CanvasRenderingContext2D, L: PL, i: number, s: Dogtow
   ctx.arc(pt.x, pt.y, pt.r, 0, Math.PI * 2);
   ctx.fill();
   const p = s.dogs[i];
-  drawDog(ctx, i, { ...p, flip: 1 }, pt.x, pt.y + pt.r * 0.62, (pt.r * 1.02) / 96);
+  if (d.job === 'salon' && catSheet) {
+    // 입어 보기: 걸친 것 + 고른 소품
+    const over = { ...closet.worn, ...(dogView.cosPick ? { [COS[dogView.cosPick].slot]: dogView.cosPick } : {}) } as Partial<Record<CosSlot, string>>;
+    const col = Math.floor((now / 1000) * CAT_FPS.idle) % 6;
+    const size = (pt.r * 1.25 * catSheet.base) / catSheet.bodyH;
+    drawFrame(ctx, catSheet, CAT_ROW.idle, col, pt.x, pt.y + pt.r * 0.6, size, 1);
+    drawWorn(ctx, catSheet, CAT_ROW.idle, col, pt.x, pt.y + pt.r * 0.6, size, 1, undefined, over);
+  } else drawDog(ctx, i, { ...p, flip: 1 }, pt.x, pt.y + pt.r * 0.62, (pt.r * 1.02) / 96);
   const I = D.info;
   txt(ctx, d.name, I.x, I.y, 280, 32, '#5b4a3f', true, 'center');
   txt(ctx, d.about, I.x, I.y + 28, L.wide ? 220 : 300, 15, '#9a7b62', false, 'center');
@@ -508,7 +583,7 @@ function drawDogSheet(ctx: CanvasRenderingContext2D, L: PL, i: number, s: Dogtow
     explorer: `판 보물 ${save.dug}번`,
     training: `훈련 ${save.trained}판`,
     rescue: `구조 ${save.rescued}번`,
-    salon: '곧 문을 열어요',
+    salon: `소품 ${closet.owned.length}/${Object.keys(COS).length}`,
   };
   txt(ctx, stat[d.job], I.x, I.y + 60, L.wide ? 220 : 300, 17, '#3f7fbf', true, 'center');
   // 대사
@@ -522,7 +597,7 @@ function drawDogSheet(ctx: CanvasRenderingContext2D, L: PL, i: number, s: Dogtow
   else if (d.job === 'explorer') drawExplorer(ctx, L, A, save, bag, now);
   else if (d.job === 'training') drawTrainingInfo(ctx, L, A, save, touch);
   else if (d.job === 'rescue') drawRescue(ctx, L, A, save, now);
-  else drawSalon(ctx, L, A);
+  else drawSalon(ctx, L, A, bag);
 }
 
 function drawGuild(ctx: CanvasRenderingContext2D, L: PL, A: R, save: DogSave, bag: Bag) {
@@ -698,13 +773,44 @@ function drawRescue(ctx: CanvasRenderingContext2D, L: PL, A: R, save: DogSave, n
   button(ctx, S.btns[0], !c ? '요청을 기다려요' : c.on ? '❗ 자리로 가는 중' : '⛑️ 출동!', c && !c.on ? 'main' : 'soft');
 }
 
-function drawSalon(ctx: CanvasRenderingContext2D, L: PL, A: R) {
-  const S = simpleLayout(A, L.wide, 1);
-  box(ctx, S.S, '#fdf2fa', '#e7a6d0', 2.5, 18);
-  const y = S.S.y + 40;
-  txt(ctx, '✂️ 뽀송 미용실 — 곧 문을 열어요!', S.S.x + 20, y, S.S.w - 40, 22, '#b0578f');
-  para(ctx, '리본 · 모자 · 털 손질로 치즈를 꾸미는 곳이에요. 꾸미기 리소스가 준비되면 문을 열어요', S.S.x + 20, y + 34, S.S.w - 40, 17, '#7a6656', 3, 24);
-  button(ctx, S.btns[0], '기다릴게요!', 'soft');
+function drawSalon(ctx: CanvasRenderingContext2D, L: PL, A: R, bag: Bag) {
+  const Z = salonLayout(A, L.wide);
+  COS_TABS.forEach(([name], k) => {
+    const on = dogView.cosTab === k;
+    box(ctx, Z.tabs[k], on ? '#f5a05a' : 'rgba(120,85,55,0.1)', '', 0, 14);
+    txt(ctx, name, Z.tabs[k].x + Z.tabs[k].w / 2, Z.tabs[k].y + 27, Z.tabs[k].w - 8, 16, on ? '#fff' : '#5b4a3f', true, 'center');
+  });
+  const ids = COS_TABS[dogView.cosTab][1];
+  Z.cells.forEach((r, k) => {
+    const id = ids[k];
+    if (!id) return;
+    const own = closet.owned.includes(id);
+    const worn = closet.worn[COS[id].slot] === id;
+    box(ctx, r, worn ? '#fff1dc' : '#ffffff', dogView.cosPick === id ? '#f08a3c' : worn ? '#7cc35a' : 'rgba(120,85,55,0.2)', dogView.cosPick === id || worn ? 3.5 : 2, 12);
+    drawCosIcon(ctx, id, r.x + r.w / 2, r.y + r.h / 2 - (own ? 0 : 6), r.w * 0.78);
+    if (!own) txt(ctx, `${cosPrice(id)}냥`, r.x + r.w / 2, r.y + r.h - 6, r.w - 6, 13, '#c98a1c', true, 'center');
+    else if (worn) txt(ctx, '입음', r.x + r.w / 2, r.y + r.h - 6, r.w - 6, 13, '#3e9a45', true, 'center');
+  });
+  const D = Z.D;
+  box(ctx, D);
+  const id = dogView.cosPick;
+  if (!id) {
+    para(ctx, '소품을 누르면 모습 원에서 입어 볼 수 있어요. 사면 언제든 입고 벗어요 (능력치는 없는 꾸미기 전용)', D.x + 16, D.y + 34, D.w - 32, 16, '#7a6656', 4, 23);
+  } else {
+    const it = COS[id];
+    const own = closet.owned.includes(id);
+    const worn = closet.worn[it.slot] === id;
+    const icon = L.wide ? { x: D.x + D.w / 2, y: D.y + 62, s: 96 } : { x: D.x + 56, y: D.y + 52, s: 84 };
+    drawCosIcon(ctx, id, icon.x, icon.y, icon.s);
+    const tx = L.wide ? D.x + D.w / 2 : D.x + 112;
+    const al: CanvasTextAlign = L.wide ? 'center' : 'left';
+    const tw = L.wide ? D.w - 24 : D.w - 124;
+    txt(ctx, it.name, tx, L.wide ? D.y + 138 : D.y + 40, tw, 22, '#5b4a3f', true, al);
+    txt(ctx, `${COS_SLOT_NAME[it.slot]} · ${own ? (worn ? '입고 있어요' : '가지고 있어요') : `${cosPrice(id)}냥`}${it.head ? ' · 머리까지 덮는 옷' : ''}`, tx, L.wide ? D.y + 166 : D.y + 68, tw, 15, own ? '#3e9a45' : '#c98a1c', true, al);
+    const ok = own || bag.coins >= cosPrice(id);
+    button(ctx, Z.main, own ? (worn ? '벗기' : '입기') : `사고 입기 ${cosPrice(id)}냥`, ok ? 'main' : 'soft');
+  }
+  button(ctx, Z.off, '모두 벗기', 'soft');
 }
 
 /** 망치질 카드 — 달군 쇠 위로 고리가 줄어든다, 가운데 원에 닿을 때 두드린다. 세 번 → 별 */

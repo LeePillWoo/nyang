@@ -6,6 +6,7 @@ import { image } from '../shared/assets.ts';
 import { CAT_FPS, CAT_ROW } from '../shared/cat.ts';
 import { drawEmote } from '../shared/emote.ts';
 import { drawCard, drawLeave, drawPill, miniLayout, type MiniButton } from '../shared/mini-draw.ts';
+import { drawWorn } from '../shared/cosmetics-draw.ts';
 import { drawFrame, type Sheet } from '../shared/sheet.ts';
 import { timeLeft, TRAIN, type Dir, type TrainEvent, type TrainState } from './training.ts';
 
@@ -261,7 +262,9 @@ export function drawTraining(ctx: CanvasRenderingContext2D, cw: number, ch: numb
       ctx.beginPath();
       ctx.ellipse(x, y, L.catH * 0.34, L.catH * 0.12, 0, 0, Math.PI * 2);
       ctx.fill();
-      drawFrame(ctx, cat, row, hurt || roll || punch ? col : Math.floor(v.t * CAT_FPS.idle) % 6, x, y, (L.catH * cat.base) / cat.bodyH, flip);
+      const cc = hurt || roll || punch ? col : Math.floor(v.t * CAT_FPS.idle) % 6;
+      drawFrame(ctx, cat, row, cc, x, y, (L.catH * cat.base) / cat.bodyH, flip);
+      drawWorn(ctx, cat, row, cc, x, y, (L.catH * cat.base) / cat.bodyH, flip);
       drawEmote(ctx, x, y - L.catH * 1.25, L.catH * 0.8);
     },
   });
