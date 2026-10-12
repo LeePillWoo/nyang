@@ -1,8 +1,8 @@
 // 마을 그리기 공용 — 고양이마을(village-draw) · 강아지마을(dogtown-draw)이 같이 쓴다 (2026-10-12 고양이마을에서 떼어 냄):
 // 카메라(필드처럼 고양이를 따라가고 그림 밖은 안 보이게) · 배경 · G 디버그 · 치즈 · 주민 시트 한 컷 · 말풍선 · 간판 · 창 틀(디자인 좌표 1000×560 · 540×1040).
 import { CAT_FPS, CAT_ROW } from '../shared/cat.ts';
-import { drawWorn } from '../shared/cosmetics-draw.ts';
-import { drawFrame, type Sheet } from '../shared/sheet.ts';
+import { drawCatFrame } from '../shared/cosmetics-draw.ts';
+import { type Sheet } from '../shared/sheet.ts';
 import { safe, wrapText } from '../shared/touch.ts';
 import { blockShape, townC, type TownCat, type TownDef } from './town.ts';
 
@@ -35,8 +35,7 @@ export function drawTownCat(ctx: CanvasRenderingContext2D, sh: Sheet, x: number,
   ctx.beginPath();
   ctx.ellipse(x, y, k * 0.34, k * 0.12, 0, 0, Math.PI * 2);
   ctx.fill();
-  drawFrame(ctx, sh, row, col, x, y, size, flip);
-  drawWorn(ctx, sh, row, col, x, y, size, flip);
+  drawCatFrame(ctx, sh, row, col, x, y, size, flip);
   const f = sh.frames[row]?.[col];
   const s = (size / sh.base) * (sh.rowScale[row] ?? 1);
   return f ? y + f.oy * s : y - k;

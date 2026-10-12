@@ -8,8 +8,8 @@ import { CELL, isSolid } from '../shared/collide.ts';
 import { drawEmote } from '../shared/emote.ts';
 import { MAZE, type MazeState } from './maze.ts';
 import { clock, drawCard, drawLeave, drawPill, miniLayout, type MiniButton } from '../shared/mini-draw.ts';
-import { drawWorn } from '../shared/cosmetics-draw.ts';
-import { drawFrame, type Sheet } from '../shared/sheet.ts';
+import { drawCatFrame } from '../shared/cosmetics-draw.ts';
+import { type Sheet } from '../shared/sheet.ts';
 
 export type MazeViewOpts = { t: number; dt: number; touch: boolean; hover: MiniButton; best: number | null };
 /** 캔버스 픽셀 기준: 칸 크기와 원점 (검증 도구가 칸의 화면 위치를 찾을 때 쓴다) */
@@ -175,8 +175,7 @@ export function drawMaze(ctx: CanvasRenderingContext2D, cw: number, ch: number, 
   const size = ((px * 1.3) / cat.bodyH) * cat.base;
   const row = s.moving ? CAT_ROW.run : CAT_ROW.idle;
   const col = Math.floor(s.animT * (s.moving ? CAT_FPS.run : CAT_FPS.idle)) % 6;
-  drawFrame(ctx, cat, row, col, X, Z + px * 0.42, size, s.flip);
-  drawWorn(ctx, cat, row, col, X, Z + px * 0.42, size, s.flip);
+  drawCatFrame(ctx, cat, row, col, X, Z + px * 0.42, size, s.flip);
   drawEmote(ctx, X, Z - px * 0.9, px * 0.7);
 
   // HUD (CSS px)

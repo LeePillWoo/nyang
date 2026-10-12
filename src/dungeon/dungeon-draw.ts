@@ -10,7 +10,7 @@ import { enemyFrame, type Enemy } from './enemy.ts';
 import { drawEmote } from '../shared/emote.ts';
 import { drawFx, FX_SHEETS, type FxSheet } from '../shared/fx.ts';
 import { ROOMS, type Room } from '../shared/iso.ts';
-import { drawWorn } from '../shared/cosmetics-draw.ts';
+import { drawCatFrame } from '../shared/cosmetics-draw.ts';
 import { drawFrame, type Sheet } from '../shared/sheet.ts';
 import { drawPunchArea, drawSkillAir, drawSkillFloor, drawSkillIcons, drawWaveHud, drawXpBar, skillItems } from './skills-draw.ts';
 import { safe, ui } from '../shared/touch.ts';
@@ -180,8 +180,7 @@ export function drawDungeon(ctx: CanvasRenderingContext2D, cw: number, ch: numbe
       else col = Math.floor(P.animT * (row === CAT_ROW.run ? CAT_FPS.run : CAT_FPS.idle)) % COLS;
       P.dispScale = ease(P.dispScale, cat.rowScale[row] ?? 1);
       v.trace?.('cat', cat, row, col, ps.sx, ps.sy, size, P.flip, P.dispScale, { hurtT: P.hurtT, alpha: ctx.globalAlpha });
-      drawFrame(ctx, cat, row, col, ps.sx, ps.sy, size, P.flip, P.dispScale);
-      drawWorn(ctx, cat, row, col, ps.sx, ps.sy, size, P.flip, P.dispScale);
+      drawCatFrame(ctx, cat, row, col, ps.sx, ps.sy, size, P.flip, P.dispScale);
       drawEmote(ctx, ps.sx, ps.sy - size * 0.7, size * 0.36);
     },
   });

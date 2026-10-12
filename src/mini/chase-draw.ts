@@ -9,8 +9,8 @@ import data from '../data/field.json' with { type: 'json' };
 import { drawEmote } from '../shared/emote.ts';
 import { drawAcorn, drawSquirrel } from '../field/squirrel-draw.ts';
 import { drawCard, drawLeave, drawPill, miniLayout, type MiniButton } from '../shared/mini-draw.ts';
-import { drawWorn } from '../shared/cosmetics-draw.ts';
-import { drawFrame, type Sheet } from '../shared/sheet.ts';
+import { drawCatFrame } from '../shared/cosmetics-draw.ts';
+import { type Sheet } from '../shared/sheet.ts';
 import { active } from '../shared/squirrel.ts';
 
 export type ChaseViewOpts = { t: number; dt: number; touch: boolean; hover: MiniButton; best: number | null };
@@ -143,8 +143,7 @@ export function drawChase(ctx: CanvasRenderingContext2D, cw: number, ch: number,
         ctx.fill();
         const sh = sheets.cat;
         const [row, fps] = cat.stun > 0 ? [CAT_ROW.hurt, CAT_FPS.hurt] : cat.moving ? [CAT_ROW.run, CAT_FPS.run] : [CAT_ROW.idle, CAT_FPS.idle];
-        drawFrame(ctx, sh, row, Math.floor(cat.animT * fps) % 6, cat.x, cat.y, (C * sh.base) / sh.bodyH, cat.flip);
-        drawWorn(ctx, sh, row, Math.floor(cat.animT * fps) % 6, cat.x, cat.y, (C * sh.base) / sh.bodyH, cat.flip);
+        drawCatFrame(ctx, sh, row, Math.floor(cat.animT * fps) % 6, cat.x, cat.y, (C * sh.base) / sh.bodyH, cat.flip);
       },
     },
   ];

@@ -11,8 +11,8 @@ import { drawEmote } from '../shared/emote.ts';
 import { drawLeave, drawPill, miniLayout, type MiniButton } from '../shared/mini-draw.ts';
 import { CAT_FPS, CAT_ROW } from '../shared/cat.ts';
 import { buyCos, COS, COS_SLOT_NAME, COS_TABS, cosPrice, takeOffAll, wearCos, type CosSlot, type Wardrobe } from '../shared/cosmetics.ts';
-import { drawCosIcon, drawWorn } from '../shared/cosmetics-draw.ts';
-import { drawFrame, type Sheet } from '../shared/sheet.ts';
+import { drawCatFrame, drawCosIcon } from '../shared/cosmetics-draw.ts';
+import { type Sheet } from '../shared/sheet.ts';
 import { fitText, wrapText } from '../shared/touch.ts';
 import {
   acceptOrder,
@@ -568,8 +568,7 @@ function drawDogSheet(ctx: CanvasRenderingContext2D, L: PL, i: number, s: Dogtow
     const over = { ...closet.worn, ...(dogView.cosPick ? { [COS[dogView.cosPick].slot]: dogView.cosPick } : {}) } as Partial<Record<CosSlot, string>>;
     const col = Math.floor((now / 1000) * CAT_FPS.idle) % 6;
     const size = (pt.r * 1.25 * catSheet.base) / catSheet.bodyH;
-    drawFrame(ctx, catSheet, CAT_ROW.idle, col, pt.x, pt.y + pt.r * 0.6, size, 1);
-    drawWorn(ctx, catSheet, CAT_ROW.idle, col, pt.x, pt.y + pt.r * 0.6, size, 1, undefined, over);
+    drawCatFrame(ctx, catSheet, CAT_ROW.idle, col, pt.x, pt.y + pt.r * 0.6, size, 1, undefined, over);
   } else drawDog(ctx, i, { ...p, flip: 1 }, pt.x, pt.y + pt.r * 0.62, (pt.r * 1.02) / 96);
   const I = D.info;
   txt(ctx, d.name, I.x, I.y, 280, 32, '#5b4a3f', true, 'center');

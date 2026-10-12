@@ -106,11 +106,16 @@
   · **뽀송 — 미용실 · 꾸미기 소품**(2026-10-13 사용자 소품 시트 `art/cosmetics/salon` — 15장 · 150그림, 털 염색은 하지 않기로): 몸에 걸치는 100개만 쓴다
     (머리 40 · 얼굴 10 · 목 10 · 옷 20(네 발 · 두 발 짝) · 등 10 · 무늬 10 — 꼬리 · 발 · 미용 도구 · 미용실 가구는 아직 안 씀). 좌표는 atlas.json → tools/assets.mjs → `src/data/cosmetics.json`
     (소품마다 그림 범위 · 칸 · hint · 두 발 짝 `up` · 머리까지 덮는 옷 `head`, 미용실 탭 7). 로직 src/shared/cosmetics.ts(옷장 — 칸마다 하나, 사기 · 입기/벗기 · 모두 벗기, 값은 칸마다 `COS_PRICE`),
-    그리기 src/shared/cosmetics-draw.ts `drawWorn` — **치즈 기본 시트(cat_action_sheet)로 그리는 곳마다**(마을 둘 · 필드 걷기 · 던전 · 미로 · 훈련장 · 다람쥐 잡기 · 장작 패기 맞음) 그 컷 위에 얹는다.
-    자리: 소품 hint 는 "기준 컷(대기 첫 컷)의 그림 범위 비율"이라, 컷마다 머리(위쪽 32% 띠에서 가장 넓은 가로줄 — 꼬리 · 붙은 앞발은 빠짐)를 재서 그 컷이 기준 컷이었다면 범위가 어땠을지로 되짚는다
-    (꼬리가 뻗은 컷에서 소품이 커지고 밀리던 것을 막음), 칸별 보정 `TWEAK`(얼굴 · 목 — tools/out/cos-peek.mjs 로 컷 24개에 대 보고 고름). 냥펀치 줄은 옷의 두 발 짝, **구르기 줄 · 도끼 · 배 · 눈밭 · 낚시 · 샌드보드 시트에선 안 보인다**
-    (그 시트들용 자리는 따로 재야 한다). 머리까지 덮는 옷이면 모자는 안 그린다. 미용실 창: 탭 7 · 소품 칸 5×4 · 고르면 모습 원의 치즈가 입어 본 모습 · 사고 입기 / 입기 / 벗기 · 모두 벗기
-    (키: 1~7 탭 · 방향키 · Enter · X). 옷장은 localStorage `nyang.cosmetics.v1` (`fromWardrobe`), 검증 훅 `__game.closet` · `dogPoints().salon`.
+    그리기 src/shared/cosmetics-draw.ts `drawCatFrame`(치즈 한 컷 + 소품 — drawFrame 대신) — **치즈 기본 시트(cat_action_sheet)로 그리는 곳마다**(마을 둘 · 필드 걷기 · 던전 · 미로 · 훈련장 · 다람쥐 잡기 · 장작 패기 맞음).
+    **자리는 컷마다 미리 재 둔 기준점**(2026-10-13 저녁 사용자 — "회전 · 반전 · 잘라 쓰기로 어긋남을 최대한 막자": `node tools/cat-anchors.mjs` → `src/data/cat-anchors.json`, 확인 그림 tools/out/cat-anchors.png):
+    귀 안쪽 분홍 둘을 이은 **귀 줄**(자리 · 길이 · 기울기 — 28컷, 구르기 두 컷은 없어 소품이 저절로 숨는다)과 실루엣을 열기로 꼬리를 지우고 머리 원을 뺀 **몸통 상자**. 눈은 윤곽선과 같은 검정이라 못 가른다.
+    소품 hint(기준 컷 = 대기 첫 컷, 두 발 옷은 냥펀치 첫 컷의 그림 범위 비율)를 머리 소품(모자 · 얼굴 · 목 · 무늬 — `anchor: head`)은 귀 줄에서의 상대 자리로 바꿔 컷마다 귀 줄에 맞춰 옮기고 키우고 **돌리고**,
+    몸 소품(옷 · 등 — `anchor: body`)은 가로만 몸통 상자에 맞춰 늘이고 세로는 상자 꼭대기(등선)에서 기준 컷만큼. **clip**(옷 · 목 · 무늬)은 실루엣(2px 넉넉히) 밖을 잘라 낸다(몸 윤곽 밖으로 안 삐져나옴),
+    **behind 1**(날개)은 몸 뒤에, **behind 2**(가방)는 뒤에 한 번 + 앞에 "실루엣에서 머리(귀 줄 둘레 원 · 귀)를 뺀 곳"만 한 번 더 — 꼬리보다 앞 · 머리보다 뒤 · 몸통 위 (뒤에만 그리면 대기 자세의 큰 머리 · 꼬리에 가려졌다).
+    잘라 둔 소품은 컷 · 소품마다 캔버스로 두고(컷 크기) 보정이 바뀌면 버린다. 머리까지 덮는 옷이면 모자는 안 그린다. 도끼 · 배 · 눈밭 · 낚시 · 샌드보드 시트는 아직 — 그 시트도 cat-anchors.mjs `SHEETS` 에 더해 재면 된다.
+    **소품마다 보정 `src/data/cosmetics-fit.json`**(칸 기본 `slot` + 소품 `item` — dx · dy(hint 단위) · k 너비 · rot 도 · anchor · clip · behind · r 시트 일부만) — **조절 도구 `tools/cos-fit.html`**(`npm run dev` 뒤 /tools/cos-fit.html:
+    소품을 고르면 컷 24개에 얹어 보여 주고 슬라이더로 바꾸며 JSON 을 내준다 → 파일에 옮겨 적는다). 탭마다 전부 한 장에 보는 건 tools/out/cos-sheet.mjs (임시).
+    미용실 창: 탭 7 · 소품 칸 5×4 · 고르면 모습 원의 치즈가 입어 본 모습 · 사고 입기 / 입기 / 벗기 · 모두 벗기 (키: 1~7 탭 · 방향키 · Enter · X). 옷장은 localStorage `nyang.cosmetics.v1` (`fromWardrobe`), 검증 훅 `__game.closet` · `dogPoints().salon`.
   **미션 창**(src/bag/quest-draw.ts, 2026-10-13 사용자 — "도감 밑에 미션 버튼 · 아이템 구하기 같은 건 워프 지점으로 바로 가는 버튼"): 필드 📖 도감 밑(마을은 🎒 가방 밑) 📜 미션 버튼 · Q 키 →
   길드 의뢰 셋 · 맡은 배달 · 보물 ✕ · 구조 ❗ 를 한 창에, 줄마다 📍 바로가기(`travelTo` — 납품 · 배달 물건은 sources.ts `shortcut`, 던전 · 낚시 의뢰는 가까운 열린 던전 · 낚시터, 미니게임은 그 포탈,
   다 된 의뢰 · 구조 요청은 강아지마을, 보물 · 구조 자리는 가장 가까운 열린 포탈). 배달은 그만두기 · 시간이 지나면 빨간 실패. 검증 훅 `__game.questPoints()` · `questsOpen`.
@@ -510,8 +515,8 @@ src/shared/cat.ts         고양이 시트 행 배정 (기본 · 도끼 · 배 �
 src/shared/fx.ts          이펙트 시트 3장 규격·이름표(FX)·그리기 (그림은 그리는 쪽이 불러온다)
 src/shared/audio.ts       합성 타격음
 src/shared/cosmetics.ts   꾸미기 소품 옷장 (칸 · 사기 · 입기/벗기 · 머리까지 덮는 옷 · 저장) — node 로 체크된다
-src/shared/cosmetics-draw.ts 치즈 기본 시트 컷 위에 걸친 소품 (컷마다 머리를 재서 맞춤 · 두 발 짝 · 구르기엔 숨김) · 소품 아이콘
-src/data/          village.json · village-cats.json(만들어지는 파일 — 주민 시트 좌표) · dogtown.json(강아지마을 — 걷는 땅 · 주민 · 길드 · 대장간 · 우체국 · 탐험가 · 구조대) · village-dogs.json(만들어지는 파일) · waves.json · skills.json · skill-fx.json(만들어지는 파일) · sandboard-atlas.json(만들어지는 파일) · enemies.json · rooms.json · player.json · field.json (필드 + 포탈) · emotions.json · fish.json · fishing.json · fishing-atlas.json · items.json · drops.json · item-icons.json · shop.json
+src/shared/cosmetics-draw.ts 치즈 한 컷 + 걸친 소품 drawCatFrame (컷마다 재 둔 귀 줄 · 몸통 상자 기준점으로 옮기고 키우고 돌림 · 실루엣 밖 자르기 · 날개는 뒤 · 가방은 머리만 가려지게 · 두 발 짝 · 구르기엔 숨김) · 소품 아이콘
+src/data/          cosmetics.json(만들어지는 파일 — 소품 좌표) · cosmetics-fit.json(소품 자리 보정) · cat-anchors.json(만들어지는 파일 — 치즈 컷 기준점) · village.json · village-cats.json(만들어지는 파일 — 주민 시트 좌표) · dogtown.json(강아지마을 — 걷는 땅 · 주민 · 길드 · 대장간 · 우체국 · 탐험가 · 구조대) · village-dogs.json(만들어지는 파일) · waves.json · skills.json · skill-fx.json(만들어지는 파일) · sandboard-atlas.json(만들어지는 파일) · enemies.json · rooms.json · player.json · field.json (필드 + 포탈) · emotions.json · fish.json · fishing.json · fishing-atlas.json · items.json · drops.json · item-icons.json · shop.json
 src/assets/        art/ 와 같은 구조의 WebP + world/masks/ (지형 마스크)
 docs/signposts.json 필드 이정표 41곳 좌표 (사용자 제공 원본)
 src/**/*.check.ts  npm run check 로 도는 자체 체크 (제 모듈 폴더에)
@@ -520,4 +525,6 @@ tools/verify.mjs   실제 브라우저 검증 (구간 이름으로 골라서 —
 tools/assets.mjs   원본 art/ → src/assets/ WebP + 빈 마스크 + 미니맵 + 낚시 시트 좌표
 tools/terrain.mjs  개방 구역 지형 마스크 생성 (빈 마스크인 열린 조각만 — 조각들을 한 장으로 이어 반 해상도에서 판정, 물·숲 닫기, 바위섬·배는 물, 다리는 보존)
 tools/webp.mjs     PNG → WebP (알파 무손실)
+tools/cat-anchors.mjs 치즈 시트 컷마다 꾸미기 기준점(귀 줄 · 몸통 상자) 재기 → src/data/cat-anchors.json + 확인 그림 (vite 개발 서버 + Chrome)
+tools/cos-fit.html  꾸미기 소품 자리 조절 도구 (npm run dev 뒤 /tools/cos-fit.html — 슬라이더로 보며 JSON 을 cosmetics-fit.json 에)
 ```

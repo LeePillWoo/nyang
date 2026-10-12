@@ -1,0 +1,129 @@
+<!doctype html>
+<!-- 꾸미기 소품 자리 조절 (2026-10-13): npm run dev 뒤 http://localhost:5173/tools/cos-fit.html
+     소품을 고르면 치즈 컷 24개(대기 · 달리기 · 냥펀치 · 맞음)에 얹어 보여 준다. 슬라이더로 자리 · 너비 · 기울기 · 기준(귀/몸통) · 자르기 · 몸 뒤를 바꾸고,
+     아래 JSON 을 src/data/cosmetics-fit.json 의 "item" 에 옮겨 적는다 (파일 저장은 안 한다). 게임과 같은 코드(cosmetics-draw.ts)로 그린다. -->
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <title>소품 자리 조절</title>
+    <style>
+      body { margin: 0; font: 14px system-ui, sans-serif; background: #e9efe3; color: #333; display: flex; height: 100vh; }
+      #side { width: 300px; padding: 12px; overflow: auto; background: #fffaf0; box-sizing: border-box; }
+      #main { flex: 1; overflow: auto; padding: 12px; }
+      label { display: block; margin: 8px 0 2px; }
+      input[type=range] { width: 100%; }
+      select { width: 100%; }
+      textarea { width: 100%; height: 160px; font: 12px monospace; }
+      button { margin: 4px 4px 0 0; }
+      #grid { display: grid; grid-template-columns: repeat(5, 54px); gap: 4px; margin-top: 8px; }
+      #grid canvas { background: #fff; border: 2px solid #ddd; border-radius: 6px; cursor: pointer; }
+      #grid canvas.on { border-color: #f08a3c; }
+      .row { display: flex; gap: 6px; align-items: center; }
+      .row span { width: 60px; text-align: right; font-variant-numeric: tabular-nums; }
+    </style>
+  </head>
+  <body>
+    <div id="side">
+      <b>꾸미기 소품 자리 조절</b>
+      <label>탭 <select id="tab"></select></label>
+      <div id="grid"></div>
+      <div id="name" style="margin-top: 8px; font-weight: bold"></div>
+      <label>자리 가로 dx <span class="v" id="vdx"></span><input type="range" id="dx" min="-0.5" max="0.5" step="0.005" /></label>
+      <label>자리 세로 dy <span class="v" id="vdy"></span><input type="range" id="dy" min="-0.5" max="0.5" step="0.005" /></label>
+      <label>너비 k <span class="v" id="vk"></span><input type="range" id="k" min="0.3" max="2" step="0.01" /></label>
+      <label>기울기 rot <span class="v" id="vrot"></span><input type="range" id="rot" min="-60" max="60" step="1" /></label>
+      <label>기준 anchor <select id="anchor"><option value="head">head — 귀 줄 (머리와 함께)</option><option value="body">body — 몸통 상자 (늘임)</option></select></label>
+      <label><input type="checkbox" id="clip" /> clip — 실루엣 밖 자르기</label>
+      <label>behind <select id="behind"><option value="0">0 — 앞에</option><option value="1">1 — 몸 뒤에 (날개)</option><option value="2">2 — 앞에, 머리만 가려짐 (가방)</option></select></label>
+      <div><button id="reset">이 소품 원래대로</button><button id="copy">JSON 복사</button></div>
+      <label>바꾼 소품 (cosmetics-fit.json 의 "item" 에)</label>
+      <textarea id="out" readonly></textarea>
+      <div style="margin-top: 8px; color: #777">같이 걸쳐 보기: <label><input type="checkbox" id="withWorn" /> 지금 고른 것들 모두</label></div>
+    </div>
+    <div id="main"><canvas id="c"></canvas></div>
+    <script type="module">
+      import { loadCat } from '/src/shared/cat.ts';
+      import { COS, COS_TABS, fitBase, fitOf, fitItems, setFit } from '/src/shared/cosmetics.ts';
+      import { drawCatFrame, drawCosIcon, setCosmetics } from '/src/shared/cosmetics-draw.ts';
+      import { image } from '/src/shared/assets.ts';
+      const cat = await loadCat();
+      const picked = {}; // 칸 → 같이 걸쳐 볼 소품
+      setCosmetics(cat, { worn: picked });
+      const $ = (id) => document.getElementById(id);
+      const KEYS = ['dx', 'dy', 'k', 'rot'];
+      let cur = null;
+      const changed = {};
+      const tabSel = $('tab');
+      COS_TABS.forEach(([name], i) => tabSel.append(new Option(name, i)));
+      function fillGrid() {
+        const grid = $('grid');
+        grid.innerHTML = '';
+        for (const id of COS_TABS[tabSel.value][1]) {
+          const cv = document.createElement('canvas');
+          cv.width = cv.height = 50;
+          cv.title = COS[id].name;
+          cv.onclick = () => pick(id);
+          grid.append(cv);
+          image(COS[id].sheet).ready.then(() => drawCosIcon(cv.getContext('2d'), id, 25, 25, 44));
+        }
+      }
+      function pick(id) {
+        cur = id;
+        picked[COS[id].slot] = id;
+        [...$('grid').children].forEach((cv) => cv.classList.toggle('on', cv.title === COS[id].name));
+        $('name').textContent = `${id} · ${COS[id].name} (${COS[id].slot})`;
+        const f = fitOf(id);
+        for (const k of KEYS) $(k).value = f[k];
+        $('anchor').value = f.anchor;
+        $('clip').checked = !!f.clip;
+        $('behind').value = f.behind;
+        show();
+        draw();
+      }
+      function show() {
+        for (const k of KEYS) $('v' + k).textContent = $(k).value;
+      }
+      function apply() {
+        if (!cur) return;
+        const patch = { anchor: $('anchor').value, clip: $('clip').checked ? 1 : 0, behind: Number($('behind').value) };
+        for (const k of KEYS) patch[k] = Number($(k).value);
+        setFit(cur, patch);
+        changed[cur] = patch;
+        // 칸 기본값과 같은 건 적지 않는다
+        $('out').value = JSON.stringify(Object.fromEntries(Object.entries(changed).map(([id, p]) => [id, Object.fromEntries(Object.entries(p).filter(([k, v]) => v !== fitBase(id)[k]))]))).replace(/\},"/g, '},\n"');
+        show();
+        draw();
+      }
+      for (const k of [...KEYS, 'anchor', 'clip', 'behind']) $(k).oninput = $(k).onchange = apply;
+      $('reset').onclick = () => {
+        if (!cur) return;
+        delete changed[cur];
+        delete fitItems()[cur];
+        pick(cur);
+      };
+      $('copy').onclick = () => navigator.clipboard.writeText($('out').value);
+      $('withWorn').onchange = draw;
+      tabSel.onchange = fillGrid;
+      const c = $('c');
+      const g = c.getContext('2d');
+      const S = 150;
+      const ROWS = [0, 1, 2, 4];
+      c.width = S * 6;
+      c.height = S * ROWS.length;
+      function draw() {
+        g.fillStyle = '#dfe9d6';
+        g.fillRect(0, 0, c.width, c.height);
+        if (!cur) return;
+        const over = $('withWorn').checked ? picked : { [COS[cur].slot]: cur };
+        ROWS.forEach((row, ri) => {
+          for (let col = 0; col < 6; col++) {
+            const size = (S * 0.6 * cat.base) / cat.bodyH;
+            drawCatFrame(g, cat, row, col, col * S + S / 2, ri * S + S - 14, size, col % 2 ? -1 : 1, undefined, over);
+          }
+        });
+      }
+      fillGrid();
+      setInterval(() => cur && draw(), 500); // 그림이 늦게 불러와져도 보이게
+    </script>
+  </body>
+</html>

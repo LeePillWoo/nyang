@@ -4,10 +4,11 @@
  * 미용실에서 사서(냥코인) 갖고, 입고 · 벗는다. 기록(옷장)은 main 이 localStorage nyang.cosmetics.v1 에. node 로 체크된다 (그리기는 cosmetics-draw.ts).
  */
 import data from '../data/cosmetics.json' with { type: 'json' };
+import fitData from '../data/cosmetics-fit.json' with { type: 'json' };
 
 export type CosSlot = 'head' | 'face' | 'neck' | 'body' | 'back' | 'marking';
-/** 그리는 차례 (뒤 → 앞) */
-export const COS_SLOTS: CosSlot[] = ['back', 'body', 'neck', 'marking', 'face', 'head'];
+/** 그리는 차례 (뒤 → 앞) — 무늬는 털에 있으니 옷 밑 */
+export const COS_SLOTS: CosSlot[] = ['back', 'marking', 'body', 'neck', 'face', 'head'];
 export const COS_SLOT_NAME: Record<CosSlot, string> = { head: '머리', face: '얼굴', neck: '목', body: '옷', back: '등', marking: '무늬' };
 /** 소품 한 장 — sheet 그림 · r 그림이 있는 범위 [x, y, w, h] · hint [가운데 x, 가운데 y, 너비] (치즈 컷 범위에 대한 비율) */
 export type CosArt = { sheet: string; r: number[]; hint: number[] };
@@ -19,6 +20,25 @@ export const COS_TABS = data.tabs as [string, string[]][];
 /** 값 (냥코인) — 칸마다 */
 export const COS_PRICE: Record<CosSlot, number> = { head: 80, face: 60, neck: 60, body: 150, back: 120, marking: 40 };
 export const cosPrice = (id: string) => COS_PRICE[COS[id].slot];
+
+// ── 자리 보정 (src/data/cosmetics-fit.json — 칸 기본 + 소품마다) ──
+export type Anchor = 'head' | 'body';
+/** dx · dy 자리(hint 단위) · k 너비 배 · rot 도 · anchor 귀 줄/몸통 상자 · clip 실루엣 밖 자르기 · behind 몸 뒤 · r 시트 px 로 그림 일부만 */
+export type Fit = { dx: number; dy: number; k: number; rot: number; anchor: Anchor; clip: number; behind: number; r?: number[] };
+type FitPatch = Partial<Fit>;
+const FIT = fitData as unknown as { slot: Record<CosSlot, FitPatch>; item: Record<string, FitPatch> };
+let version = 0;
+/** 보정이 바뀔 때마다 오른다 (그리기 쪽이 잘라 둔 그림을 버리는 신호) */
+export const fitVersion = () => version;
+/** 칸 기본 보정 (소품 보정을 덧씌우기 전) */
+export const fitBase = (id: string): Fit => ({ dx: 0, dy: 0, k: 1, rot: 0, anchor: 'head', clip: 0, behind: 0, ...FIT.slot[COS[id].slot] });
+export const fitOf = (id: string): Fit => ({ ...fitBase(id), ...FIT.item[id] });
+/** 소품 보정을 바꾼다 (조절 도구 tools/cos-fit.html) — 저장은 안 한다, 파일에 옮겨 적는다 */
+export function setFit(id: string, patch: FitPatch) {
+  FIT.item[id] = { ...FIT.item[id], ...patch };
+  version++;
+}
+export const fitItems = () => FIT.item;
 
 /** 옷장 — owned 가진 소품 · worn 칸마다 걸친 소품 */
 export type Wardrobe = { owned: string[]; worn: Partial<Record<CosSlot, string>> };

@@ -1259,6 +1259,16 @@ try {
     const off = await page.evaluate(() => __game.closet.worn.neck);
     await page.keyboard.press('Enter');
     check(!!hat.pick && hat.worn === hat.pick && hat.owned === 1 && kc - (await coins()) > 0 && !!neck && off === undefined && (await page.evaluate(() => __game.closet.worn.neck)) === neck, `미용실: 모자 탭 → 칸 → 사고 입기 (${hat.pick}) · 키 4 → → → Enter 로 목 소품 · 다시 Enter 면 벗기`);
+    // 옷(마법사 로브) · 등(작은 배낭)도 — 마을에서 걸친 모습을 찍는다 (옷은 실루엣에 맞춰 잘리고, 가방은 머리 뒤 · 몸 앞)
+    for (const [tab, cell] of [[4, 11], [5, 0]]) {
+      await page.keyboard.press('Digit' + (tab + 1));
+      await sleep(150);
+      await click2(page, (await DP()).salon.cells[cell]);
+      await click2(page, (await DP()).salon.main);
+      await sleep(150);
+    }
+    const outfit = await page.evaluate(() => ({ ...__game.closet.worn }));
+    check(outfit.body === 'salon_072' && outfit.back === 'salon_081' && outfit.head === hat.pick && outfit.neck === neck, `옷 · 등 소품도 사고 입기 → 걸친 것 ${Object.keys(outfit).length}가지`);
     await page.keyboard.press('Escape');
     await sleep(400);
     await page.screenshot({ path: fsPath(new URL('dog-worn-town.png', OUT)) });
@@ -2463,7 +2473,8 @@ try {
     const marks = await page
       .waitForFunction(() => { const d = __game.dungeon; return d.wave.marks.length > 0 && d.wave.marks.map((m) => Math.hypot(m.x - d.P.x, m.z - d.P.z)); }, { timeout: 6000, polling: 'raf' })
       .then((h) => h.jsonValue(), () => null);
-    const spawned = await page.waitForFunction((n) => __game.dungeon.enemies.length > n, { timeout: 6000 }, w0.n).then(() => true, () => false);
+    // 나온 몬스터 = 살아 있는 수 + 쓰러뜨린 수 (자동 냥펀치가 처음 몬스터를 먼저 쓰러뜨려도 세어진다)
+    const spawned = await page.waitForFunction((n) => __game.dungeon.stats.kills + __game.dungeon.enemies.filter((e) => e.state !== 'pop').length > n, { timeout: 6000 }, w0.n).then(() => true, () => false);
     const far = !!marks && marks.every((dist) => dist > WAVE_DATA.minDist - 0.6); // 자리 흔들기(±0.4) · 벽 밀어내기만큼
     check(spawned && far, `가장자리에서 예고 뒤 몬스터가 더 나온다 (예고 자리는 고양이와 ${marks?.map((v) => v.toFixed(1)).join(' · ')}m — ${WAVE_DATA.minDist}m 밖)`);
     await page.screenshot({ path: fsPath(new URL('dungeon-wave.png', OUT)) });

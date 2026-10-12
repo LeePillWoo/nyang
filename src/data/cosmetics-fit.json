@@ -1,0 +1,19 @@
+{
+  "_comment": "꾸미기 소품 자리 보정 (2026-10-13). slot = 칸마다 기본, item = 소품마다 덧씌움 (tools/cos-fit.html 로 보면서 고른다 — npm run dev 뒤 /tools/cos-fit.html). anchor: head = 귀 줄에 붙어 머리와 함께 기울고 커진다 · body = 몸통 상자에 맞춰 늘인다. dx · dy = 자리 (소품 시트 hint 와 같은 단위 — 기준 컷 그림 범위의 비율), k = 너비 배, rot = 도, clip = 1 이면 치즈 실루엣 밖은 잘라 낸다, behind = 1 이면 몸 뒤에 그린다 · 2 면 앞에 그리되 머리만 오려 낸다(가방), r = [x, y, w, h] 시트 px 로 그림 일부만 쓴다.",
+  "slot": {
+    "head": { "anchor": "head" },
+    "face": { "anchor": "head", "k": 0.92 },
+    "neck": { "anchor": "head", "clip": 1 },
+    "body": { "anchor": "body", "clip": 1 },
+    "back": { "anchor": "body", "behind": 2, "dx": -0.05, "k": 0.85 },
+    "marking": { "anchor": "head", "clip": 1 }
+  },
+  "item": {
+    "salon_089": { "behind": 1, "dy": -0.08, "k": 1.1 },
+    "salon_090": { "behind": 1, "dy": -0.08, "k": 1.1 },
+    "salon_115": { "anchor": "body" },
+    "salon_116": { "anchor": "body" },
+    "salon_117": { "anchor": "body" },
+    "salon_120": { "anchor": "body" }
+  }
+}
