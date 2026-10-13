@@ -5,7 +5,8 @@
     "build": "tsc --noEmit && vite build --base=./",
     "preview": "vite preview",
     "check": "node tools/check.mjs",
-    "verify": "npm run build && node tools/verify.mjs"
+    "verify": "npm run build && node tools/verify.mjs",
+    "fit": "vite --open /tools/cos-fit.html"
   },
   "type": "module",
   "devDependencies": {
