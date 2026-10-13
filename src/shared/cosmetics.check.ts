@@ -1,7 +1,7 @@
 // node src/shared/cosmetics.check.ts  (npm run check) — 꾸미기 소품: 데이터 · 사기 · 입기/벗기 · 머리까지 덮는 옷 · 저장
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
-import { buyCos, COS, COS_SLOTS, COS_TABS, cosPrice, fromWardrobe, makeWardrobe, takeOffAll, wearCos, wornList } from './cosmetics.ts';
+import { buyCos, COS, COS_HIDDEN, COS_SLOTS, COS_TABS, cosPrice, fromWardrobe, makeWardrobe, takeOffAll, wearCos, wornList } from './cosmetics.ts';
 
 // 데이터: 소품 100개 · 탭마다 20개 이하 (미용실 칸 5 × 4) · 그림이 있다 · 옷은 두 발 짝이 있다
 const ids = Object.keys(COS);
@@ -10,7 +10,8 @@ for (const [name, list] of COS_TABS) {
   assert.ok(list.length && list.length <= 20, `탭 ${name} ${list.length}개`);
   for (const id of list) assert.ok(COS[id], `${name} ${id}`);
 }
-assert.equal(new Set(COS_TABS.flatMap(([, l]) => l)).size, ids.length, '모든 소품이 탭 하나에');
+assert.equal(new Set(COS_TABS.flatMap(([, l]) => l)).size, ids.filter((id) => !COS_HIDDEN.includes(COS[id].slot)).length, '안 쓰는 칸을 뺀 모든 소품이 탭 하나에');
+assert.ok(!COS_TABS.some(([, l]) => l.some((id) => COS_HIDDEN.includes(COS[id].slot))), '안 쓰는 칸(옷 · 등)은 미용실에 없다');
 for (const [id, it] of Object.entries(COS)) {
   assert.ok(COS_SLOTS.includes(it.slot), `${id} 칸`);
   assert.ok(it.r.length === 4 && it.r[2] > 0 && it.r[3] > 0 && it.hint.length === 3, `${id} 범위 · hint`);
@@ -42,7 +43,7 @@ const hood = Object.keys(COS).find((id) => COS[id].head)!;
 buyCos(w, wallet, hood);
 wearCos(w, hat);
 wearCos(w, hood);
-assert.deepEqual(wornList(w.worn), [hood], '머리까지 덮는 옷 + 모자 = 옷만');
+assert.deepEqual(wornList(w.worn), COS_HIDDEN.includes('body') ? [hat] : [hood], '머리까지 덮는 옷 + 모자 = 옷만 (옷 칸을 안 쓰면 모자만)');
 takeOffAll(w);
 assert.deepEqual(w.worn, {});
 // 저장: 왕복 · 이상한 값 버림

@@ -115,7 +115,7 @@
     잘라 둔 소품은 컷 · 소품마다 캔버스로 두고(컷 크기) 보정이 바뀌면 버린다. 머리까지 덮는 옷이면 모자는 안 그린다. 도끼 · 배 · 눈밭 · 낚시 · 샌드보드 시트는 아직 — 그 시트도 cat-anchors.mjs `SHEETS` 에 더해 재면 된다.
     **소품마다 보정 `src/data/cosmetics-fit.json`**(칸 기본 `slot` + 소품 `item` — dx · dy(hint 단위) · k 너비 · rot 도 · anchor · clip · behind · r 시트 일부만) — **조절 도구 `tools/cos-fit.html`**(`npm run fit` — 개발 서버를 5180 에 띄우고 이 페이지를 연다, 주소 http://127.0.0.1:5180/tools/cos-fit.html:
     소품을 고르면 컷 24개에 얹어 보여 주고 슬라이더로 바꾸며 JSON 을 내준다 → 파일에 옮겨 적는다). 탭마다 전부 한 장에 보는 건 tools/out/cos-sheet.mjs (임시).
-    미용실 창: 탭 7 · 소품 칸 5×4 · 고르면 모습 원의 치즈가 입어 본 모습 · 사고 입기 / 입기 / 벗기 · 모두 벗기 (키: 1~7 탭 · 방향키 · Enter · X). 옷장은 localStorage `nyang.cosmetics.v1` (`fromWardrobe`), 검증 훅 `__game.closet` · `dogPoints().salon`.
+    **옷 · 등 칸은 잠시 안 쓴다**(2026-10-13 사용자 — 자리를 못 잡겠다: cosmetics-fit.json `hidden` — 미용실 탭에서 빠지고, 이미 걸쳤어도 안 그린다. 소품 62개는 사용자가 조절 도구로 고른 값). 미용실 창: 탭 5 · 소품 칸 5×4 · 고르면 모습 원의 치즈가 입어 본 모습 · 사고 입기 / 입기 / 벗기 · 모두 벗기 (키: 1~7 탭 · 방향키 · Enter · X). 옷장은 localStorage `nyang.cosmetics.v1` (`fromWardrobe`), 검증 훅 `__game.closet` · `dogPoints().salon`.
   **미션 창**(src/bag/quest-draw.ts, 2026-10-13 사용자 — "도감 밑에 미션 버튼 · 아이템 구하기 같은 건 워프 지점으로 바로 가는 버튼"): 필드 📖 도감 밑(마을은 🎒 가방 밑) 📜 미션 버튼 · Q 키 →
   길드 의뢰 셋 · 맡은 배달 · 보물 ✕ · 구조 ❗ 를 한 창에, 줄마다 📍 바로가기(`travelTo` — 납품 · 배달 물건은 sources.ts `shortcut`, 던전 · 낚시 의뢰는 가까운 열린 던전 · 낚시터, 미니게임은 그 포탈,
   다 된 의뢰 · 구조 요청은 강아지마을, 보물 · 구조 자리는 가장 가까운 열린 포탈). 배달은 그만두기 · 시간이 지나면 빨간 실패. 검증 훅 `__game.questPoints()` · `questsOpen`.

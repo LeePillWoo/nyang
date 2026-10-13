@@ -1259,16 +1259,14 @@ try {
     const off = await page.evaluate(() => __game.closet.worn.neck);
     await page.keyboard.press('Enter');
     check(!!hat.pick && hat.worn === hat.pick && hat.owned === 1 && kc - (await coins()) > 0 && !!neck && off === undefined && (await page.evaluate(() => __game.closet.worn.neck)) === neck, `미용실: 모자 탭 → 칸 → 사고 입기 (${hat.pick}) · 키 4 → → → Enter 로 목 소품 · 다시 Enter 면 벗기`);
-    // 옷(마법사 로브) · 등(작은 배낭)도 — 마을에서 걸친 모습을 찍는다 (옷은 실루엣에 맞춰 잘리고, 가방은 머리 뒤 · 몸 앞)
-    for (const [tab, cell] of [[4, 11], [5, 0]]) {
-      await page.keyboard.press('Digit' + (tab + 1));
-      await sleep(150);
-      await click2(page, (await DP()).salon.cells[cell]);
-      await click2(page, (await DP()).salon.main);
-      await sleep(150);
-    }
+    // 얼굴(동그란 안경)도 — 마을에서 걸친 모습을 찍는다. 옷 · 등 탭은 잠시 안 쓴다 (2026-10-13 사용자)
+    const tabNames = await page.evaluate(() => __game.cosTabs);
+    await page.keyboard.press('Digit' + (tabNames.indexOf('얼굴') + 1));
+    await sleep(150);
+    await click2(page, (await DP()).salon.cells[0]);
+    await click2(page, (await DP()).salon.main);
     const outfit = await page.evaluate(() => ({ ...__game.closet.worn }));
-    check(outfit.body === 'salon_072' && outfit.back === 'salon_081' && outfit.head === hat.pick && outfit.neck === neck, `옷 · 등 소품도 사고 입기 → 걸친 것 ${Object.keys(outfit).length}가지`);
+    check(!tabNames.includes('옷') && !tabNames.includes('등') && outfit.face === 'salon_041' && outfit.head === hat.pick && outfit.neck === neck, `미용실 탭 ${tabNames.join(' · ')} (옷 · 등 없음) · 얼굴 소품도 사고 입기 → 걸친 것 ${Object.keys(outfit).length}가지`);
     await page.keyboard.press('Escape');
     await sleep(400);
     await page.screenshot({ path: fsPath(new URL('dog-worn-town.png', OUT)) });

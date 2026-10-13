@@ -15,8 +15,10 @@ export type CosArt = { sheet: string; r: number[]; hint: number[] };
 /** 소품 — up: 두 발 자세(냥펀치) 짝 · head: 머리까지 덮는 옷 (모자는 안 보인다) */
 export type CosItem = CosArt & { name: string; slot: CosSlot; up?: CosArt; head?: number };
 export const COS = data.items as Record<string, CosItem>;
-/** 미용실 탭 [이름, 소품 id …] */
-export const COS_TABS = data.tabs as [string, string[]][];
+/** 잠시 안 쓰는 칸 (cosmetics-fit.json hidden — 2026-10-13 사용자: 옷 · 등은 자리를 못 잡겠어서) — 미용실에 안 내놓고, 걸쳐 있어도 안 그린다 */
+export const COS_HIDDEN = (fitData as { hidden?: string[] }).hidden ?? [];
+/** 미용실 탭 [이름, 소품 id …] — 안 쓰는 칸의 탭은 뺀다 */
+export const COS_TABS = (data.tabs as [string, string[]][]).filter(([, ids]) => !ids.every((id) => COS_HIDDEN.includes((data.items as Record<string, { slot: string }>)[id].slot)));
 /** 값 (냥코인) — 칸마다 */
 export const COS_PRICE: Record<CosSlot, number> = { head: 80, face: 60, neck: 60, body: 150, back: 120, marking: 40 };
 export const cosPrice = (id: string) => COS_PRICE[COS[id].slot];
@@ -76,6 +78,6 @@ export function wearCos(w: Wardrobe, id: string): string | null {
 export const takeOffAll = (w: Wardrobe) => void (w.worn = {});
 /** 그릴 소품 (그리는 차례대로) — 머리까지 덮는 옷이면 머리 칸은 안 그린다 */
 export function wornList(worn: Partial<Record<CosSlot, string>>): string[] {
-  const hood = worn.body && COS[worn.body]?.head;
-  return COS_SLOTS.filter((s) => worn[s] && !(s === 'head' && hood)).map((s) => worn[s]!);
+  const hood = worn.body && !COS_HIDDEN.includes('body') && COS[worn.body]?.head;
+  return COS_SLOTS.filter((s) => worn[s] && !COS_HIDDEN.includes(s) && !(s === 'head' && hood)).map((s) => worn[s]!);
 }

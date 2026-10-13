@@ -88,7 +88,7 @@ import { chaseFx, chaseReady, chaseView, drawChase } from './mini/chase-draw.ts'
 import { burn, drawVillage, drawVillagePanel, finishPlay, openVillagePanel, resetVillageView, toyX, villageKey, villagePoints, villageReady, villageTap, villageView, type VillageAct } from './village/village-draw.ts';
 import { updateToy, type ToyEvent } from './village/toys.ts';
 import { FRIENDS, fromVillageSave, hello, makeVillage, setAnim, talkTo, targetAtPoint, tickRequests, updateCook, updateVillage, type VillageSave, type VillageState } from './village/village.ts';
-import { fromWardrobe, type Wardrobe } from './shared/cosmetics.ts';
+import { COS_TABS, fromWardrobe, type Wardrobe } from './shared/cosmetics.ts';
 import { setCosmetics } from './shared/cosmetics-draw.ts';
 import {
   dogKey,
@@ -933,6 +933,8 @@ if (trace)
       dogSave: dsave,
       /** 옷장 (꾸미기 소품) */
       closet,
+      /** 미용실 탭 이름 */
+      get cosTabs() { return COS_TABS.map(([n]) => n); },
       dogView,
       /** 강아지마을 지도 좌표 (x, y) 의 화면 위치 (CSS px) */
       dogScreen: (x: number, y: number) => {
