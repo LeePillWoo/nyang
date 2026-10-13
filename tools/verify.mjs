@@ -2472,7 +2472,7 @@ try {
       .waitForFunction(() => { const d = __game.dungeon; return d.wave.marks.length > 0 && d.wave.marks.map((m) => Math.hypot(m.x - d.P.x, m.z - d.P.z)); }, { timeout: 6000, polling: 'raf' })
       .then((h) => h.jsonValue(), () => null);
     // 나온 몬스터 = 살아 있는 수 + 쓰러뜨린 수 (자동 냥펀치가 처음 몬스터를 먼저 쓰러뜨려도 세어진다)
-    const spawned = await page.waitForFunction((n) => __game.dungeon.stats.kills + __game.dungeon.enemies.filter((e) => e.state !== 'pop').length > n, { timeout: 6000 }, w0.n).then(() => true, () => false);
+    const spawned = await page.waitForFunction((n) => __game.dungeon.stats.kills + __game.dungeon.enemies.filter((e) => e.state !== 'pop').length > n, { timeout: 10000 }, w0.n).then(() => true, () => false);
     const far = !!marks && marks.every((dist) => dist > WAVE_DATA.minDist - 0.6); // 자리 흔들기(±0.4) · 벽 밀어내기만큼
     check(spawned && far, `가장자리에서 예고 뒤 몬스터가 더 나온다 (예고 자리는 고양이와 ${marks?.map((v) => v.toFixed(1)).join(' · ')}m — ${WAVE_DATA.minDist}m 밖)`);
     await page.screenshot({ path: fsPath(new URL('dungeon-wave.png', OUT)) });

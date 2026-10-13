@@ -7,7 +7,7 @@
 //     몸 · 꼬리 위로는 가방이 보이고 머리엔 가려진다 (뒤에만 그리면 대기 자세에선 큰 머리와 꼬리에 거의 다 가려졌다)
 //   · 냥펀치 줄(두 발)은 옷의 두 발 짝(up, 기준 컷 = 냥펀치 첫 컷), 구르기 줄은 귀가 안 보여 자동으로 숨는다
 // 소품마다 보정(src/data/cosmetics-fit.json — dx · dy · k · rot · anchor · clip · behind · r)은 cosmetics.ts fitOf. 왼쪽은 치즈와 함께 좌우로 뒤집는다.
-// 도끼 · 배 · 눈밭 · 낚시 · 샌드보드 시트는 아직 안 얹는다 (그 시트도 cat-anchors.mjs 로 재면 된다).
+// 도끼 · 배 · 눈밭/모래 시트도 컷마다 재 두었다 (기준 컷은 늘 기본 시트 대기 첫 컷 — 귀 줄 길이 비로 시트마다 다른 그림 배율도 맞는다). 낚시 · 샌드보드 시트는 아직.
 import anchorsData from '../data/cat-anchors.json' with { type: 'json' };
 import { image } from './assets.ts';
 import { CAT_ROW } from './cat.ts';
@@ -19,9 +19,9 @@ const ANCHORS = anchorsData as Record<string, FrameAnchor[][]>;
 /** 기준점을 재 둔 시트 → cat-anchors.json 의 이름 */
 const keyOf = new Map<Sheet, string>();
 let wardrobe: { worn: Partial<Record<CosSlot, string>> } = { worn: {} };
-/** 치즈 기본 시트와 옷장 (main 이 처음에 한 번 — 옷장 객체를 계속 본다) */
-export function setCosmetics(sheet: Sheet, w: { worn: Partial<Record<CosSlot, string>> }) {
-  keyOf.set(sheet, 'cat');
+/** 치즈 시트(key = cat-anchors.json 의 이름)와 옷장 (main 이 불러올 때 시트마다 — 옷장 객체를 계속 본다) */
+export function setCosmetics(sheet: Sheet, w: { worn: Partial<Record<CosSlot, string>> }, key = 'cat') {
+  keyOf.set(sheet, key);
   wardrobe = w;
 }
 
@@ -30,7 +30,7 @@ const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
 /** 소품 자리 (컷 안 px) — 기준 컷에서의 자리를 이 컷의 귀 줄 · 몸통 상자로 옮긴다. 기준점이 없는 컷(구르기)이면 null */
 function place(key: string, row: number, col: number, art: CosArt, fit: Fit, up: boolean): Placed | null {
   const F = ANCHORS[key]?.[row]?.[col];
-  const R = ANCHORS[key]?.[up ? CAT_ROW.punch : 0]?.[0];
+  const R = ANCHORS.cat[up ? CAT_ROW.punch : 0]?.[0]; // 기준 컷은 늘 기본 시트
   if (!F?.ears || !R?.ears || !R.bbox) return null;
   const B = R.bbox;
   const cx = B[0] + (art.hint[0] + fit.dx) * B[2];
@@ -116,7 +116,7 @@ function cutOf(sheet: Sheet, key: string, row: number, col: number, id: string, 
 function drawLayer(ctx: CanvasRenderingContext2D, sheet: Sheet, key: string, row: number, col: number, ids: string[], s: number, behind: boolean) {
   const f = sheet.frames[row]?.[col];
   if (!f) return;
-  const up = row === CAT_ROW.punch;
+  const up = key === 'cat' && row === CAT_ROW.punch;
   for (const id of ids) {
     const it = COS[id];
     const fit = fitOf(id);

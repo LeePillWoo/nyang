@@ -2196,6 +2196,9 @@ const step = (t: string) => {
   setSalon(closet, catSheet);
   step('도끼·배·눈길 시트');
   [axeSheet, boatSheet, snowSheet] = await Promise.all([loadAxe(), loadBoat(), loadSnow()]);
+  setCosmetics(axeSheet, closet, 'axe'); // 숲 · 배 · 눈밭 모습에도 소품을
+  setCosmetics(boatSheet, closet, 'boat');
+  setCosmetics(snowSheet, closet, 'snow');
   step('지형');
   await terrainReady;
   field = makeFieldState(FIELD.start, terrainAt);

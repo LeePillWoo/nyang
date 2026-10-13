@@ -3,12 +3,12 @@
 //   (눈은 윤곽선과 같은 검정이라 못 가른다 — 얼굴 소품도 귀 기준으로 붙인다)
 //   몸: 실루엣을 열기(침식 → 팽창, 반지름 OPEN)로 꼬리 · 가는 다리를 지우고 머리 원을 뺀 범위 b (옷 · 등 소품 — 상자에 맞춰 늘인다)
 // 게임과 같은 칸 자르기(loadSheet)를 쓰려고 vite 개발 서버 + Chrome 으로 돌린다. 확인 그림 tools/out/cat-anchors.png (귀 분홍 점 · 몸 상자 파랑 · 머리 원 회색).
-// 다른 치즈 시트(도끼 · 배 · 눈밭 · 낚시)도 나중에 같은 식으로 (SHEETS 에 더한다).
+// 도끼 · 배 · 눈밭/모래 시트도 같이 잰다 (2026-10-13 — 필드 숲 · 배 · 눈밭에서 모자가 사라졌다). 낚시 · 샌드보드는 아직.
 import fs from 'node:fs';
 import puppeteer from 'puppeteer-core';
 import { createServer } from 'vite';
 
-const SHEETS = { cat: 'loadCat' };
+const SHEETS = { cat: 'loadCat', axe: 'loadAxe', boat: 'loadBoat', snow: 'loadSnow' };
 const server = await createServer({ server: { port: 5194 }, logLevel: 'silent' });
 await server.listen();
 const browser = await puppeteer.launch({ executablePath: process.env.CHROME_PATH ?? 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless: true });
@@ -27,6 +27,7 @@ const out = await page.evaluate(async (SHEETS) => {
   for (const [name, loader] of Object.entries(SHEETS)) {
     const sheet = await catMod[loader]();
     const rows = [];
+    const rowOff = shots.length ? Math.max(...shots.map((s) => s.row)) + 1 : 0;
     for (let row = 0; row < sheet.frames.length; row++) {
       const cols = [];
       for (let col = 0; col < sheet.frames[row].length; col++) {
@@ -118,7 +119,7 @@ const out = await page.evaluate(async (SHEETS) => {
           if (n > 200) body = [x0, y0, x1 - x0 + 1, y1 - y0 + 1];
         }
         cols.push({ bbox, ears: ears && { m: ears.m.map((v) => +v.toFixed(1)), d: +ears.d.toFixed(1), a: +ears.a.toFixed(3) }, body });
-        shots.push({ t, W, H, ears, body, row, col, name });
+        shots.push({ t, W, H, ears, body, row: row + rowOff, col, name });
       }
       rows.push(cols);
     }
@@ -127,7 +128,7 @@ const out = await page.evaluate(async (SHEETS) => {
   // 확인 그림
   const rowsN = Math.max(...shots.map((s) => s.row)) + 1;
   c.width = S * 6;
-  c.height = S * rowsN * Object.keys(SHEETS).length;
+  c.height = S * rowsN;
   g.fillStyle = '#dfe9d6';
   g.fillRect(0, 0, c.width, c.height);
   for (const s of shots) {
@@ -141,7 +142,7 @@ const out = await page.evaluate(async (SHEETS) => {
     }
     if (s.ears) { g.strokeStyle = 'rgba(80,80,80,0.6)'; g.lineWidth = 1; g.beginPath(); g.arc(ox + s.ears.m[0] * k, oy + (s.ears.m[1] + s.ears.d * 0.6) * k, s.ears.d * 0.9 * k, 0, 7); g.stroke(); }
     g.fillStyle = '#333'; g.font = '12px monospace';
-    g.fillText(`${s.row},${s.col} ${s.ears ? '귀' : '귀X'} ${s.body ? '몸' : '몸X'}`, ox + 4, oy + 14);
+    g.fillText(`${s.name} ${s.row},${s.col} ${s.ears ? '귀' : '귀X'} ${s.body ? '몸' : '몸X'}`, ox + 4, oy + 14);
   }
   return { result, png: c.toDataURL('image/png') };
 }, SHEETS);

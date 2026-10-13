@@ -28,7 +28,7 @@ import {
   type Whale,
 } from './field.ts';
 import { drawCatFrame } from '../shared/cosmetics-draw.ts';
-import { drawFrame, type Sheet } from '../shared/sheet.ts';
+import { type Sheet } from '../shared/sheet.ts';
 import { drawAcorn, drawSquirrel } from './squirrel-draw.ts';
 
 /** squirrel = 숲 다람쥐 (던전 몬스터 시트 — 처음엔 안 불러와져 있을 수 있다) */
@@ -773,13 +773,13 @@ export function drawField(
   const q0 = (size / sheet.base) * (rs ?? sheet.rowScale[row] ?? 1);
   const mid = fr ? { x: s.x + s.flip * (fr.ox + fr.sw / 2) * q0, y: s.y + bob + (fr.oy + fr.sh / 2) * q0 } : { x: s.x, y: s.y };
   const ride = boatWithWhale(s.whale, mid.x, mid.y);
-  if (ride === null || !fr) drawCatFrame(ctx, sheet, row, col, s.x, s.y + bob, size, s.flip, rs); // 걷기(기본 시트)면 꾸미기 소품도
+  if (ride === null || !fr) drawCatFrame(ctx, sheet, row, col, s.x, s.y + bob, size, s.flip, rs); // 걸친 꾸미기 소품도 (걷기 · 도끼 · 배 · 눈밭 시트 모두)
   else if (ride !== 'hide') {
     const q = q0 * ride.scale;
     ctx.save();
     ctx.translate(ride.x, ride.y);
     ctx.rotate(ride.spin);
-    drawFrame(ctx, sheet, row, col, -s.flip * (fr.ox + fr.sw / 2) * q, -(fr.oy + fr.sh / 2) * q, size * ride.scale, s.flip, rs);
+    drawCatFrame(ctx, sheet, row, col, -s.flip * (fr.ox + fr.sw / 2) * q, -(fr.oy + fr.sh / 2) * q, size * ride.scale, s.flip, rs);
     ctx.restore();
   }
   if (s.mode === 'axe') drawFoliage(ctx, s.x, s.y, body);
