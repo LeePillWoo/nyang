@@ -170,7 +170,7 @@ const one = (id: SkillId, lvl: number, mons: [string, number, number][], secs: n
   assert.equal(lost(d.enemies[1]), 12, '등 뒤 적은 충격파만');
 }
 {
-  let d = one('box_orbit', 1, [['fat', 1.7, 0]], 2.5);
+  let d = one('box_orbit', 1, [['fat', 2.5, 0]], 2.5);
   assert.ok(lost(d.enemies[0]) >= 8, '빙글 상자: 둘레에서 부딪힌다');
   d = one('box_drop', 1, [['fat', 4, 0]], 1.1); // 0.3초 뒤 그림자 → 0.75초 뒤 쿵
   assert.ok(lost(d.enemies[0]) === 20 && d.enemies[0].stunT > 0.5, '상자 낙하: 20 + 기절');
